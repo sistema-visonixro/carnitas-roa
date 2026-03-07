@@ -1626,98 +1626,103 @@ export default function PuntoDeVentaView({
             ☀️ Claro
           </button>
 
-          {/* Separador visual */}
-          <div
-            style={{
-              width: 1,
-              height: 24,
-              background:
-                theme === "lite" ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)",
-            }}
-          />
+          {/* Botones que requieren apertura registrada */}
+          {aperturaRegistrada && (
+            <>
+              {/* Separador visual */}
+              <div
+                style={{
+                  width: 1,
+                  height: 24,
+                  background:
+                    theme === "lite"
+                      ? "rgba(0,0,0,0.1)"
+                      : "rgba(255,255,255,0.1)",
+                }}
+              />
 
-          {/* Botón Resumen de caja */}
-          <button
-            style={{
-              fontSize: 12,
-              padding: "6px 12px",
-              borderRadius: 6,
-              background: isOnline ? "#1976d2" : "#9e9e9e",
-              color: "#fff",
-              fontWeight: 600,
-              border: "none",
-              cursor: isOnline ? "pointer" : "not-allowed",
-              opacity: isOnline ? 1 : 0.6,
-            }}
-            onClick={() => {
-              if (!isOnline) {
-                setShowNoConnectionModal(true);
-                return;
-              }
-              fetchResumenCaja();
-            }}
-            title={
-              isOnline
-                ? "Ver resumen de caja del día"
-                : "Requiere conexión a internet"
-            }
-          >
-            📊 Resumen
-          </button>
+              {/* Botón Resumen de caja */}
+              <button
+                style={{
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  background: isOnline ? "#1976d2" : "#9e9e9e",
+                  color: "#fff",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: isOnline ? "pointer" : "not-allowed",
+                  opacity: isOnline ? 1 : 0.6,
+                }}
+                onClick={() => {
+                  if (!isOnline) {
+                    setShowNoConnectionModal(true);
+                    return;
+                  }
+                  fetchResumenCaja();
+                }}
+                title={
+                  isOnline
+                    ? "Ver resumen de caja del día"
+                    : "Requiere conexión a internet"
+                }
+              >
+                📊 Resumen
+              </button>
 
-          {/* Botón Registrar gasto */}
-          <button
-            onClick={() => {
-              cerrarRegistrarGasto();
-              setShowRegistrarGasto(true);
-            }}
-            style={{
-              fontSize: 12,
-              padding: "6px 12px",
-              borderRadius: 6,
-              background:
-                theme === "lite"
-                  ? "rgba(211,47,47,0.95)"
-                  : "rgba(183,28,28,0.95)",
-              color: "#fff",
-              fontWeight: 600,
-              border: "none",
-              cursor: "pointer",
-            }}
-            title="Registrar un gasto"
-          >
-            💰 Gasto
-          </button>
+              {/* Botón Registrar gasto */}
+              <button
+                onClick={() => {
+                  cerrarRegistrarGasto();
+                  setShowRegistrarGasto(true);
+                }}
+                style={{
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  background:
+                    theme === "lite"
+                      ? "rgba(211,47,47,0.95)"
+                      : "rgba(183,28,28,0.95)",
+                  color: "#fff",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+                title="Registrar un gasto"
+              >
+                💰 Gasto
+              </button>
 
-          {/* Botón Devolución */}
-          <button
-            onClick={() => {
-              setShowDevolucionModal(true);
-              setDevolucionFactura("");
-              setDevolucionData(null);
-              setDevolucionPassword("");
-            }}
-            style={{
-              fontSize: 12,
-              padding: "6px 12px",
-              borderRadius: 6,
-              background:
-                theme === "lite"
-                  ? "rgba(255,152,0,0.95)"
-                  : "rgba(230,81,0,0.95)",
-              color: "#fff",
-              fontWeight: 600,
-              border: "none",
-              cursor: "pointer",
-            }}
-            title="Procesar devolución"
-          >
-            🔄 Devolución
-          </button>
+              {/* Botón Devolución */}
+              <button
+                onClick={() => {
+                  setShowDevolucionModal(true);
+                  setDevolucionFactura("");
+                  setDevolucionData(null);
+                  setDevolucionPassword("");
+                }}
+                style={{
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  background:
+                    theme === "lite"
+                      ? "rgba(255,152,0,0.95)"
+                      : "rgba(230,81,0,0.95)",
+                  color: "#fff",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+                title="Procesar devolución"
+              >
+                🔄 Devolución
+              </button>
 
-          {/* Botón Domicilios */}
-          <button
-            onClick={async () => {
+              {/* Botón Domicilios */}
+              <button
+                onClick={async () => {
               setShowPedidosModal(true);
               setPedidosLoading(true);
               let localPendientes: any[] = [];
@@ -1795,8 +1800,10 @@ export default function PuntoDeVentaView({
             }}
             title="Ver pedidos a domicilio"
           >
-            🏠 Domicilios
-          </button>
+                🏠 Domicilios
+              </button>
+            </>
+          )}
 
           {/* Botón Aclaraciones - solo visible si hay 1 o más cierres sin aclarar */}
           {cierresSinAclarar >= 1 && (
