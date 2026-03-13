@@ -139,7 +139,7 @@ type MovementFormState = {
   /** "insumo" o cualquier valor de productos.tipo (excepto "comida") */
   itemType: string;
   itemId: string;
-  tipoMovimiento: "entrada" | "salida" | "ajuste_positivo" | "ajuste_negativo";
+  tipoMovimiento: "entrada" | "salida";
   cantidad: string;
   costoUnitario: string;
   referenciaTipo: string;
@@ -156,10 +156,8 @@ type RecipeFormState = {
 };
 
 const MOVEMENT_TYPES = [
-  { value: "entrada", label: "Entrada" },
-  { value: "salida", label: "Salida" },
-  { value: "ajuste_positivo", label: "Ajuste positivo" },
-  { value: "ajuste_negativo", label: "Ajuste negativo" },
+  { value: "entrada", label: "⬆ Entrada" },
+  { value: "salida", label: "⬇ Salida" },
 ] as const;
 
 const CONSUMPTION_MODES = [
@@ -333,7 +331,6 @@ export default function MovimientosInventarioView({
   const [stockBebidas, setStockBebidas] = useState<StockBebida[]>([]);
   const [stockInsumos, setStockInsumos] = useState<StockInsumoRow[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
-  const [stockGenerado, setStockGenerado] = useState(false);
 
   // --- Modal de configuración de umbrales de stock ---
   const [stockConfigModal, setStockConfigModal] = useState<{
@@ -602,6 +599,17 @@ export default function MovimientosInventarioView({
       setLoading(false);
     });
   }, []);
+
+  // Auto-cargar stock al activar la pestaña o cambiar el sub-filtro
+  useEffect(() => {
+    if (activeTab !== "stock") return;
+    if (stockFiltro === "insumos") {
+      loadStockInsumos();
+    } else {
+      loadStockBebidas();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, stockFiltro]);
 
   const handleCreateInsumo = async () => {
     const nombre = newInsumoForm.nombre.trim();
@@ -1122,21 +1130,21 @@ export default function MovimientosInventarioView({
           costo_promedio: 0,
         };
         const mv = movMap[p.id] || { entradas: 0, salidas: 0 };
+        const stockCalculado = mv.entradas - mv.salidas;
         return {
           id: p.id,
           nombre: p.nombre,
           precio: numberValue(p.precio),
-          stock_actual: s.stock_actual,
+          stock_actual: stockCalculado,
           stock_minimo: s.stock_minimo,
           costo_promedio: s.costo_promedio,
-          valor_total: s.stock_actual * s.costo_promedio,
-          alerta: s.stock_actual <= s.stock_minimo,
+          valor_total: stockCalculado * s.costo_promedio,
+          alerta: stockCalculado <= s.stock_minimo,
           total_entradas: mv.entradas,
           total_salidas: mv.salidas,
         };
       });
       setStockBebidas(rows);
-      setStockGenerado(true);
     } catch (err: any) {
       setError(err?.message || "Error al cargar stock de bebidas.");
     } finally {
@@ -1168,7 +1176,7 @@ export default function MovimientosInventarioView({
 
       const rows: StockInsumoRow[] = (insumosData || []).map((ins: any) => {
         const mv = movMap[ins.id] || { entradas: 0, salidas: 0 };
-        const sa = numberValue(ins.stock_actual);
+        const sa = mv.entradas - mv.salidas;
         const cu = numberValue(ins.costo_unitario);
         return {
           id: ins.id,
@@ -1185,7 +1193,6 @@ export default function MovimientosInventarioView({
         };
       });
       setStockInsumos(rows);
-      setStockGenerado(true);
     } catch (err: any) {
       setError(err?.message || "Error al cargar stock de insumos.");
     } finally {
@@ -2377,26 +2384,14 @@ export default function MovimientosInventarioView({
                     <button
                       key={f}
                       className={`inventory-tab ${stockFiltro === f ? "active" : ""}`}
-                      onClick={() => {
-                        setStockFiltro(f);
-                        setStockGenerado(false);
-                      }}
+                      onClick={() => setStockFiltro(f)}
                     >
                       {f === "insumos" ? "🧂 Insumos" : "🥤 Bebidas"}
                     </button>
                   ))}
-                  <button
-                    className="inventory-btn primary"
-                    onClick={
-                      stockFiltro === "insumos"
-                        ? loadStockInsumos
-                        : loadStockBebidas
-                    }
-                    disabled={stockLoading}
-                  >
-                    {stockLoading ? "Cargando…" : "Actualizar stock"}
-                  </button>
-                  {stockGenerado && (
+                  {(stockFiltro === "insumos"
+                    ? stockInsumos.length > 0
+                    : stockBebidas.length > 0) && (
                     <button
                       className="inventory-btn secondary"
                       onClick={() => handlePrintTomaFisica(stockFiltro)}
@@ -2436,7 +2431,7 @@ export default function MovimientosInventarioView({
                         </p>
                       </div>
                     </div>
-                    {!stockGenerado ? (
+                    {stockLoading ? (
                       <p
                         style={{
                           color: "#94a3b8",
@@ -2444,7 +2439,7 @@ export default function MovimientosInventarioView({
                           padding: 32,
                         }}
                       >
-                        Pulsa "Actualizar stock" para cargar los datos.
+                        Calculando stock…
                       </p>
                     ) : (
                       <div style={{ overflowX: "auto" }}>
@@ -2592,7 +2587,7 @@ export default function MovimientosInventarioView({
                         </p>
                       </div>
                     </div>
-                    {!stockGenerado ? (
+                    {stockLoading ? (
                       <p
                         style={{
                           color: "#94a3b8",
@@ -2600,7 +2595,7 @@ export default function MovimientosInventarioView({
                           padding: 32,
                         }}
                       >
-                        Pulsa "Actualizar stock" para cargar los datos.
+                        Calculando stock…
                       </p>
                     ) : (
                       <div style={{ overflowX: "auto" }}>
@@ -3220,23 +3215,24 @@ export default function MovimientosInventarioView({
                 </div>
                 <div>
                   <label>Movimiento</label>
-                  <select
-                    className="inventory-select"
-                    value={movementForm.tipoMovimiento}
-                    onChange={(event) =>
-                      setMovementForm((prev) => ({
-                        ...prev,
-                        tipoMovimiento: event.target
-                          .value as MovementFormState["tipoMovimiento"],
-                      }))
-                    }
-                  >
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                     {MOVEMENT_TYPES.map((item) => (
-                      <option key={item.value} value={item.value}>
+                      <button
+                        key={item.value}
+                        type="button"
+                        className={`inventory-btn ${movementForm.tipoMovimiento === item.value ? "primary" : "secondary"}`}
+                        style={{ flex: 1, fontWeight: movementForm.tipoMovimiento === item.value ? 700 : 400 }}
+                        onClick={() =>
+                          setMovementForm((prev) => ({
+                            ...prev,
+                            tipoMovimiento: item.value as MovementFormState["tipoMovimiento"],
+                          }))
+                        }
+                      >
                         {item.label}
-                      </option>
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
                 <div>
                   <label>Cantidad</label>
