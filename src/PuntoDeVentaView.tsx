@@ -5880,6 +5880,54 @@ export default function PuntoDeVentaView({
                                     }
 
                                     // PASO 4: Eliminar el pedido de envío
+                                    // IMPORTANTE: Primero guardar el ingreso de delivery
+                                    // en costo_delivery para que no se pierda al borrar el pedido.
+                                    try {
+                                      const costoEnvio = parseFloat(
+                                        p.costo_envio || "0",
+                                      );
+                                      if (
+                                        costoEnvio > 0 &&
+                                        isOnline &&
+                                        estaConectado()
+                                      ) {
+                                        await supabase
+                                          .from("costo_delivery")
+                                          .insert([
+                                            {
+                                              pedido_id:
+                                                p.id &&
+                                                !String(p.id).startsWith(
+                                                  "local-",
+                                                )
+                                                  ? Number(p.id)
+                                                  : null,
+                                              monto: costoEnvio,
+                                              fecha:
+                                                p.fecha ||
+                                                formatToHondurasLocal(),
+                                              cliente: p.cliente || null,
+                                              cajero_id:
+                                                usuarioActual?.id || null,
+                                              caja:
+                                                p.caja ||
+                                                caiInfo?.caja_asignada ||
+                                                null,
+                                              tipo_pago: p.tipo_pago || null,
+                                            },
+                                          ]);
+                                        console.log(
+                                          `✓ Ingreso de delivery L ${costoEnvio} guardado en costo_delivery`,
+                                        );
+                                      }
+                                    } catch (deliveryErr) {
+                                      console.error(
+                                        "Error guardando costo_delivery:",
+                                        deliveryErr,
+                                      );
+                                      // No bloqueamos el flujo principal si falla esto
+                                    }
+
                                     try {
                                       // Si es un pedido local pendiente, eliminarlo de IndexedDB
                                       if (p.__localPending && p.local_id) {

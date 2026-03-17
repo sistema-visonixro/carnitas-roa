@@ -7,6 +7,7 @@ interface Producto {
   nombre: string;
   imagen: string;
   precio: number;
+  costo?: number;
   tipo: string;
   tipo_impuesto: string;
   impuesto: number;
@@ -96,6 +97,7 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
         codigo: form.codigo || generarCodigo(),
         nombre: form.nombre,
         precio,
+        costo: form.costo ?? null,
         tipo: form.tipo,
         tipo_impuesto,
         impuesto,
@@ -171,7 +173,7 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
   const comidaCount = productos.filter((p) => p.tipo === "comida").length;
   const bebidaCount = productos.filter((p) => p.tipo === "bebida").length;
   const complementoCount = productos.filter(
-    (p) => p.tipo === "complemento"
+    (p) => p.tipo === "complemento",
   ).length;
 
   return (
@@ -447,12 +449,121 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
           backdrop-filter: blur(20px);
           border: 1px solid var(--border);
           border-radius: 24px;
-          padding: 2rem;
-          min-width: 400px;
-          max-width: 90vw;
-          max-height: 90vh;
+          padding: 0;
+          min-width: 520px;
+          max-width: 92vw;
+          max-height: 93vh;
           overflow-y: auto;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+          box-shadow: 0 24px 64px rgba(0,0,0,0.22);
+        }
+
+        .modal-hero {
+          background: linear-gradient(135deg, #1e3a5f 0%, #2e7d32 100%);
+          border-radius: 24px 24px 0 0;
+          padding: 1.75rem 2rem 1.5rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+
+        .modal-hero-info { flex: 1; }
+
+        .modal-hero-badge {
+          display: inline-block;
+          background: rgba(255,255,255,0.18);
+          color: #fff;
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 1px;
+          text-transform: uppercase;
+          padding: 3px 10px;
+          border-radius: 20px;
+          margin-bottom: 0.4rem;
+        }
+
+        .modal-hero-title {
+          color: #fff;
+          font-size: 1.35rem;
+          font-weight: 700;
+          margin: 0;
+        }
+
+        .modal-hero-close {
+          background: rgba(255,255,255,0.15);
+          border: none;
+          color: #fff;
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          font-size: 1.25rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.2s;
+          flex-shrink: 0;
+        }
+
+        .modal-hero-close:hover { background: rgba(255,255,255,0.3); }
+
+        .modal-body {
+          padding: 1.75rem 2rem;
+        }
+
+        .modal-section {
+          margin-bottom: 1.5rem;
+        }
+
+        .modal-section-title {
+          font-size: 0.78rem;
+          font-weight: 700;
+          letter-spacing: 1.2px;
+          text-transform: uppercase;
+          color: var(--text-secondary);
+          margin-bottom: 0.85rem;
+          padding-bottom: 0.4rem;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .price-preview {
+          background: linear-gradient(135deg, #f0fdf4, #e0f2fe);
+          border: 1px solid #bbf7d0;
+          border-radius: 12px;
+          padding: 1rem 1.25rem;
+          display: flex;
+          gap: 1.5rem;
+          align-items: center;
+          flex-wrap: wrap;
+          margin-top: 0.75rem;
+        }
+
+        .price-preview-item {
+          text-align: center;
+          flex: 1;
+          min-width: 80px;
+        }
+
+        .price-preview-value {
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .price-preview-value.ganancia-pos { color: #16a34a; }
+        .price-preview-value.ganancia-neg { color: #dc2626; }
+
+        .price-preview-label {
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+          margin-top: 2px;
+        }
+
+        .form-label {
+          display: block;
+          color: var(--text-primary);
+          font-weight: 600;
+          margin-bottom: 0.4rem;
+          font-size: 0.875rem;
         }
 
         .modal-header {
@@ -649,10 +760,35 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                       </span>
                     </div>
                     <div className="card-meta">
-                      Precio: L {p.precio.toFixed(2)} · Impuesto:{" "}
-                      {p.tipo_impuesto === "venta" ? "15%" : "18%"}
+                      Precio:{" "}
+                      <strong style={{ color: "#4caf50" }}>
+                        L {p.precio.toFixed(2)}
+                      </strong>
+                      {p.costo != null && (
+                        <>
+                          {" "}
+                          · Costo:{" "}
+                          <strong style={{ color: "#f59e0b" }}>
+                            L {p.costo.toFixed(2)}
+                          </strong>
+                        </>
+                      )}
                     </div>
+                    {p.costo != null && (
+                      <div className="card-meta">
+                        Ganancia:{" "}
+                        <strong
+                          style={{
+                            color:
+                              p.precio - p.costo >= 0 ? "#16a34a" : "#dc2626",
+                          }}
+                        >
+                          L {(p.precio - p.costo).toFixed(2)}
+                        </strong>
+                      </div>
+                    )}
                     <div className="card-meta">
+                      Impuesto: {p.tipo_impuesto === "venta" ? "15%" : "18%"} ·
                       Subtotal: L {p.sub_total.toFixed(2)}
                     </div>
                   </div>
@@ -770,6 +906,8 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                       <th>Nombre</th>
                       <th>Imagen</th>
                       <th>Precio</th>
+                      <th>Costo</th>
+                      <th>Ganancia</th>
                       <th>Impuesto</th>
                       <th>Subtotal</th>
                       <th>Acciones</th>
@@ -795,8 +933,40 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                               <span style={{ color: "#666" }}>Sin imagen</span>
                             )}
                           </td>
-                          <td style={{ color: "#4caf50" }}>
+                          <td style={{ color: "#4caf50", fontWeight: 600 }}>
                             L {p.precio.toFixed(2)}
+                          </td>
+                          <td style={{ color: "#f59e0b", fontWeight: 600 }}>
+                            {p.costo != null ? (
+                              `L ${p.costo.toFixed(2)}`
+                            ) : (
+                              <span
+                                style={{ color: "#94a3b8", fontSize: "0.8rem" }}
+                              >
+                                —
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            {p.costo != null ? (
+                              <span
+                                style={{
+                                  fontWeight: 700,
+                                  color:
+                                    p.precio - p.costo >= 0
+                                      ? "#16a34a"
+                                      : "#dc2626",
+                                }}
+                              >
+                                L {(p.precio - p.costo).toFixed(2)}
+                              </span>
+                            ) : (
+                              <span
+                                style={{ color: "#94a3b8", fontSize: "0.8rem" }}
+                              >
+                                —
+                              </span>
+                            )}
                           </td>
                           <td>{p.tipo_impuesto === "venta" ? "15%" : "18%"}</td>
                           <td>L {p.sub_total.toFixed(2)}</td>
@@ -827,200 +997,259 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
         {showModal && (
           <div className="modal-overlay" onClick={() => setShowModal(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3 className="modal-title">
-                  {editId ? "✏️ Editar Producto" : "➕ Nuevo Producto"}
-                </h3>
+              {/* Hero Header */}
+              <div className="modal-hero">
+                <div className="modal-hero-info">
+                  <div className="modal-hero-badge">
+                    {editId ? "Editar registro" : "Nuevo registro"}
+                  </div>
+                  <h3 className="modal-hero-title">
+                    {editId ? "✏️ Editar Producto" : "➕ Agregar Producto"}
+                  </h3>
+                </div>
                 <button
-                  className="modal-close"
+                  className="modal-hero-close"
                   onClick={() => setShowModal(false)}
                 >
                   ×
                 </button>
               </div>
-              <form onSubmit={handleSubmit}>
-                <div style={{ marginBottom: "1.5rem" }}>
-                  <label
-                    style={{
-                      display: "block",
-                      color: "var(--text-primary)",
-                      fontWeight: 600,
-                      marginBottom: "0.5rem",
-                      fontSize: "0.9rem",
-                    }}
-                  >
-                    📝 Nombre del Producto
-                  </label>
-                  <input
-                    className="form-input"
-                    type="text"
-                    placeholder="Ej: Pollo Asado, Coca Cola, Salsa BBQ"
-                    value={form.nombre || ""}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, nombre: e.target.value }))
-                    }
-                    required
-                  />
-                </div>
-                <div className="form-grid">
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        color: "var(--text-primary)",
-                        fontWeight: 600,
-                        marginBottom: "0.5rem",
-                        fontSize: "0.9rem",
-                      }}
-                    >
-                      💰 Precio (Lempiras)
-                    </label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      placeholder="0.00"
-                      value={form.precio || ""}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          precio: Number(e.target.value),
-                        }))
-                      }
-                      required
-                      step="0.01"
-                    />
+
+              <div className="modal-body">
+                <form onSubmit={handleSubmit}>
+                  {/* SECCIÓN: Información básica */}
+                  <div className="modal-section">
+                    <div className="modal-section-title">
+                      📋 Información básica
+                    </div>
+                    <div style={{ marginBottom: "1rem" }}>
+                      <label className="form-label">
+                        Nombre del Producto *
+                      </label>
+                      <input
+                        className="form-input"
+                        style={{ width: "100%", boxSizing: "border-box" }}
+                        type="text"
+                        placeholder="Ej: Pollo Asado, Coca Cola, Salsa BBQ"
+                        value={form.nombre || ""}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, nombre: e.target.value }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="form-grid">
+                      <div>
+                        <label className="form-label">🏷️ Categoría</label>
+                        <select
+                          className="form-select"
+                          style={{ width: "100%" }}
+                          value={form.tipo || "comida"}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, tipo: e.target.value }))
+                          }
+                        >
+                          <option value="comida">🍽️ Comida</option>
+                          <option value="bebida">🥤 Bebida</option>
+                          <option value="complemento">🧂 Complemento</option>
+                        </select>
+                      </div>
+                      {form.tipo === "comida" && (
+                        <div>
+                          <label className="form-label">🍴 Subcategoría</label>
+                          <input
+                            type="text"
+                            list="subcategorias-list"
+                            className="form-input"
+                            style={{ width: "100%", boxSizing: "border-box" }}
+                            value={form.subcategoria || ""}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                subcategoria: e.target.value.toUpperCase(),
+                              }))
+                            }
+                            placeholder="ROSTIZADOS, FRITOS…"
+                          />
+                          <datalist id="subcategorias-list">
+                            <option value="ROSTIZADOS" />
+                            <option value="FRITOS" />
+                            <option value="TACOS" />
+                            <option value="ASADOS" />
+                          </datalist>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        color: "var(--text-primary)",
-                        fontWeight: 600,
-                        marginBottom: "0.5rem",
-                        fontSize: "0.9rem",
-                      }}
+
+                  {/* SECCIÓN: Precios */}
+                  <div className="modal-section">
+                    <div className="modal-section-title">💰 Precios</div>
+                    <div
+                      className="form-grid"
+                      style={{ gridTemplateColumns: "1fr 1fr" }}
                     >
-                      🏷️ Categoría
-                    </label>
+                      <div>
+                        <label className="form-label">
+                          Precio de Venta (L) *
+                        </label>
+                        <input
+                          className="form-input"
+                          style={{ width: "100%", boxSizing: "border-box" }}
+                          type="number"
+                          placeholder="0.00"
+                          value={form.precio || ""}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              precio: Number(e.target.value),
+                            }))
+                          }
+                          required
+                          step="0.01"
+                          min="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="form-label">Costo (L)</label>
+                        <input
+                          className="form-input"
+                          style={{ width: "100%", boxSizing: "border-box" }}
+                          type="number"
+                          placeholder="0.00"
+                          value={form.costo ?? ""}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              costo:
+                                e.target.value === ""
+                                  ? undefined
+                                  : Number(e.target.value),
+                            }))
+                          }
+                          step="0.01"
+                          min="0"
+                        />
+                      </div>
+                    </div>
+                    {/* Preview de ganancia */}
+                    <div className="price-preview">
+                      <div className="price-preview-item">
+                        <div className="price-preview-value">
+                          L {(form.precio || 0).toFixed(2)}
+                        </div>
+                        <div className="price-preview-label">Precio venta</div>
+                      </div>
+                      <div style={{ color: "#94a3b8", fontSize: "1.2rem" }}>
+                        −
+                      </div>
+                      <div className="price-preview-item">
+                        <div className="price-preview-value">
+                          L {(form.costo ?? 0).toFixed(2)}
+                        </div>
+                        <div className="price-preview-label">Costo</div>
+                      </div>
+                      <div style={{ color: "#94a3b8", fontSize: "1.2rem" }}>
+                        =
+                      </div>
+                      <div className="price-preview-item">
+                        <div
+                          className={`price-preview-value ${
+                            form.costo != null
+                              ? (form.precio || 0) - form.costo >= 0
+                                ? "ganancia-pos"
+                                : "ganancia-neg"
+                              : ""
+                          }`}
+                        >
+                          {form.costo != null
+                            ? `L ${((form.precio || 0) - form.costo).toFixed(2)}`
+                            : "—"}
+                        </div>
+                        <div className="price-preview-label">Ganancia</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECCIÓN: Impuesto */}
+                  <div className="modal-section">
+                    <div className="modal-section-title">📊 Impuesto</div>
                     <select
                       className="form-select"
-                      value={form.tipo || "comida"}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, tipo: e.target.value }))
-                      }
-                    >
-                      <option value="comida">🍽️ Comida</option>
-                      <option value="bebida">🥤 Bebida</option>
-                      <option value="complemento">🧂 Complemento</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Campo de subcategoría solo para comida */}
-                {form.tipo === "comida" && (
-                  <div style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        color: "var(--text-primary)",
-                        fontWeight: 600,
-                        marginBottom: "0.5rem",
-                        fontSize: "0.9rem",
-                      }}
-                    >
-                      🍴 Subcategoría
-                    </label>
-                    <input
-                      type="text"
-                      list="subcategorias-list"
-                      className="form-input"
-                      value={form.subcategoria || ""}
+                      style={{ width: "100%" }}
+                      value={form.tipo_impuesto || "venta"}
                       onChange={(e) =>
                         setForm((f) => ({
                           ...f,
-                          subcategoria: e.target.value.toUpperCase(),
+                          tipo_impuesto: e.target.value,
                         }))
                       }
-                      placeholder="Ej: ROSTIZADOS, FRITOS, TACOS, ASADOS"
-                      style={{
-                        width: "100%",
-                        padding: "0.6rem",
-                        borderRadius: "8px",
-                        border: "1px solid #ddd",
-                        fontSize: "0.95rem",
-                      }}
-                    />
-                    <datalist id="subcategorias-list">
-                      <option value="ROSTIZADOS" />
-                      <option value="FRITOS" />
-                      <option value="TACOS" />
-                      <option value="ASADOS" />
-                    </datalist>
+                    >
+                      <option value="venta">🧾 Venta (15%)</option>
+                      <option value="alcohol">🍺 Alcohol (18%)</option>
+                    </select>
                   </div>
-                )}
 
-                <div style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
-                  <label
-                    style={{
-                      display: "block",
-                      color: "var(--text-primary)",
-                      fontWeight: 600,
-                      marginBottom: "0.5rem",
-                      fontSize: "0.9rem",
-                    }}
-                  >
-                    📊 Tipo de Impuesto
-                  </label>
-                  <select
-                    className="form-select"
-                    value={form.tipo_impuesto || "venta"}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, tipo_impuesto: e.target.value }))
-                    }
-                  >
-                    <option value="venta">🧾 Venta (15%)</option>
-                    <option value="alcohol">🍺 Alcohol (18%)</option>
-                  </select>
-                </div>
-                <div style={{ marginBottom: "1.5rem" }}>
-                  <label
-                    style={{
-                      display: "block",
-                      color: "var(--text-primary)",
-                      fontWeight: 600,
-                      marginBottom: "0.5rem",
-                      fontSize: "0.9rem",
-                    }}
-                  >
-                    📷 Imagen del Producto
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setImagenFile(e.target.files?.[0] || null)}
-                    className="form-file"
-                  />
-                  {form.imagen && (
-                    <div style={{ marginTop: "0.5rem" }}>
-                      <small style={{ color: "var(--text-secondary)" }}>
-                        ✅ Imagen actual cargada
-                      </small>
+                  {/* SECCIÓN: Imagen */}
+                  <div className="modal-section">
+                    <div className="modal-section-title">
+                      📷 Imagen del Producto
                     </div>
-                  )}
-                </div>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={loading}
-                  style={{ width: "100%" }}
-                >
-                  {loading
-                    ? "⏳ Guardando..."
-                    : editId
-                    ? "💾 Guardar Cambios"
-                    : "✅ Crear Producto"}
-                </button>
-              </form>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) =>
+                        setImagenFile(e.target.files?.[0] || null)
+                      }
+                      className="form-file"
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                    />
+                    {form.imagen && (
+                      <div
+                        style={{
+                          marginTop: "0.5rem",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <img
+                          src={form.imagen}
+                          alt="preview"
+                          style={{
+                            width: 48,
+                            height: 48,
+                            borderRadius: 8,
+                            objectFit: "cover",
+                            border: "1px solid var(--border)",
+                          }}
+                        />
+                        <small style={{ color: "var(--text-secondary)" }}>
+                          ✅ Imagen actual
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={loading}
+                    style={{
+                      width: "100%",
+                      justifyContent: "center",
+                      padding: "14px",
+                      fontSize: "1rem",
+                    }}
+                  >
+                    {loading
+                      ? "⏳ Guardando..."
+                      : editId
+                        ? "💾 Guardar Cambios"
+                        : "✅ Crear Producto"}
+                  </button>
+                </form>
+              </div>
             </div>
           </div>
         )}

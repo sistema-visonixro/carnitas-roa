@@ -17,7 +17,8 @@ type ViewType =
   | "cierreadmin"
   | "etiquetas"
   | "recibo"
-  | "datosNegocio";
+  | "datosNegocio"
+  | "gananciasNetas";
 
 const cards: {
   label: string;
@@ -82,6 +83,13 @@ const cards: {
     color: "#00897b",
     subtitle: "Información del negocio",
   },
+  {
+    label: "Ganancias Netas",
+    icon: "📈",
+    view: "gananciasNetas",
+    color: "#0f766e",
+    subtitle: "Rentabilidad y margen",
+  },
 ];
 
 interface AdminPanelProps {
@@ -100,6 +108,7 @@ import GastosView from "./GastosView";
 import FacturasEmitidasView from "./FacturasEmitidasView";
 import CierresAdminView from "./CierresAdminView";
 import DatosNegocioView from "./DatosNegocioView";
+import GananciasNetasView from "./GananciasNetasView";
 
 const AdminPanel: FC<AdminPanelProps> = ({ onSelect, user }) => {
   const { datos: datosNegocio } = useDatosNegocio();
@@ -752,6 +761,11 @@ const AdminPanel: FC<AdminPanelProps> = ({ onSelect, user }) => {
               )}
               {currentView === "datosNegocio" && (
                 <DatosNegocioView onBack={() => setCurrentView("resultados")} />
+              )}
+              {currentView === "gananciasNetas" && (
+                <GananciasNetasView
+                  onBack={() => setCurrentView("resultados")}
+                />
               )}
             </div>
           </section>

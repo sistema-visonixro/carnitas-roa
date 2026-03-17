@@ -20,6 +20,7 @@ import FacturasEmitidasView from "./FacturasEmitidasView";
 import EtiquetasView from "./EtiquetasView";
 import ReciboView from "./ReciboView";
 import DatosNegocioView from "./DatosNegocioView";
+import GananciasNetasView from "./GananciasNetasView";
 import { useDatosNegocio } from "./useDatosNegocio";
 import "./App.css";
 import { supabase } from "./supabaseClient";
@@ -83,6 +84,7 @@ function App() {
     | "cajaOperada"
     | "cierreadmin"
     | "datosNegocio"
+    | "gananciasNetas"
   >(initialView || "home");
   const [cajaApertura, setCajaApertura] = useState<string | null>(null);
 
@@ -501,6 +503,15 @@ function App() {
     return (
       <>
         <CierresAdminView onVolver={() => setView("admin")} />
+        <VersionComponent />
+      </>
+    );
+  }
+
+  if (view === "gananciasNetas" && user?.rol === "Admin") {
+    return (
+      <>
+        <GananciasNetasView onBack={() => setView("admin")} />
         <VersionComponent />
       </>
     );
