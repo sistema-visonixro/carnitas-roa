@@ -1,9 +1,13 @@
+:root {
+  --login-bg: linear-gradient(135deg, #071029 0%, #09243d 50%, #073b5b 100%);
+}
+
 body {
   min-height: 100vh;
-  /* Usar el logo del proyecto como fondo por defecto; si hay logo subido en datos_negocio, FondoImagen lo usará en tiempo de ejecución */
-  background: url('/logo.png') no-repeat center center fixed;
+  background: var(--login-bg) fixed;
   background-size: cover;
-  font-family: 'Segoe UI', Arial, sans-serif;
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: rgba(255, 255, 255, 0.95);
 }
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
@@ -12,7 +16,7 @@ body {
 
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: #071029;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;

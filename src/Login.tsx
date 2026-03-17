@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { getBackgroundStyle } from "./assets/images";
 import { useDatosNegocio } from "./useDatosNegocio";
 
 interface LoginProps {
@@ -50,12 +49,12 @@ export default function Login({ onLogin }: LoginProps) {
     };
     window.addEventListener(
       "app:check-update-result",
-      handler as EventListener
+      handler as EventListener,
     );
     return () =>
       window.removeEventListener(
         "app:check-update-result",
-        handler as EventListener
+        handler as EventListener,
       );
   }, []);
 
@@ -76,7 +75,7 @@ export default function Login({ onLogin }: LoginProps) {
       });
       const users = await res.json();
       const user = users.find(
-        (u: any) => u.codigo === codigo && u.clave === clave
+        (u: any) => u.codigo === codigo && u.clave === clave,
       );
       if (user) {
         // Los cajeros ahora van directo a Punto de Ventas, sin verificar apertura/cierre
@@ -92,7 +91,7 @@ export default function Login({ onLogin }: LoginProps) {
               email: user.email || "",
               rol: user.rol,
               caja: user.caja,
-            })
+            }),
           );
           onLogin(user);
           window.location.reload();
@@ -106,10 +105,8 @@ export default function Login({ onLogin }: LoginProps) {
     setLoading(false);
   };
 
-  // Usar logo del negocio como fondo, o fondo por defecto
-  const backgroundStyle = datosNegocio.logo_url
-    ? `url(${datosNegocio.logo_url}) center/cover no-repeat`
-    : getBackgroundStyle();
+  // Fondo azul oscuro elegante para la pantalla de login
+  const backgroundStyle = `linear-gradient(135deg, #071029 0%, #09243d 50%, #073b5b 100%)`;
 
   return (
     <div

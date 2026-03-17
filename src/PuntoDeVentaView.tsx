@@ -11,7 +11,7 @@ import {
   guardarPagosLocal,
   guardarGastoLocal,
   guardarEnvioLocal,
-  obtenerEnviosPendientes,
+
   // obtenerContadorPendientes,
   sincronizarTodo,
   eliminarFacturaLocal,
@@ -96,6 +96,32 @@ export default function PuntoDeVentaView({
     tasa_dolar?: number;
     gastos: number;
   } | null>(null);
+
+  // Estados para historial de ventas del turno
+  const [showHistorialVentas, setShowHistorialVentas] = useState(false);
+  const [historialVentas, setHistorialVentas] = useState<any[]>([]);
+  const [historialLoading, setHistorialLoading] = useState(false);
+  // Menu y modal relacionados
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
+  const [showTipoOrdenModal, setShowTipoOrdenModal] = useState(false);
+  const [selectedVentaForComanda, setSelectedVentaForComanda] = useState<
+    any | null
+  >(null);
+
+  // Control de animación de menú
+  const openMenu = () => {
+    setMenuClosing(false);
+    setShowOptionsMenu(true);
+  };
+
+  const closeMenuAnimated = () => {
+    setMenuClosing(true);
+    setTimeout(() => {
+      setMenuClosing(false);
+      setShowOptionsMenu(false);
+    }, 240);
+  };
 
   // Función para obtener resumen de caja del día (EFECTIVO/TARJETA/TRANSFERENCIA)
   async function fetchResumenCaja() {
@@ -299,6 +325,307 @@ export default function PuntoDeVentaView({
       setResumenLoading(false);
     }
   }
+
+  // Función para obtener historial de ventas del turno actual
+  async function fetchHistorialVentas() {
+    setShowHistorialVentas(true);
+    setHistorialLoading(true);
+    try {
+      const { end: dayEnd } = getLocalDayRange();
+      let cajaAsignada = caiInfo?.caja_asignada;
+      if (!cajaAsignada) {
+        const { data: caiData } = await supabase
+          .from("cai_facturas")
+          .select("caja_asignada")
+          .eq("cajero_id", usuarioActual?.id)
+          .single();
+        cajaAsignada = caiData?.caja_asignada || "";
+      }
+      const { data: aperturaActual } = await supabase
+        .from("cierres")
+        .select("fecha, estado")
+        .eq("cajero_id", usuarioActual?.id)
+        .eq("caja", cajaAsignada)
+        .eq("estado", "APERTURA")
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!aperturaActual) {
+        setHistorialLoading(false);
+        alert("No hay apertura de caja registrada.");
+        setShowHistorialVentas(false);
+        return;
+      }
+      const { data: ventas, error } = await supabase
+        .from("facturas")
+        .select("*")
+        .eq("cajero_id", usuarioActual?.id)
+        .gte("fecha_hora", aperturaActual.fecha)
+        .lte("fecha_hora", dayEnd)
+        .order("fecha_hora", { ascending: false });
+      if (error) throw error;
+      setHistorialVentas(ventas || []);
+    } catch (err) {
+      console.error("Error cargando historial:", err);
+      alert("Error al cargar historial de ventas");
+    } finally {
+      setHistorialLoading(false);
+    }
+  }
+
+  // Reimprimir solo la factura (comprobante) de una venta del historial
+  async function imprimirFacturaHistorial(venta: any) {
+    try {
+      const [{ data: reciboConfig }, { data: pagosVenta }] = await Promise.all([
+        supabase
+          .from("recibo_config")
+          .select("*")
+          .eq("nombre", "default")
+          .single(),
+        supabase
+          .from("pagos")
+          .select("*")
+          .eq("factura_venta", venta.factura)
+          .eq("cajero_id", usuarioActual?.id),
+      ]);
+      const prods: Array<{
+        nombre: string;
+        precio: number;
+        cantidad: number;
+        tipo: string;
+      }> = (() => {
+        try {
+          return JSON.parse(venta.productos || "[]");
+        } catch {
+          return [];
+        }
+      })();
+      const totalVenta = parseFloat(venta.total || "0");
+      const subtotalVenta = parseFloat(venta.sub_total || "0");
+      const isv15Venta = parseFloat(venta.isv_15 || "0");
+      const efectivoTotal = (pagosVenta || [])
+        .filter((p: any) => p.tipo === "efectivo" && p.referencia !== "CAMBIO")
+        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
+      const tarjetaTotal = (pagosVenta || [])
+        .filter((p: any) => p.tipo === "tarjeta")
+        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
+      const dolaresTotal = (pagosVenta || [])
+        .filter((p: any) => p.tipo === "dolares")
+        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
+      const dolaresUSD = (pagosVenta || [])
+        .filter((p: any) => p.tipo === "dolares")
+        .reduce((s: number, p: any) => s + parseFloat(p.usd_monto || 0), 0);
+      const transferenciaTotal = (pagosVenta || [])
+        .filter((p: any) => p.tipo === "transferencia")
+        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
+      const primerPago = (pagosVenta || []).find(
+        (p: any) => p.recibido != null,
+      );
+      const recibidoTotal = primerPago ? parseFloat(primerPago.recibido) : 0;
+      const cambioTotal = recibidoTotal - totalVenta;
+      let pagosHtml = "";
+      if (
+        efectivoTotal > 0 ||
+        tarjetaTotal > 0 ||
+        dolaresTotal > 0 ||
+        transferenciaTotal > 0
+      ) {
+        pagosHtml +=
+          "<div style='border-top:1px dashed #000; margin-top:10px; padding-top:10px;'>";
+        pagosHtml +=
+          "<div style='font-size:15px; font-weight:700; margin-bottom:6px;'>PAGOS RECIBIDOS:</div>";
+        if (efectivoTotal > 0)
+          pagosHtml += `<div style='font-size:14px; margin-bottom:3px;'><span style='float:left;'>Efectivo:</span><span style='float:right;'>L ${efectivoTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+        if (tarjetaTotal > 0)
+          pagosHtml += `<div style='font-size:14px; margin-bottom:3px;'><span style='float:left;'>Tarjeta:</span><span style='float:right;'>L ${tarjetaTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+        if (dolaresTotal > 0)
+          pagosHtml += `<div style='font-size:14px; margin-bottom:3px;'><span style='float:left;'>Dólares: $${dolaresUSD.toFixed(2)} USD</span><span style='float:right;'>L ${dolaresTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+        if (transferenciaTotal > 0)
+          pagosHtml += `<div style='font-size:14px; margin-bottom:3px;'><span style='float:left;'>Transferencia:</span><span style='float:right;'>L ${transferenciaTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+        if (cambioTotal > 0)
+          pagosHtml += `<div style='font-size:15px; margin-top:6px; padding-top:6px; border-top:1px solid #000; font-weight:700;'><span style='float:left;'>CAMBIO:</span><span style='float:right;'>L ${cambioTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+        pagosHtml += "</div>";
+      }
+      const comprobanteHtml = `
+        <div style='font-family:monospace; width:${reciboConfig?.recibo_ancho || 80}mm; margin:0; padding:${reciboConfig?.recibo_padding || 8}px; background:#fff;'>
+          <div style='text-align:center; margin-bottom:12px;'>
+            <img src='${datosNegocio.logo_url || "/favicon.ico"}' alt='logo' style='width:320px; height:320px;' />
+          </div>
+          <div style='text-align:center; font-size:18px; font-weight:700; margin-bottom:6px;'>${datosNegocio.nombre_negocio.toUpperCase()}</div>
+          <div style='text-align:center; font-size:14px; margin-bottom:3px;'>${datosNegocio.direccion}</div>
+          <div style='text-align:center; font-size:14px; margin-bottom:3px;'>RTN: ${datosNegocio.rtn}</div>
+          <div style='text-align:center; font-size:14px; margin-bottom:3px;'>PROPIETARIO: ${datosNegocio.propietario.toUpperCase()}</div>
+          <div style='text-align:center; font-size:14px; margin-bottom:10px;'>TEL: ${datosNegocio.celular}</div>
+          <div style='border-top:2px solid #000; border-bottom:2px solid #000; padding:6px 0; margin-bottom:10px;'>
+            <div style='text-align:center; font-size:16px; font-weight:700;'>RECIBO DE VENTA (COPIA)</div>
+          </div>
+          <div style='font-size:14px; margin-bottom:3px;'>Cliente: ${venta.cliente}</div>
+          <div style='font-size:14px; margin-bottom:3px;'>Factura: ${venta.factura}</div>
+          <div style='font-size:14px; margin-bottom:10px;'>Fecha: ${new Date(venta.fecha_hora).toLocaleString("es-HN", { timeZone: "America/Tegucigalpa" })}</div>
+          <div style='border-top:1px dashed #000; border-bottom:1px dashed #000; padding:6px 0; margin-bottom:10px;'>
+            <table style='width:100%; font-size:14px; border-collapse:collapse;'>
+              <thead>
+                <tr style='border-bottom:1px solid #000;'>
+                  <th style='text-align:left; padding:3px 0;'>CANT</th>
+                  <th style='text-align:left; padding:3px 0;'>DESCRIPCIÓN</th>
+                  <th style='text-align:right; padding:3px 0;'>P.UNIT</th>
+                  <th style='text-align:right; padding:3px 0;'>TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${prods.map((p) => `<tr><td style='padding:4px 0;'>${p.cantidad}</td><td style='padding:4px 0;'>${p.nombre}</td><td style='text-align:right; padding:4px 0;'>L${parseFloat(String(p.precio)).toFixed(2)}</td><td style='text-align:right; padding:4px 0;'>L${(parseFloat(String(p.precio)) * p.cantidad).toFixed(2)}</td></tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+          <div style='font-size:15px; margin-bottom:3px;'><span style='float:left;'>SUBTOTAL:</span><span style='float:right; font-weight:700;'>L ${subtotalVenta.toFixed(2)}</span><div style='clear:both;'></div></div>
+          <div style='font-size:15px; margin-bottom:3px;'><span style='float:left;'>ISV 15%:</span><span style='float:right; font-weight:700;'>L ${isv15Venta.toFixed(2)}</span><div style='clear:both;'></div></div>
+          <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-size:17px; font-weight:700;'><span style='float:left;'>TOTAL:</span><span style='float:right;'>L ${totalVenta.toFixed(2)}</span><div style='clear:both;'></div></div>
+          ${pagosHtml}
+          <div style='text-align:center; margin-top:18px; font-size:15px; font-weight:700; border-top:1px dashed #000; padding-top:10px;'>¡GRACIAS POR SU COMPRA!</div>
+          <div style='text-align:center; font-size:14px; margin-top:5px;'>Esperamos verle pronto</div>
+        </div>
+      `;
+      const printHtml = `<html><head><title>Factura ${venta.factura}</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}*{-webkit-print-color-adjust:exact;}</style></head><body>${comprobanteHtml}</body></html>`;
+      const pw = window.open("", "", "height=800,width=400");
+      if (pw) {
+        pw.document.write(printHtml);
+        pw.document.close();
+        pw.onload = () => {
+          setTimeout(() => {
+            pw.focus();
+            pw.print();
+            pw.close();
+          }, 500);
+        };
+      }
+      // Cerrar modal de historial después de imprimir
+      try {
+        setShowHistorialVentas(false);
+      } catch {}
+    } catch (err) {
+      console.error("Error reimprimiendo factura:", err);
+      alert("Error al reimprimir la factura");
+    }
+  }
+
+  // Reimprimir la comanda de una venta del historial
+  async function imprimirComandaHistorial(
+    venta: any,
+    tipoOrdenSel: "PARA LLEVAR" | "COMER AQUÍ",
+  ) {
+    try {
+      const { data: etiquetaConfig } = await supabase
+        .from("etiquetas_config")
+        .select("*")
+        .eq("nombre", "default")
+        .single();
+      const prods: Array<{
+        nombre: string;
+        precio: number;
+        cantidad: number;
+        tipo: string;
+        complementos?: string[];
+        piezas?: string;
+      }> = (() => {
+        try {
+          return JSON.parse(venta.productos || "[]");
+        } catch {
+          return [];
+        }
+      })();
+      const comandaHtml = `
+        <div style='font-family:monospace; width:${etiquetaConfig?.etiqueta_ancho || 80}mm; margin:0; padding:${etiquetaConfig?.etiqueta_padding || 8}px;'>
+          <div style='font-size:${etiquetaConfig?.etiqueta_fontsize || 24}px; font-weight:800; color:#000; text-align:center; margin-bottom:6px;'>${etiquetaConfig?.etiqueta_comanda || "COMANDA COCINA"}</div>
+          <div style='font-size:28px; font-weight:900; color:#000; text-align:center; margin:16px 0;'>${tipoOrdenSel}</div>
+          <div style='font-size:20px; font-weight:800; color:#000; text-align:center; margin-bottom:12px;'>Cliente: <b>${venta.cliente}</b></div>
+          <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${venta.factura}</div>
+          ${
+            prods.filter((p) => p.tipo === "comida").length > 0
+              ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMIDAS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:12px;'>
+              ${prods
+                .filter((p) => p.tipo === "comida")
+                .map(
+                  (p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                  ${p.complementos && p.complementos.length > 0 ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍗 Complementos:</div>${p.complementos.map((c) => `<div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${c}</span></div>`).join("")}` : ""}
+                  ${p.piezas && p.piezas !== "PIEZAS VARIAS" ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍖 Piezas:</div><div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${p.piezas}</span></div>` : ""}
+                </li>
+              `,
+                )
+                .join("")}
+            </ul>
+          `
+              : ""
+          }
+          ${
+            prods.filter((p) => p.tipo === "complemento").length > 0
+              ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMPLEMENTOS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:12px;'>
+              ${prods
+                .filter((p) => p.tipo === "complemento")
+                .map(
+                  (p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                </li>
+              `,
+                )
+                .join("")}
+            </ul>
+          `
+              : ""
+          }
+          ${
+            prods.filter((p) => p.tipo === "bebida").length > 0
+              ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>BEBIDAS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:0;'>
+              ${prods
+                .filter((p) => p.tipo === "bebida")
+                .map(
+                  (p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                </li>
+              `,
+                )
+                .join("")}
+            </ul>
+          `
+              : ""
+          }
+        </div>
+      `;
+      const printHtml = `<html><head><title>Comanda ${venta.factura}</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`;
+      const pw = window.open("", "", "height=800,width=400");
+      if (pw) {
+        pw.document.write(printHtml);
+        pw.document.close();
+        pw.onload = () => {
+          setTimeout(() => {
+            pw.focus();
+            pw.print();
+            pw.close();
+          }, 500);
+        };
+      }
+      // Cerrar modal de historial después de imprimir comanda
+      try {
+        setShowHistorialVentas(false);
+      } catch {}
+    } catch (err) {
+      console.error("Error reimprimiendo comanda:", err);
+      alert("Error al reimprimir la comanda");
+    }
+  }
+
   const [theme, setTheme] = useState<"lite" | "dark">(() => {
     try {
       const stored = localStorage.getItem("theme");
@@ -368,7 +695,7 @@ export default function PuntoDeVentaView({
   // Modal para listar pedidos del cajero
   const [showPedidosModal, setShowPedidosModal] = useState(false);
   const [pedidosList, setPedidosList] = useState<any[]>([]);
-  const [pedidosLoading, setPedidosLoading] = useState(false);
+  const [pedidosLoading] = useState(false);
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
@@ -1108,7 +1435,7 @@ export default function PuntoDeVentaView({
       console.log("⚠ Ya se está guardando un gasto, ignorando clic adicional");
       return;
     }
-    
+
     // Validaciones básicas
     const montoNum = parseFloat(gastoMonto);
     if (isNaN(montoNum) || montoNum <= 0) {
@@ -1518,6 +1845,10 @@ export default function PuntoDeVentaView({
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
         }
+        @keyframes menuIn {
+          from { transform: scale(0.96); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
       `}</style>
       {/* Indicador de conexión e información del cajero */}
       <div
@@ -1571,60 +1902,7 @@ export default function PuntoDeVentaView({
             alignItems: "center",
           }}
         >
-          {/* Botones de tema */}
-          <button
-            onClick={() => {
-              setTheme("dark");
-              localStorage.setItem("theme", "dark");
-            }}
-            style={{
-              background: theme === "dark" ? "#1976d2" : "transparent",
-              color:
-                theme === "dark"
-                  ? "#fff"
-                  : theme === "lite"
-                    ? "#1976d2"
-                    : "#fff",
-              border: theme === "dark" ? "none" : "1px solid #1976d2",
-              borderRadius: 6,
-              padding: "6px 10px",
-              fontWeight: 600,
-              fontSize: 12,
-              cursor: "pointer",
-              boxShadow:
-                theme === "dark" ? "0 2px 8px rgba(0,0,0,0.12)" : "none",
-            }}
-            title="Activar modo oscuro"
-          >
-            🌙 Oscuro
-          </button>
-          <button
-            onClick={() => {
-              setTheme("lite");
-              localStorage.setItem("theme", "lite");
-            }}
-            style={{
-              background: theme === "lite" ? "#1976d2" : "transparent",
-              color:
-                theme === "lite"
-                  ? "#fff"
-                  : theme === "dark"
-                    ? "#f5f5f5"
-                    : "#1976d2",
-              border:
-                theme === "lite" ? "none" : "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 6,
-              padding: "6px 10px",
-              fontWeight: 600,
-              fontSize: 12,
-              cursor: "pointer",
-              boxShadow:
-                theme === "lite" ? "0 2px 8px rgba(0,0,0,0.12)" : "none",
-            }}
-            title="Activar modo claro"
-          >
-            ☀️ Claro
-          </button>
+          {/* Los controles de tema ahora están en el Menú central */}
 
           {/* Botones que requieren apertura registrada */}
           {aperturaRegistrada && (
@@ -1640,168 +1918,6 @@ export default function PuntoDeVentaView({
                       : "rgba(255,255,255,0.1)",
                 }}
               />
-
-              {/* Botón Resumen de caja */}
-              <button
-                style={{
-                  fontSize: 12,
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  background: isOnline ? "#1976d2" : "#9e9e9e",
-                  color: "#fff",
-                  fontWeight: 600,
-                  border: "none",
-                  cursor: isOnline ? "pointer" : "not-allowed",
-                  opacity: isOnline ? 1 : 0.6,
-                }}
-                onClick={() => {
-                  if (!isOnline) {
-                    setShowNoConnectionModal(true);
-                    return;
-                  }
-                  fetchResumenCaja();
-                }}
-                title={
-                  isOnline
-                    ? "Ver resumen de caja del día"
-                    : "Requiere conexión a internet"
-                }
-              >
-                📊 Resumen
-              </button>
-
-              {/* Botón Registrar gasto */}
-              <button
-                onClick={() => {
-                  cerrarRegistrarGasto();
-                  setShowRegistrarGasto(true);
-                }}
-                style={{
-                  fontSize: 12,
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  background:
-                    theme === "lite"
-                      ? "rgba(211,47,47,0.95)"
-                      : "rgba(183,28,28,0.95)",
-                  color: "#fff",
-                  fontWeight: 600,
-                  border: "none",
-                  cursor: "pointer",
-                }}
-                title="Registrar un gasto"
-              >
-                💰 Gasto
-              </button>
-
-              {/* Botón Devolución */}
-              <button
-                onClick={() => {
-                  setShowDevolucionModal(true);
-                  setDevolucionFactura("");
-                  setDevolucionData(null);
-                  setDevolucionPassword("");
-                }}
-                style={{
-                  fontSize: 12,
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  background:
-                    theme === "lite"
-                      ? "rgba(255,152,0,0.95)"
-                      : "rgba(230,81,0,0.95)",
-                  color: "#fff",
-                  fontWeight: 600,
-                  border: "none",
-                  cursor: "pointer",
-                }}
-                title="Procesar devolución"
-              >
-                🔄 Devolución
-              </button>
-
-              {/* Botón Domicilios */}
-              <button
-                onClick={async () => {
-              setShowPedidosModal(true);
-              setPedidosLoading(true);
-              let localPendientes: any[] = [];
-              try {
-                // PASO 1: Cargar pedidos locales pendientes desde IndexedDB
-                localPendientes = (await obtenerEnviosPendientes())
-                  .filter((envio) => envio.cajero_id === usuarioActual?.id)
-                  .map((envio) => ({
-                    ...envio,
-                    __localPending: true,
-                    local_id: envio.id,
-                    fecha: envio.fecha_hora,
-                    celular: envio.telefono,
-                    id: `local-${envio.id}`,
-                  }));
-
-                console.log(
-                  `📦 ${localPendientes.length} pedidos locales pendientes cargados desde IndexedDB`,
-                );
-
-                // PASO 2: Si hay conexión, intentar cargar desde Supabase
-                if (isOnline && estaConectado()) {
-                  try {
-                    const { data, error } = await supabase
-                      .from("pedidos_envio")
-                      .select("*")
-                      .eq("cajero_id", usuarioActual?.id)
-                      .order("created_at", { ascending: false })
-                      .limit(100);
-
-                    if (!error && data) {
-                      console.log(
-                        `🌐 ${data.length} pedidos cargados desde Supabase`,
-                      );
-                      setPedidosList([...data, ...localPendientes]);
-                    } else {
-                      console.error(
-                        "Error cargando pedidos de Supabase:",
-                        error,
-                      );
-                      setPedidosList(localPendientes);
-                    }
-                  } catch (supabaseErr) {
-                    console.error(
-                      "Error de conexión con Supabase:",
-                      supabaseErr,
-                    );
-                    console.log(
-                      "⚠ Sin conexión. Mostrando solo pedidos locales",
-                    );
-                    setPedidosList(localPendientes);
-                  }
-                } else {
-                  // Sin conexión, mostrar solo pedidos locales
-                  console.log("⚠ Sin conexión. Mostrando solo pedidos locales");
-                  setPedidosList(localPendientes);
-                }
-              } catch (e) {
-                console.error("Error cargando pedidos:", e);
-                // En caso de error crítico, al menos intentar mostrar lo que tenemos
-                setPedidosList(localPendientes);
-              } finally {
-                setPedidosLoading(false);
-              }
-            }}
-            style={{
-              fontSize: 12,
-              padding: "6px 12px",
-              borderRadius: 6,
-              background: "#388e3c",
-              color: "#fff",
-              fontWeight: 600,
-              border: "none",
-              cursor: "pointer",
-            }}
-            title="Ver pedidos a domicilio"
-          >
-                🏠 Domicilios
-              </button>
             </>
           )}
 
@@ -1848,49 +1964,7 @@ export default function PuntoDeVentaView({
             </button>
           )}
 
-          {/* Botón Registrar cierre - solo visible con apertura activa */}
-          {aperturaRegistrada && (
-            <>
-              <div
-                style={{
-                  width: 1,
-                  height: 24,
-                  background:
-                    theme === "lite"
-                      ? "rgba(0,0,0,0.1)"
-                      : "rgba(255,255,255,0.1)",
-                }}
-              />
-              <button
-                style={{
-                  background: isOnline ? "#fbc02d" : "#9e9e9e",
-                  color: isOnline ? "#333" : "#666",
-                  border: "none",
-                  borderRadius: 6,
-                  padding: "6px 12px",
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: isOnline ? "pointer" : "not-allowed",
-                  boxShadow: isOnline ? "0 2px 8px #fbc02d44" : "none",
-                  opacity: isOnline ? 1 : 0.6,
-                }}
-                onClick={() => {
-                  if (!isOnline) {
-                    setShowNoConnectionModal(true);
-                    return;
-                  }
-                  setShowCierre(true);
-                }}
-                title={
-                  isOnline
-                    ? "Registrar cierre de caja"
-                    : "Requiere conexión a internet"
-                }
-              >
-                🚪 Cierre de Caja
-              </button>
-            </>
-          )}
+          {/* Botones principales: el botón de Cierre ahora está dentro del menú central */}
         </div>
         {/* QZ Tray indicators removed */}
       </div>
@@ -2091,6 +2165,34 @@ export default function PuntoDeVentaView({
             </button>
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 18,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 10000,
+        }}
+      >
+        <button
+          onClick={() => openMenu()}
+          title="Abrir menú"
+          style={{
+            background: "#263241",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 14px",
+            fontWeight: 700,
+            fontSize: 16,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px #0004",
+          }}
+        >
+          ☰ Menú
+        </button>
       </div>
 
       {/* Modal de pago (fuera del bloque del botón) */}
@@ -2851,6 +2953,7 @@ export default function PuntoDeVentaView({
           style={{
             flex: 2,
             minWidth: 0,
+            order: 2,
             background: theme === "lite" ? "#fff" : "#232526",
             borderRadius: 18,
             boxShadow:
@@ -3140,6 +3243,32 @@ export default function PuntoDeVentaView({
                     (e.currentTarget.style.transform = "scale(1)")
                   }
                 >
+                  <div
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      justifyContent: "center",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: theme === "lite" ? "#fff7cc" : "#2b2b2b",
+                        color: theme === "lite" ? "#3b2f00" : "#f5f5f5",
+                        padding: "6px 12px",
+                        borderRadius: 999,
+                        fontWeight: 800,
+                        boxShadow:
+                          theme === "lite"
+                            ? "0 6px 18px rgba(251,192,45,0.12)"
+                            : "0 6px 18px rgba(0,0,0,0.6)",
+                        fontSize: 18,
+                      }}
+                    >
+                      L {p.precio.toFixed(2)}
+                    </div>
+                  </div>
+
                   {p.imagen && (
                     <img
                       src={p.imagen}
@@ -3148,64 +3277,60 @@ export default function PuntoDeVentaView({
                         width: "100%",
                         height: 140,
                         objectFit: "cover",
-                        borderRadius: 16,
-                        marginBottom: 18,
-                        boxShadow: "0 4px 16px #1976d222",
+                        borderRadius: 12,
+                        marginBottom: 12,
+                        boxShadow:
+                          theme === "lite"
+                            ? "0 8px 24px rgba(16,24,40,0.08)"
+                            : "0 8px 24px rgba(0,0,0,0.6)",
                       }}
                     />
                   )}
-                  <div
-                    style={{
-                      fontWeight: 800,
-                      fontSize: 22,
-                      color:
-                        activeTab === "comida"
-                          ? "#388e3c"
-                          : activeTab === "bebida"
-                            ? "#1976d2"
-                            : "#9c27b0",
-                      textAlign: "center",
-                      marginBottom: 8,
-                    }}
-                  >
-                    {p.nombre}
+
+                  <div style={{ textAlign: "center", width: "100%" }}>
+                    <div
+                      style={{
+                        fontWeight: 800,
+                        fontSize: 18,
+                        color: theme === "lite" ? "#111827" : "#f5f5f5",
+                        marginBottom: 6,
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      {p.nombre}
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      fontSize: 18,
-                      color: theme === "dark" ? "#fbc02d" : "#333",
-                      textAlign: "center",
-                      marginBottom: 8,
-                    }}
-                  >
-                    L {p.precio.toFixed(2)}
-                  </div>
+                  {/* precio mostrado arriba en badge; eliminado aquí para evitar duplicado */}
                 </div>
               ))}
             </div>
           )}
         </div>
-
         {/* Order Summary Section */}
         <div
           style={{
             flex: 1,
+            order: 1,
             minWidth: 300,
-            background: theme === "lite" ? "#fffde7" : "#232526",
+            background: theme === "lite" ? "#e6eef6" : "#263238",
             borderRadius: 16,
             boxShadow:
               theme === "lite"
-                ? "0 2px 12px rgba(0,0,0,0.1)"
-                : "0 2px 12px #0008",
+                ? "0 6px 20px rgba(16,24,40,0.06)"
+                : "0 6px 20px rgba(0,0,0,0.6)",
             padding: 24,
             display: "flex",
             flexDirection: "column",
-            color: theme === "lite" ? "#222" : "#f5f5f5",
+            color: theme === "lite" ? "#0f1724" : "#f5f5f5",
             transition: "background 0.3s, color 0.3s",
           }}
         >
           <h2
-            style={{ color: "#fbc02d", marginBottom: 16, textAlign: "center" }}
+            style={{
+              color: theme === "lite" ? "#1976d2" : "#64b5f6",
+              marginBottom: 12,
+              textAlign: "center",
+            }}
           >
             Pedido Actual
           </h2>
@@ -3213,9 +3338,9 @@ export default function PuntoDeVentaView({
             style={{
               fontSize: 28,
               fontWeight: 700,
-              color: "#fbc02d",
+              color: theme === "lite" ? "#1565c0" : "#90caf9",
               textAlign: "center",
-              marginBottom: 16,
+              marginBottom: 14,
             }}
           >
             L {total.toFixed(2)}
@@ -3245,61 +3370,112 @@ export default function PuntoDeVentaView({
                 <button
                   onClick={limpiarSeleccion}
                   style={{
-                    background: theme === "lite" ? "#d32f2f" : "#b71c1c",
+                    background:
+                      theme === "lite"
+                        ? "linear-gradient(90deg,#ef5350,#e53935)"
+                        : "#b71c1c",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 8,
-                    padding: "10px 24px",
-                    fontWeight: 600,
-                    fontSize: 16,
-                    cursor: "pointer",
+                    borderRadius: 10,
+                    padding: "10px 20px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor:
+                      seleccionados.length === 0 ? "not-allowed" : "pointer",
                     opacity: seleccionados.length === 0 ? 0.5 : 1,
-                    transition: "background 0.3s",
+                    boxShadow: "0 6px 18px rgba(16,24,40,0.06)",
+                    transition:
+                      "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (seleccionados.length === 0) return;
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow =
+                      "0 10px 30px rgba(16,24,40,0.12)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow =
+                      "0 6px 18px rgba(16,24,40,0.06)";
                   }}
                   disabled={seleccionados.length === 0}
                 >
                   Limpiar
                 </button>
+
                 <button
                   style={{
-                    background: theme === "lite" ? "#1976d2" : "#1565c0",
+                    background:
+                      theme === "lite"
+                        ? "linear-gradient(90deg,#42a5f5,#1e88e5)"
+                        : "linear-gradient(90deg,#1976d2,#1565c0)",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 8,
-                    padding: "10px 24px",
-                    fontWeight: 600,
-                    fontSize: 16,
-                    cursor: "pointer",
+                    borderRadius: 10,
+                    padding: "10px 22px",
+                    fontWeight: 800,
+                    fontSize: 15,
+                    cursor:
+                      seleccionados.length === 0 ? "not-allowed" : "pointer",
                     opacity: seleccionados.length === 0 ? 0.5 : 1,
-                    transition: "background 0.3s",
+                    boxShadow: "0 8px 26px rgba(25,118,210,0.12)",
+                    transition:
+                      "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
                   }}
                   disabled={seleccionados.length === 0}
+                  onMouseEnter={(e) => {
+                    if (seleccionados.length === 0) return;
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow =
+                      "0 12px 36px rgba(25,118,210,0.18)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow =
+                      "0 8px 26px rgba(25,118,210,0.12)";
+                  }}
                   onClick={() => {
-                    // Validación rápida
                     if (facturaActual === "Límite alcanzado") {
                       alert("¡Límite de facturas alcanzado!");
                       return;
                     }
-                    // Abrir modal de ORDEN primero
                     setShowOrdenModal(true);
                   }}
                 >
                   Confirmar Pedido
                 </button>
+
                 <button
                   style={{
-                    background: "#2e7d32",
+                    background:
+                      theme === "lite"
+                        ? "linear-gradient(90deg,#66bb6a,#43a047)"
+                        : "#2e7d32",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 8,
-                    padding: "10px 24px",
-                    fontWeight: 600,
-                    fontSize: 16,
-                    cursor: "pointer",
-                    marginLeft: 12,
+                    borderRadius: 10,
+                    padding: "10px 20px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor:
+                      seleccionados.length === 0 ? "not-allowed" : "pointer",
                     opacity: seleccionados.length === 0 ? 0.5 : 1,
+                    boxShadow: "0 6px 18px rgba(16,24,40,0.06)",
+                    transition:
+                      "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
                   }}
                   disabled={seleccionados.length === 0}
+                  onMouseEnter={(e) => {
+                    if (seleccionados.length === 0) return;
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow =
+                      "0 10px 30px rgba(16,24,40,0.12)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow =
+                      "0 6px 18px rgba(16,24,40,0.06)";
+                  }}
                   onClick={() => setShowEnvioModal(true)}
                 >
                   Pedido por Teléfono
@@ -3310,14 +3486,16 @@ export default function PuntoDeVentaView({
                 style={{
                   display: "flex",
                   padding: "10px 12px",
-                  background: theme === "lite" ? "#f5f5f5" : "#424242",
+                  background: theme === "lite" ? "#eef6fb" : "#394a52",
                   borderRadius: "8px 8px 0 0",
-                  fontWeight: "bold",
+                  fontWeight: 700,
                   fontSize: 13,
-                  color: theme === "lite" ? "#666" : "#aaa",
+                  color: theme === "lite" ? "#475569" : "#cfd8dc",
                   marginBottom: 0,
                   borderBottom:
-                    theme === "lite" ? "1px solid #e0e0e0" : "1px solid #555",
+                    theme === "lite"
+                      ? "1px solid #e1eef9"
+                      : "1px solid #2f3f43",
                 }}
               >
                 <div style={{ flex: 2 }}>Producto</div>
@@ -3335,10 +3513,12 @@ export default function PuntoDeVentaView({
                   margin: 0,
                   maxHeight: 380,
                   overflowY: "auto",
-                  background: theme === "lite" ? "#fff" : "#333",
+                  background: theme === "lite" ? "#fff" : "#2b2b2b",
                   borderRadius: "0 0 8px 8px",
                   border:
-                    theme === "lite" ? "1px solid #e0e0e0" : "1px solid #444",
+                    theme === "lite"
+                      ? "1px solid #e1eef9"
+                      : "1px solid #2f3f43",
                   borderTop: "none",
                 }}
               >
@@ -3349,21 +3529,21 @@ export default function PuntoDeVentaView({
                       display: "flex",
                       flexWrap: "wrap",
                       alignItems: "center",
-                      padding: "10px 12px",
+                      padding: "8px 12px",
                       gap: 8,
                       borderBottom:
                         theme === "lite"
-                          ? "1px solid #f0f0f0"
-                          : "1px solid #444",
+                          ? "1px solid #f3f9ff"
+                          : "1px solid #253034",
                       background:
                         index % 2 === 0
                           ? theme === "lite"
-                            ? "#fff"
-                            : "#333"
+                            ? "#ffffff"
+                            : "#262626"
                           : theme === "lite"
-                            ? "#fafafa"
-                            : "#383838",
-                      color: theme === "lite" ? "#222" : "#f5f5f5",
+                            ? "#fbfeff"
+                            : "#232323",
+                      color: theme === "lite" ? "#0f1724" : "#f5f5f5",
                     }}
                   >
                     {/* Buttons first for easier reach on touch devices */}
@@ -4471,10 +4651,12 @@ export default function PuntoDeVentaView({
                     onClick={async () => {
                       // Prevenir múltiples ejecuciones simultáneas
                       if (savingEnvio) {
-                        console.log("⚠ Ya se está guardando un pedido, ignorando clic adicional");
+                        console.log(
+                          "⚠ Ya se está guardando un pedido, ignorando clic adicional",
+                        );
                         return;
                       }
-                      
+
                       // Guardar pedido de envío
                       setSavingEnvio(true);
                       try {
@@ -6472,6 +6654,452 @@ export default function PuntoDeVentaView({
           </div>
         )} */}
       </div>
+
+      {/* Menú central de opciones (botón abre este modal) */}
+      {showOptionsMenu && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.28)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 130000,
+          }}
+          onClick={() => closeMenuAnimated()}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#0b1220",
+              borderRadius: 14,
+              padding: 24,
+              minWidth: 360,
+              maxWidth: 720,
+              width: "90%",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+              textAlign: "center",
+              boxShadow: "0 12px 40px rgba(16,24,40,0.12)",
+              transform: menuClosing ? "scale(0.96)" : "scale(1)",
+              opacity: menuClosing ? 0 : 1,
+              transition: "transform 220ms ease, opacity 220ms ease",
+              animation: !menuClosing ? "menuIn 220ms ease" : "none",
+            }}
+          >
+            {aperturaRegistrada === false ? (
+              <>
+                <button
+                  onClick={() => {
+                    setTheme(theme === "lite" ? "dark" : "lite");
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#f3f4f6",
+                    color: "#0b1220",
+                    fontWeight: 700,
+                  }}
+                >
+                  {theme === "lite" ? "🌙 Oscuro" : "☀️ Claro"}
+                </button>
+                <button
+                  onClick={() => {
+                    if (setView) setView("resultadosCaja");
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#fff7ed",
+                    color: "#a45100",
+                    fontWeight: 700,
+                  }}
+                >
+                  📝 Aclaraciones
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setTheme(theme === "lite" ? "dark" : "lite");
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "none",
+                    background: "#263241",
+                    color: "#fff",
+                    fontWeight: 700,
+                  }}
+                >
+                  {theme === "lite" ? "🌙 Oscuro" : "☀️ Claro"}
+                </button>
+                <button
+                  onClick={() => {
+                    fetchResumenCaja();
+                    setShowResumen(true);
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#e8f0fe",
+                    color: "#0b3d91",
+                    fontWeight: 700,
+                  }}
+                >
+                  📊 Resumen
+                </button>
+                <button
+                  onClick={() => {
+                    if (!isOnline) {
+                      setShowNoConnectionModal(true);
+                    } else {
+                      setShowCierre(true);
+                    }
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: isOnline ? "#fff7cc" : "#f5f5f5",
+                    color: isOnline ? "#3b2f00" : "#666",
+                    fontWeight: 700,
+                  }}
+                >
+                  🚪 Cierre de Caja
+                </button>
+                <button
+                  onClick={() => {
+                    setShowRegistrarGasto(true);
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#ecf9f0",
+                    color: "#0b5131",
+                    fontWeight: 700,
+                  }}
+                >
+                  💰 Gasto
+                </button>
+                <button
+                  onClick={() => {
+                    setShowDevolucionModal(true);
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#f6eefc",
+                    color: "#4b1763",
+                    fontWeight: 700,
+                  }}
+                >
+                  🔄 Devolución
+                </button>
+                <button
+                  onClick={() => {
+                    setShowEnvioModal(true);
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#eef9ef",
+                    color: "#14521e",
+                    fontWeight: 700,
+                  }}
+                >
+                  🏠 Domicilios
+                </button>
+                <button
+                  onClick={() => {
+                    if (setView) setView("resultadosCaja");
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#fff7ed",
+                    color: "#a45100",
+                    fontWeight: 700,
+                  }}
+                >
+                  📝 Aclaraciones
+                </button>
+                <button
+                  onClick={() => {
+                    fetchHistorialVentas();
+                    closeMenuAnimated();
+                  }}
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(16,24,40,0.06)",
+                    background: "#f5eef9",
+                    color: "#3b0e63",
+                    fontWeight: 700,
+                  }}
+                >
+                  🧾 Historial de venta
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Historial de Ventas */}
+      {showHistorialVentas && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 140000,
+          }}
+          onClick={() => setShowHistorialVentas(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#111",
+              borderRadius: 12,
+              padding: 20,
+              width: "90%",
+              maxWidth: 1000,
+              maxHeight: "85vh",
+              overflow: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Historial de ventas (turno)</h3>
+              <button
+                onClick={() => setShowHistorialVentas(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  fontSize: 18,
+                  cursor: "pointer",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            {historialLoading ? (
+              <div>Cargando...</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr
+                    style={{
+                      textAlign: "left",
+                      borderBottom: "1px solid #ddd",
+                    }}
+                  >
+                    <th style={{ padding: 8 }}>Hora</th>
+                    <th style={{ padding: 8 }}>Factura</th>
+                    <th style={{ padding: 8 }}>Cliente</th>
+                    <th style={{ padding: 8 }}>Monto</th>
+                    <th style={{ padding: 8 }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historialVentas.map((venta) => (
+                    <tr
+                      key={venta.id}
+                      style={{ borderBottom: "1px solid #f0f0f0" }}
+                    >
+                      <td style={{ padding: 8 }}>
+                        {new Date(venta.fecha_hora).toLocaleTimeString("es-HN")}
+                      </td>
+                      <td style={{ padding: 8 }}>{venta.factura}</td>
+                      <td style={{ padding: 8 }}>{venta.cliente}</td>
+                      <td style={{ padding: 8 }}>
+                        {Number(venta.total || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <button
+                          onClick={() => imprimirFacturaHistorial(venta)}
+                          style={{
+                            marginRight: 8,
+                            padding: "6px 10px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#1976d2",
+                            color: "#fff",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Imprimir factura
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedVentaForComanda(venta);
+                            setShowTipoOrdenModal(true);
+                          }}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#6a1b9a",
+                            color: "#fff",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Imprimir comanda
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal para elegir tipo de comanda (separado del flujo de ventas) */}
+      {showTipoOrdenModal && selectedVentaForComanda && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 150000,
+          }}
+          onClick={() => {
+            setShowTipoOrdenModal(false);
+            setSelectedVentaForComanda(null);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#111",
+              borderRadius: 12,
+              padding: 20,
+              width: "90%",
+              maxWidth: 420,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Tipo de comanda</h3>
+            <p>Seleccione si la comanda es para llevar o para comer aquí.</p>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                justifyContent: "center",
+                marginTop: 12,
+              }}
+            >
+              <button
+                onClick={() => {
+                  imprimirComandaHistorial(
+                    selectedVentaForComanda,
+                    "PARA LLEVAR",
+                  );
+                  setShowTipoOrdenModal(false);
+                  setSelectedVentaForComanda(null);
+                }}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "#1976d2",
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
+              >
+                PARA LLEVAR
+              </button>
+              <button
+                onClick={() => {
+                  imprimirComandaHistorial(
+                    selectedVentaForComanda,
+                    "COMER AQUÍ",
+                  );
+                  setShowTipoOrdenModal(false);
+                  setSelectedVentaForComanda(null);
+                }}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "#388e3c",
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
+              >
+                COMER AQUÍ
+              </button>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: 16,
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowTipoOrdenModal(false);
+                  setSelectedVentaForComanda(null);
+                }}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #ccc",
+                  background: "transparent",
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Botón Cerrar Sesión - fijo abajo a la derecha */}
       <button

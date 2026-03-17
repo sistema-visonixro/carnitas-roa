@@ -3221,11 +3221,18 @@ export default function MovimientosInventarioView({
                         key={item.value}
                         type="button"
                         className={`inventory-btn ${movementForm.tipoMovimiento === item.value ? "primary" : "secondary"}`}
-                        style={{ flex: 1, fontWeight: movementForm.tipoMovimiento === item.value ? 700 : 400 }}
+                        style={{
+                          flex: 1,
+                          fontWeight:
+                            movementForm.tipoMovimiento === item.value
+                              ? 700
+                              : 400,
+                        }}
                         onClick={() =>
                           setMovementForm((prev) => ({
                             ...prev,
-                            tipoMovimiento: item.value as MovementFormState["tipoMovimiento"],
+                            tipoMovimiento:
+                              item.value as MovementFormState["tipoMovimiento"],
                           }))
                         }
                       >
