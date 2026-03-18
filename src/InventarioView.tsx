@@ -176,6 +176,64 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
     (p) => p.tipo === "complemento",
   ).length;
 
+  // ── Complementos opciones (modal CRUD) ──────────────────────────────────
+  const [showComplementosModal, setShowComplementosModal] = useState(false);
+  const [complementosOpciones, setComplementosOpciones] = useState<
+    { id: number; nombre: string; orden: number }[]
+  >([]);
+  const [complementoLoading, setComplementoLoading] = useState(false);
+  const [nuevoComplemento, setNuevoComplemento] = useState("");
+  const [editingComplemento, setEditingComplemento] = useState<{
+    id: number;
+    nombre: string;
+    orden: number;
+  } | null>(null);
+  const [editComplementoNombre, setEditComplementoNombre] = useState("");
+
+  const fetchComplementosOpciones = async () => {
+    setComplementoLoading(true);
+    const { data } = await supabase
+      .from("complementos_opciones")
+      .select("*")
+      .order("orden", { ascending: true });
+    setComplementosOpciones(data || []);
+    setComplementoLoading(false);
+  };
+
+  const handleAgregarComplemento = async () => {
+    if (!nuevoComplemento.trim()) return;
+    setComplementoLoading(true);
+    const maxOrden =
+      complementosOpciones.length > 0
+        ? Math.max(...complementosOpciones.map((c) => c.orden)) + 1
+        : 1;
+    await supabase.from("complementos_opciones").insert({
+      nombre: nuevoComplemento.trim().toUpperCase(),
+      orden: maxOrden,
+    });
+    setNuevoComplemento("");
+    await fetchComplementosOpciones();
+  };
+
+  const handleEliminarComplemento = async (id: number) => {
+    if (!window.confirm("¿Eliminar este complemento?")) return;
+    setComplementoLoading(true);
+    await supabase.from("complementos_opciones").delete().eq("id", id);
+    await fetchComplementosOpciones();
+  };
+
+  const handleGuardarEdicionComplemento = async () => {
+    if (!editingComplemento || !editComplementoNombre.trim()) return;
+    setComplementoLoading(true);
+    await supabase
+      .from("complementos_opciones")
+      .update({ nombre: editComplementoNombre.trim().toUpperCase() })
+      .eq("id", editingComplemento.id);
+    setEditingComplemento(null);
+    setEditComplementoNombre("");
+    await fetchComplementosOpciones();
+  };
+
   return (
     <div
       className="inventario-enterprise"
@@ -649,9 +707,19 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
           </button>
           <h1 className="page-title">Control de Inventario</h1>
         </div>
-        <button className="btn-primary" onClick={handleNew}>
-          ➕ Nuevo Producto
-        </button>
+          <button
+            className="btn-primary"
+            style={{ background: "#4caf50", marginRight: 8 }}
+            onClick={() => {
+              setShowComplementosModal(true);
+              fetchComplementosOpciones();
+            }}
+          >
+            🍗 Complementos
+          </button>
+          <button className="btn-primary" onClick={handleNew}>
+            ➕ Nuevo Producto
+          </button>
       </header>
 
       <main className="main-content">
@@ -1249,6 +1317,129 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                         : "✅ Crear Producto"}
                   </button>
                 </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Complementos Opciones */}
+        {showComplementosModal && (
+          <div
+            className="modal-overlay"
+            onClick={() => setShowComplementosModal(false)}
+          >
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-hero">
+                <div className="modal-hero-info">
+                  <div className="modal-hero-badge">Configuración</div>
+                  <h3 className="modal-hero-title">🍗 Complementos Incluidos</h3>
+                </div>
+                <button
+                  className="modal-hero-close"
+                  onClick={() => setShowComplementosModal(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="modal-body">
+                <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
+                  Estas opciones aparecerán en el modal “COMPLEMENTOS INCLUIDOS” del punto de venta
+                  para productos de tipo <strong>Comida</strong>.
+                </p>
+
+                {/* Lista de complementos */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                  {complementoLoading && (
+                    <p style={{ textAlign: "center", color: "var(--text-secondary)" }}>Cargando...</p>
+                  )}
+                  {complementosOpciones.map((c) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "10px 14px",
+                        background: "var(--bg-secondary, #f5f5f5)",
+                        borderRadius: 8,
+                        border: "1px solid var(--border, #ddd)",
+                      }}
+                    >
+                      {editingComplemento?.id === c.id ? (
+                        <>
+                          <input
+                            className="form-input"
+                            style={{ flex: 1, padding: "6px 10px", fontSize: 14 }}
+                            value={editComplementoNombre}
+                            onChange={(e) => setEditComplementoNombre(e.target.value)}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleGuardarEdicionComplemento();
+                              if (e.key === "Escape") { setEditingComplemento(null); setEditComplementoNombre(""); }
+                            }}
+                          />
+                          <button
+                            className="btn-primary"
+                            style={{ padding: "6px 14px", fontSize: 13 }}
+                            onClick={handleGuardarEdicionComplemento}
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            className="btn-table btn-delete"
+                            style={{ padding: "6px 10px", fontSize: 13 }}
+                            onClick={() => { setEditingComplemento(null); setEditComplementoNombre(""); }}
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>{c.nombre}</span>
+                          <button
+                            className="btn-table btn-edit"
+                            style={{ padding: "4px 12px", fontSize: 13 }}
+                            onClick={() => { setEditingComplemento(c); setEditComplementoNombre(c.nombre); }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className="btn-table btn-delete"
+                            style={{ padding: "4px 12px", fontSize: 13 }}
+                            onClick={() => handleEliminarComplemento(c.id)}
+                          >
+                            Eliminar
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  {!complementoLoading && complementosOpciones.length === 0 && (
+                    <p style={{ textAlign: "center", color: "#999" }}>No hay complementos. Agrega uno abajo.</p>
+                  )}
+                </div>
+
+                {/* Agregar nuevo */}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="form-input"
+                    style={{ flex: 1, padding: "10px 12px", fontSize: 15 }}
+                    type="text"
+                    placeholder="Nuevo complemento (ej: SIN AGUACATE)"
+                    value={nuevoComplemento}
+                    onChange={(e) => setNuevoComplemento(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAgregarComplemento(); }}
+                  />
+                  <button
+                    className="btn-primary"
+                    style={{ padding: "10px 20px", fontSize: 15 }}
+                    onClick={handleAgregarComplemento}
+                    disabled={complementoLoading || !nuevoComplemento.trim()}
+                  >
+                    ➕ Agregar
+                  </button>
+                </div>
               </div>
             </div>
           </div>

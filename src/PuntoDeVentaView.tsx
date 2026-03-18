@@ -860,6 +860,28 @@ export default function PuntoDeVentaView({
     number | null
   >(null);
   const [showPiezasModal, setShowPiezasModal] = useState(false);
+  const [complementosOpciones, setComplementosOpciones] = useState<string[]>([]);
+
+  // Cargar complementos desde la tabla complementos_opciones
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("complementos_opciones")
+          .select("nombre, orden")
+          .order("orden", { ascending: true });
+        if (data && data.length > 0) {
+          setComplementosOpciones(data.map((c: any) => c.nombre));
+        } else {
+          // Fallback si la tabla aún no existe o está vacía
+          setComplementosOpciones(["CON TODO", "SIN NADA", "SIN SALSAS", "SIN REPOLLO", "SIN ADEREZO", "SIN CEBOLLA", "SALSAS APARTE"]);
+        }
+      } catch {
+        setComplementosOpciones(["CON TODO", "SIN NADA", "SIN SALSAS", "SIN REPOLLO", "SIN ADEREZO", "SIN CEBOLLA", "SALSAS APARTE"]);
+      }
+    })();
+  }, []);
+
   const [caiInfo, setCaiInfo] = useState<{
     caja_asignada: string;
     nombre_cajero: string;
@@ -3539,8 +3561,8 @@ export default function PuntoDeVentaView({
                         display: "flex",
                         gap: 6,
                         alignItems: "center",
-                        width: p.tipo === "comida" ? 108 : 36,
-                        flex: p.tipo === "comida" ? "0 0 108px" : "0 0 36px",
+                        width: p.tipo === "comida" ? 70 : 36,
+                        flex: p.tipo === "comida" ? "0 0 70px" : "0 0 36px",
                       }}
                     >
                       {p.tipo === "comida" && (
@@ -3569,30 +3591,7 @@ export default function PuntoDeVentaView({
                           >
                             🍗
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedProductIndex(index);
-                              setShowPiezasModal(true);
-                            }}
-                            style={{
-                              background: "#ff9800",
-                              color: "#fff",
-                              border: "none",
-                              borderRadius: 4,
-                              width: 32,
-                              height: 32,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              cursor: "pointer",
-                              fontSize: 16,
-                              lineHeight: 1,
-                            }}
-                            title="Piezas"
-                            aria-label={`Piezas de ${p.nombre}`}
-                          >
-                            🍖
-                          </button>
+
                         </>
                       )}
                       <button
@@ -3902,15 +3901,7 @@ export default function PuntoDeVentaView({
               {seleccionados[selectedProductIndex]?.nombre}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {[
-                "CON TODO",
-                "SIN NADA",
-                "SIN SALSAS",
-                "SIN REPOLLO",
-                "SIN ADEREZO",
-                "SIN CEBOLLA",
-                "SALSAS APARTE",
-              ].map((opcion) => {
+              {complementosOpciones.map((opcion) => {
                 const currentComplementos =
                   seleccionados[selectedProductIndex]?.complementos || [];
                 const isSelected = currentComplementos.includes(opcion);
