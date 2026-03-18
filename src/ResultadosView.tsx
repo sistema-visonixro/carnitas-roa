@@ -1283,41 +1283,37 @@ export default function ResultadosView({
       html += `</tbody></table></div>`;
 
       // ── Unidades vendidas por producto de comida ─────────────────────────────
+      // Iteramos TODAS las facturas del período directamente (sin filtrar por pago
+      // ni aplicar ningún factor de proporcionalidad: las unidades son conteo puro).
       const unidadesPorProducto = new Map<string, { nombre: string; unidades: number; total: number }>();
 
-      montoRealPorFactura.forEach((montoPagado, facturaKey) => {
-        const factura = facturasMap.get(facturaKey);
-        if (factura && factura.productos) {
-          try {
-            const productosArray =
-              typeof factura.productos === "string"
-                ? JSON.parse(factura.productos)
-                : factura.productos;
-            if (Array.isArray(productosArray) && productosArray.length > 0) {
-              const totalTeorico = productosArray.reduce(
-                (s: number, p: any) => s + (p.precio || 0) * (p.cantidad || 1),
-                0,
-              );
-              const factor = totalTeorico > 0 ? montoPagado / totalTeorico : 1;
+      factData.forEach((factura: any) => {
+        if (!factura.productos) return;
+        try {
+          const productosArray =
+            typeof factura.productos === "string"
+              ? JSON.parse(factura.productos)
+              : factura.productos;
+          if (!Array.isArray(productosArray)) return;
 
-              productosArray.forEach((prod: any) => {
-                const info = productosMap.get(prod.id);
-                if (info && info.tipo === "comida") {
-                  const nombre: string = prod.nombre || prod.id || "Desconocido";
-                  const cantidad: number = prod.cantidad || 1;
-                  const totalProd = (prod.precio || 0) * cantidad * factor;
-                  if (unidadesPorProducto.has(nombre)) {
-                    const entry = unidadesPorProducto.get(nombre)!;
-                    entry.unidades += cantidad;
-                    entry.total += totalProd;
-                  } else {
-                    unidadesPorProducto.set(nombre, { nombre, unidades: cantidad, total: totalProd });
-                  }
-                }
-              });
+          productosArray.forEach((prod: any) => {
+            const info = productosMap.get(prod.id);
+            if (!info || info.tipo !== "comida") return;
+
+            const nombre: string = prod.nombre || prod.id || "Desconocido";
+            const cantidad: number = Number(prod.cantidad) || 1;
+            const precioUnit: number = Number(prod.precio) || 0;
+            const totalProd: number = precioUnit * cantidad;
+
+            const entry = unidadesPorProducto.get(nombre);
+            if (entry) {
+              entry.unidades += cantidad;
+              entry.total    += totalProd;
+            } else {
+              unidadesPorProducto.set(nombre, { nombre, unidades: cantidad, total: totalProd });
             }
-          } catch (e) { /* ignorar */ }
-        }
+          });
+        } catch (e) { /* ignorar JSON malformado */ }
       });
 
       const productosComidaOrdenados = Array.from(unidadesPorProducto.values())
