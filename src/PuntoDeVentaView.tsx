@@ -1090,8 +1090,6 @@ export default function PuntoDeVentaView({
       }
       setVerificandoApertura(true);
       try {
-        const { start, end } = getLocalDayRange();
-
         // Si hay conexión, verificar en Supabase
         if (isOnline) {
           // Obtener caja asignada
@@ -1117,15 +1115,17 @@ export default function PuntoDeVentaView({
             return;
           }
 
-          // Verificar si existe una apertura ACTIVA (estado='APERTURA') en el día
-          const { data: aperturasHoy, error: aperturasError } = await supabase
+          // Verificar si existe una apertura ACTIVA (estado='APERTURA') sin importar el día
+          // Si no hubo cierre, la apertura anterior sigue vigente aunque sea otro día
+          const { data: apertura, error: aperturasError } = await supabase
             .from("cierres")
             .select("id, estado, cajero_id, caja, fecha")
             .eq("cajero_id", usuarioActual.id)
             .eq("caja", cajaAsignada)
             .eq("estado", "APERTURA")
-            .gte("fecha", start)
-            .lte("fecha", end);
+            .order("fecha", { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
           // Si hay error de conexión, ir directo a cache
           if (aperturasError) {
@@ -1133,8 +1133,7 @@ export default function PuntoDeVentaView({
             throw new Error(aperturasError.message || "Error de conexión");
           }
 
-          if (aperturasHoy && aperturasHoy.length > 0) {
-            const apertura = aperturasHoy[0];
+          if (apertura) {
             console.log("✓ Apertura encontrada en Supabase:", apertura);
             setAperturaRegistrada(true);
 
@@ -1159,25 +1158,12 @@ export default function PuntoDeVentaView({
           const aperturaCache = await obtenerAperturaCache();
 
           if (aperturaCache) {
-            console.log("✓ Apertura encontrada en cache:", aperturaCache);
-            // Verificar que sea del día actual
-            const fechaCache = aperturaCache.fecha;
             console.log(
-              `Comparando fecha cache: ${fechaCache} con rango: ${start} - ${end}`,
+              "✓ Apertura activa encontrada en cache:",
+              aperturaCache,
             );
-
-            // Convertir a Date objects para comparación correcta
-            const fechaCacheDate = new Date(fechaCache);
-            const startDate = new Date(start);
-            const endDate = new Date(end);
-
-            if (fechaCacheDate >= startDate && fechaCacheDate <= endDate) {
-              console.log("✓ Apertura del día actual confirmada");
-              setAperturaRegistrada(true);
-            } else {
-              console.log("⚠ Apertura en cache es de otro día");
-              setAperturaRegistrada(false);
-            }
+            // Si hay apertura en cache sin cierre, se considera vigente sin importar el día
+            setAperturaRegistrada(true);
           } else {
             console.warn("⚠ No hay apertura en cache");
             setAperturaRegistrada(false);
@@ -1195,29 +1181,15 @@ export default function PuntoDeVentaView({
           "🔄 Intentando recuperar apertura desde cache (fallback)...",
         );
         try {
-          const { start, end } = getLocalDayRange();
           const aperturaCache = await obtenerAperturaCache();
 
           if (aperturaCache) {
-            console.log("✓ Apertura encontrada en cache:", aperturaCache);
-            // Verificar que sea del día actual
-            const fechaCache = aperturaCache.fecha;
             console.log(
-              `Comparando fecha cache: ${fechaCache} con rango: ${start} - ${end}`,
+              "✓ Apertura activa encontrada en cache (fallback):",
+              aperturaCache,
             );
-
-            // Convertir a Date objects para comparación correcta
-            const fechaCacheDate = new Date(fechaCache);
-            const startDate = new Date(start);
-            const endDate = new Date(end);
-
-            if (fechaCacheDate >= startDate && fechaCacheDate <= endDate) {
-              console.log("✓ Apertura del día actual confirmada (fallback)");
-              setAperturaRegistrada(true);
-            } else {
-              console.log("⚠ Apertura en cache es de otro día");
-              setAperturaRegistrada(false);
-            }
+            // Si hay apertura sin cierre, se considera vigente sin importar el día
+            setAperturaRegistrada(true);
           } else {
             console.warn("⚠ No hay apertura en cache");
             setAperturaRegistrada(false);
@@ -3179,7 +3151,8 @@ export default function PuntoDeVentaView({
                     color: theme === "lite" ? "#856404" : "#ffb74d",
                   }}
                 >
-                  No has registrado apertura de caja hoy.
+                  No hay apertura de caja activa. Registra una apertura para
+                  continuar.
                 </p>
                 <button
                   onClick={registrarAperturaRapida}

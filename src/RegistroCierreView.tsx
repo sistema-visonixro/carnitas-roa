@@ -88,7 +88,9 @@ export default function RegistroCierreView({
       };
     }
 
-    const fondoFijoDia = parseFloat(aperturaActual.fondo_fijo_registrado || "0");
+    const fondoFijoDia = parseFloat(
+      aperturaActual.fondo_fijo_registrado || "0",
+    );
 
     // Usar la fecha EXACTA de apertura (con hora, minutos, segundos) como inicio
     const desde = aperturaActual.fecha;
@@ -116,7 +118,7 @@ export default function RegistroCierreView({
       "pagosEfectivo count:",
       pagosEfectivo?.length,
       "sample:",
-      pagosEfectivo?.slice(0, 3)
+      pagosEfectivo?.slice(0, 3),
     );
     const efectivoDia = pagosEfectivo
       ? pagosEfectivo.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
@@ -136,7 +138,7 @@ export default function RegistroCierreView({
       if (gastosData && Array.isArray(gastosData)) {
         gastosDia = gastosData.reduce(
           (s: number, g: any) => s + parseFloat(g.monto || 0),
-          0
+          0,
         );
       }
     } catch (e) {
@@ -157,7 +159,7 @@ export default function RegistroCierreView({
       "pagosTarjeta count:",
       pagosTarjeta?.length,
       "sample:",
-      pagosTarjeta?.slice(0, 3)
+      pagosTarjeta?.slice(0, 3),
     );
     const tarjetaDia = pagosTarjeta
       ? pagosTarjeta.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
@@ -176,7 +178,7 @@ export default function RegistroCierreView({
       "pagosTrans count:",
       pagosTrans?.length,
       "sample:",
-      pagosTrans?.slice(0, 3)
+      pagosTrans?.slice(0, 3),
     );
     const transferenciasDia = pagosTrans
       ? pagosTrans.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
@@ -192,7 +194,7 @@ export default function RegistroCierreView({
       "pagosDolares count:",
       pagosDolares?.length,
       "sample:",
-      pagosDolares?.slice(0, 3)
+      pagosDolares?.slice(0, 3),
     );
     const dolaresDia = pagosDolares
       ? pagosDolares.reduce((sum, p) => sum + parseFloat(p.usd_monto || 0), 0)
@@ -255,7 +257,7 @@ export default function RegistroCierreView({
                 registro.id || "N/A"
               }</div>
               <div><strong>Fecha:</strong> ${new Date().toLocaleDateString(
-                "es-HN"
+                "es-HN",
               )} ${new Date().toLocaleTimeString("es-HN")}</div>
               <div><strong>Cajero:</strong> ${registro.cajero}</div>
               <div><strong>Caja:</strong> ${registro.caja}</div>
@@ -304,7 +306,7 @@ export default function RegistroCierreView({
             <div class="row">
               <span>Fondo Fijo:</span>
               <span>L ${Number(registro.fondo_fijo_registrado).toFixed(
-                2
+                2,
               )}</span>
             </div>
             <div class="row">
@@ -314,13 +316,13 @@ export default function RegistroCierreView({
             <div class="row">
               <span>Tarjeta:</span>
               <span>L ${Number(registro.monto_tarjeta_registrado).toFixed(
-                2
+                2,
               )}</span>
             </div>
             <div class="row">
               <span>Transferencia:</span>
               <span>L ${Number(registro.transferencias_registradas).toFixed(
-                2
+                2,
               )}</span>
             </div>
             <div class="row">
@@ -376,8 +378,6 @@ export default function RegistroCierreView({
       setError("Complete todos los campos requeridos antes de guardar.");
       return;
     }
-
-    const { start, end } = getLocalDayRange();
 
     // No hay más verificaciones de apertura porque ya no se registra desde aquí
     // Calcular valores
@@ -482,17 +482,17 @@ export default function RegistroCierreView({
       let error = null;
       let registroId = null;
       if (registro.tipo_registro === "cierre") {
-        // Buscar apertura del día
+        // Buscar la última apertura activa sin importar el día
+        // (si no hubo cierre, la apertura puede ser de días anteriores)
         const { data: aperturaDelDia } = await supabase
           .from("cierres")
           .select("id")
           .eq("cajero_id", usuarioActual?.id)
           .eq("caja", caja)
           .eq("estado", "APERTURA")
-          .gte("fecha", start)
-          .lte("fecha", end)
+          .order("fecha", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (aperturaDelDia) {
           // Actualizar la misma fila con los datos del cierre
