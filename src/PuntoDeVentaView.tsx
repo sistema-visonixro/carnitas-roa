@@ -3855,52 +3855,54 @@ export default function PuntoDeVentaView({
             left: 0,
             width: "100vw",
             height: "100vh",
-            background: "rgba(0,0,0,0.5)",
+            background: "rgba(0,0,0,0.6)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             zIndex: 9999,
+            padding: "16px",
+            boxSizing: "border-box",
           }}
+          onClick={() => { setShowComplementosModal(false); setSelectedProductIndex(null); }}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
-              background: theme === "lite" ? "#fff" : "#232526",
-              borderRadius: 20,
-              boxShadow: "0 10px 40px rgba(0,0,0,0.3)",
-              padding: 40,
-              minWidth: 400,
-              maxWidth: 500,
+              background: theme === "lite" ? "#fff" : "#1e2022",
+              borderRadius: 18,
+              boxShadow: "0 16px 48px rgba(0,0,0,0.4)",
               width: "100%",
-              position: "relative",
+              maxWidth: 420,
+              maxHeight: "90vh",
               display: "flex",
               flexDirection: "column",
-              gap: 24,
+              overflow: "hidden",
               color: theme === "lite" ? "#222" : "#f5f5f5",
             }}
           >
-            <h2
-              style={{
-                color: "#4caf50",
-                marginBottom: 8,
-                textAlign: "center",
-                fontSize: 28,
-                fontWeight: 800,
-              }}
-            >
-              🍗 COMPLEMENTOS INCLUIDOS
-            </h2>
-            <p
-              style={{
-                textAlign: "center",
-                color: "#666",
-                fontSize: 14,
-                margin: 0,
-              }}
-            >
-              Seleccione las opciones para{" "}
-              {seleccionados[selectedProductIndex]?.nombre}
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Header fijo */}
+            <div style={{
+              background: "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)",
+              padding: "18px 20px 14px",
+              flexShrink: 0,
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", textAlign: "center", letterSpacing: 0.5 }}>
+                🍗 COMPLEMENTOS INCLUIDOS
+              </div>
+              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.85)", fontSize: 13, marginTop: 4 }}>
+                {seleccionados[selectedProductIndex]?.nombre}
+              </div>
+            </div>
+
+            {/* Lista con scroll */}
+            <div style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "12px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}>
               {complementosOpciones.map((opcion) => {
                 const currentComplementos =
                   seleccionados[selectedProductIndex]?.complementos || [];
@@ -3910,72 +3912,49 @@ export default function PuntoDeVentaView({
                     key={opcion}
                     onClick={() => {
                       const newSeleccionados = [...seleccionados];
-                      const currentComplementos =
-                        newSeleccionados[selectedProductIndex]?.complementos ||
-                        [];
-
-                      let updatedComplementos: string[];
-                      if (isSelected) {
-                        // Deseleccionar
-                        updatedComplementos = currentComplementos.filter(
-                          (c) => c !== opcion,
-                        );
-                      } else {
-                        // Seleccionar
-                        updatedComplementos = [...currentComplementos, opcion];
-                      }
-
+                      const cur =
+                        newSeleccionados[selectedProductIndex]?.complementos || [];
                       newSeleccionados[selectedProductIndex] = {
                         ...newSeleccionados[selectedProductIndex],
-                        complementos: updatedComplementos,
+                        complementos: isSelected
+                          ? cur.filter((c) => c !== opcion)
+                          : [...cur, opcion],
                       };
                       setSeleccionados(newSeleccionados);
                     }}
                     style={{
                       background: isSelected
                         ? "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)"
-                        : theme === "lite"
-                          ? "#f5f5f5"
-                          : "#424242",
-                      color: isSelected
-                        ? "#fff"
-                        : theme === "lite"
-                          ? "#222"
-                          : "#f5f5f5",
+                        : theme === "lite" ? "#f5f5f5" : "#2d2f31",
+                      color: isSelected ? "#fff" : theme === "lite" ? "#222" : "#f0f0f0",
                       borderRadius: 10,
-                      border: isSelected
-                        ? "3px solid #2e7d32"
-                        : "2px solid #ddd",
-                      padding: "16px 24px",
+                      border: isSelected ? "2px solid #2e7d32" : `2px solid ${theme === "lite" ? "#ddd" : "#444"}`,
+                      padding: "13px 16px",
                       fontWeight: isSelected ? 700 : 600,
-                      fontSize: 16,
+                      fontSize: 15,
                       cursor: "pointer",
-                      transition: "all 0.2s",
-                      boxShadow: isSelected
-                        ? "0 4px 15px rgba(76,175,80,0.4)"
-                        : "none",
+                      transition: "all 0.15s",
+                      boxShadow: isSelected ? "0 3px 10px rgba(76,175,80,0.35)" : "none",
                       display: "flex",
                       alignItems: "center",
                       gap: 12,
                       textAlign: "left",
+                      width: "100%",
                     }}
                   >
-                    <span
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 6,
-                        border: isSelected
-                          ? "2px solid #fff"
-                          : "2px solid #999",
-                        background: isSelected ? "#fff" : "transparent",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 16,
-                        flexShrink: 0,
-                      }}
-                    >
+                    <span style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 5,
+                      border: isSelected ? "2px solid #fff" : "2px solid #aaa",
+                      background: isSelected ? "rgba(255,255,255,0.3)" : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 14,
+                      flexShrink: 0,
+                      fontWeight: 900,
+                    }}>
                       {isSelected && "✓"}
                     </span>
                     {opcion}
@@ -3983,25 +3962,55 @@ export default function PuntoDeVentaView({
                 );
               })}
             </div>
-            <button
-              onClick={() => {
-                setShowComplementosModal(false);
-                setSelectedProductIndex(null);
-              }}
-              style={{
-                background: "#1976d2",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                padding: "12px 24px",
-                fontWeight: 600,
-                fontSize: 16,
-                cursor: "pointer",
-                marginTop: 8,
-              }}
-            >
-              Aceptar
-            </button>
+
+            {/* Footer fijo */}
+            <div style={{
+              padding: "12px 16px",
+              borderTop: `1px solid ${theme === "lite" ? "#e0e0e0" : "#333"}`,
+              flexShrink: 0,
+              display: "flex",
+              gap: 10,
+            }}>
+              <button
+                onClick={() => {
+                  const newSeleccionados = [...seleccionados];
+                  newSeleccionados[selectedProductIndex] = {
+                    ...newSeleccionados[selectedProductIndex],
+                    complementos: [],
+                  };
+                  setSeleccionados(newSeleccionados);
+                }}
+                style={{
+                  flex: 1,
+                  background: theme === "lite" ? "#f5f5f5" : "#2d2f31",
+                  color: theme === "lite" ? "#555" : "#ccc",
+                  border: `1px solid ${theme === "lite" ? "#ddd" : "#444"}`,
+                  borderRadius: 10,
+                  padding: "13px 0",
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: "pointer",
+                }}
+              >
+                Limpiar
+              </button>
+              <button
+                onClick={() => { setShowComplementosModal(false); setSelectedProductIndex(null); }}
+                style={{
+                  flex: 2,
+                  background: "#1976d2",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "13px 0",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: "pointer",
+                }}
+              >
+                ✓ Aceptar
+              </button>
+            </div>
           </div>
         </div>
       )}
