@@ -12,16 +12,15 @@ CREATE TABLE IF NOT EXISTS complementos_opciones (
 );
 
 -- ── Seguridad ───────────────────────────────────────────────
+-- El sistema usa anon key de Supabase (no Supabase Auth), por lo
+-- que las políticas deben permitir acceso público completo.
 ALTER TABLE complementos_opciones ENABLE ROW LEVEL SECURITY;
 
--- Lectura pública (cajeros sin sesión de auth pueden leer)
-CREATE POLICY "Lectura publica complementos"
-  ON complementos_opciones FOR SELECT USING (true);
-
--- Escritura solo para usuarios autenticados (admin / inventario)
-CREATE POLICY "Escritura autenticados complementos"
+CREATE POLICY "acceso_publico_complementos"
   ON complementos_opciones FOR ALL
-  USING (auth.role() = 'authenticated');
+  TO public
+  USING (true)
+  WITH CHECK (true);
 
 -- ── Datos iniciales ─────────────────────────────────────────
 INSERT INTO complementos_opciones (nombre, orden) VALUES
