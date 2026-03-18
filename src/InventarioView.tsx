@@ -707,19 +707,19 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
           </button>
           <h1 className="page-title">Control de Inventario</h1>
         </div>
-          <button
-            className="btn-primary"
-            style={{ background: "#4caf50", marginRight: 8 }}
-            onClick={() => {
-              setShowComplementosModal(true);
-              fetchComplementosOpciones();
-            }}
-          >
-            🍗 Complementos
-          </button>
-          <button className="btn-primary" onClick={handleNew}>
-            ➕ Nuevo Producto
-          </button>
+        <button
+          className="btn-primary"
+          style={{ background: "#4caf50", marginRight: 8 }}
+          onClick={() => {
+            setShowComplementosModal(true);
+            fetchComplementosOpciones();
+          }}
+        >
+          🍗 Complementos
+        </button>
+        <button className="btn-primary" onClick={handleNew}>
+          ➕ Nuevo Producto
+        </button>
       </header>
 
       <main className="main-content">
@@ -1332,7 +1332,9 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
               <div className="modal-hero">
                 <div className="modal-hero-info">
                   <div className="modal-hero-badge">Configuración</div>
-                  <h3 className="modal-hero-title">🍗 Complementos Incluidos</h3>
+                  <h3 className="modal-hero-title">
+                    🍗 Complementos Incluidos
+                  </h3>
                 </div>
                 <button
                   className="modal-hero-close"
@@ -1343,15 +1345,36 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
               </div>
 
               <div className="modal-body">
-                <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
-                  Estas opciones aparecerán en el modal “COMPLEMENTOS INCLUIDOS” del punto de venta
-                  para productos de tipo <strong>Comida</strong>.
+                <p
+                  style={{
+                    fontSize: 13,
+                    color: "var(--text-secondary)",
+                    marginBottom: 16,
+                  }}
+                >
+                  Estas opciones aparecerán en el modal “COMPLEMENTOS INCLUIDOS”
+                  del punto de venta para productos de tipo{" "}
+                  <strong>Comida</strong>.
                 </p>
 
                 {/* Lista de complementos */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    marginBottom: 20,
+                  }}
+                >
                   {complementoLoading && (
-                    <p style={{ textAlign: "center", color: "var(--text-secondary)" }}>Cargando...</p>
+                    <p
+                      style={{
+                        textAlign: "center",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
+                      Cargando...
+                    </p>
                   )}
                   {complementosOpciones.map((c) => (
                     <div
@@ -1370,13 +1393,23 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                         <>
                           <input
                             className="form-input"
-                            style={{ flex: 1, padding: "6px 10px", fontSize: 14 }}
+                            style={{
+                              flex: 1,
+                              padding: "6px 10px",
+                              fontSize: 14,
+                            }}
                             value={editComplementoNombre}
-                            onChange={(e) => setEditComplementoNombre(e.target.value)}
+                            onChange={(e) =>
+                              setEditComplementoNombre(e.target.value)
+                            }
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") handleGuardarEdicionComplemento();
-                              if (e.key === "Escape") { setEditingComplemento(null); setEditComplementoNombre(""); }
+                              if (e.key === "Enter")
+                                handleGuardarEdicionComplemento();
+                              if (e.key === "Escape") {
+                                setEditingComplemento(null);
+                                setEditComplementoNombre("");
+                              }
                             }}
                           />
                           <button
@@ -1389,18 +1422,28 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                           <button
                             className="btn-table btn-delete"
                             style={{ padding: "6px 10px", fontSize: 13 }}
-                            onClick={() => { setEditingComplemento(null); setEditComplementoNombre(""); }}
+                            onClick={() => {
+                              setEditingComplemento(null);
+                              setEditComplementoNombre("");
+                            }}
                           >
                             Cancelar
                           </button>
                         </>
                       ) : (
                         <>
-                          <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>{c.nombre}</span>
+                          <span
+                            style={{ flex: 1, fontWeight: 600, fontSize: 15 }}
+                          >
+                            {c.nombre}
+                          </span>
                           <button
                             className="btn-table btn-edit"
                             style={{ padding: "4px 12px", fontSize: 13 }}
-                            onClick={() => { setEditingComplemento(c); setEditComplementoNombre(c.nombre); }}
+                            onClick={() => {
+                              setEditingComplemento(c);
+                              setEditComplementoNombre(c.nombre);
+                            }}
                           >
                             Editar
                           </button>
@@ -1416,7 +1459,9 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                     </div>
                   ))}
                   {!complementoLoading && complementosOpciones.length === 0 && (
-                    <p style={{ textAlign: "center", color: "#999" }}>No hay complementos. Agrega uno abajo.</p>
+                    <p style={{ textAlign: "center", color: "#999" }}>
+                      No hay complementos. Agrega uno abajo.
+                    </p>
                   )}
                 </div>
 
@@ -1429,7 +1474,9 @@ export default function InventarioView({ onBack }: InventarioViewProps) {
                     placeholder="Nuevo complemento (ej: SIN AGUACATE)"
                     value={nuevoComplemento}
                     onChange={(e) => setNuevoComplemento(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleAgregarComplemento(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAgregarComplemento();
+                    }}
                   />
                   <button
                     className="btn-primary"

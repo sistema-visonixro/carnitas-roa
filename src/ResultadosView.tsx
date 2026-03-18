@@ -1285,7 +1285,10 @@ export default function ResultadosView({
       // ── Unidades vendidas por producto de comida ─────────────────────────────
       // Iteramos TODAS las facturas del período directamente (sin filtrar por pago
       // ni aplicar ningún factor de proporcionalidad: las unidades son conteo puro).
-      const unidadesPorProducto = new Map<string, { nombre: string; unidades: number; total: number }>();
+      const unidadesPorProducto = new Map<
+        string,
+        { nombre: string; unidades: number; total: number }
+      >();
 
       factData.forEach((factura: any) => {
         if (!factura.productos) return;
@@ -1308,20 +1311,33 @@ export default function ResultadosView({
             const entry = unidadesPorProducto.get(nombre);
             if (entry) {
               entry.unidades += cantidad;
-              entry.total    += totalProd;
+              entry.total += totalProd;
             } else {
-              unidadesPorProducto.set(nombre, { nombre, unidades: cantidad, total: totalProd });
+              unidadesPorProducto.set(nombre, {
+                nombre,
+                unidades: cantidad,
+                total: totalProd,
+              });
             }
           });
-        } catch (e) { /* ignorar JSON malformado */ }
+        } catch (e) {
+          /* ignorar JSON malformado */
+        }
       });
 
-      const productosComidaOrdenados = Array.from(unidadesPorProducto.values())
-        .sort((a, b) => b.unidades - a.unidades);
+      const productosComidaOrdenados = Array.from(
+        unidadesPorProducto.values(),
+      ).sort((a, b) => b.unidades - a.unidades);
 
       if (productosComidaOrdenados.length > 0) {
-        const totalUnidadesComida = productosComidaOrdenados.reduce((s, p) => s + p.unidades, 0);
-        const totalIngresosComida = productosComidaOrdenados.reduce((s, p) => s + p.total, 0);
+        const totalUnidadesComida = productosComidaOrdenados.reduce(
+          (s, p) => s + p.unidades,
+          0,
+        );
+        const totalIngresosComida = productosComidaOrdenados.reduce(
+          (s, p) => s + p.total,
+          0,
+        );
         const maxUnidades = productosComidaOrdenados[0].unidades;
 
         html += `<div class="section">
@@ -1335,12 +1351,12 @@ export default function ResultadosView({
         </tr></thead><tbody>`;
 
         productosComidaOrdenados.forEach((p, i) => {
-          const pct = totalUnidadesComida > 0
-            ? ((p.unidades / totalUnidadesComida) * 100).toFixed(1)
-            : "0";
-          const barWidth = maxUnidades > 0
-            ? Math.round((p.unidades / maxUnidades) * 100)
-            : 0;
+          const pct =
+            totalUnidadesComida > 0
+              ? ((p.unidades / totalUnidadesComida) * 100).toFixed(1)
+              : "0";
+          const barWidth =
+            maxUnidades > 0 ? Math.round((p.unidades / maxUnidades) * 100) : 0;
           const rowBg = i % 2 === 0 ? "" : "background:#f8fafc;";
           html += `<tr style="${rowBg}">
             <td style="color:#64748b;font-size:13px;">${i + 1}</td>

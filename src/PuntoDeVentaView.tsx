@@ -32,6 +32,10 @@ import {
 } from "./utils/offlineSync";
 import { migrarPagosDesdeLocalStorage } from "./utils/migrarLocalStorage";
 import { useConexion } from "./utils/useConexion";
+import CreditoClienteModal from "./CreditoClienteModal";
+import PagoCreditoPOSModal from "./PagoCreditoPOSModal";
+import { confirmarVentaCredito } from "./services/creditoService";
+import type { ClienteCredito } from "./types/creditos";
 
 interface Producto {
   id: string;
@@ -105,6 +109,10 @@ export default function PuntoDeVentaView({
   // Menu y modal relacionados
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
+  // ── Créditos POS ────────────────────────────────────────────────────────────
+  const [showCreditoClienteModal, setShowCreditoClienteModal] = useState(false);
+  const [showPagoCreditoModal, setShowPagoCreditoModal] = useState(false);
+
   const [showTipoOrdenModal, setShowTipoOrdenModal] = useState(false);
   const [selectedVentaForComanda, setSelectedVentaForComanda] = useState<
     any | null
@@ -123,6 +131,173 @@ export default function PuntoDeVentaView({
       setShowOptionsMenu(false);
     }, 340);
   };
+
+  // ── Handler venta a crédito ────────────────────────────────────────────────
+  async function handleVentaCredito(cliente: ClienteCredito, saldoAnterior: number) {
+    if (seleccionados.length === 0) return;
+
+    const factura_numero = facturaActual && facturaActual !== "Límite alcanzado"
+      ? facturaActual
+      : "";
+    if (!factura_numero) {
+      alert("No hay número de factura disponible. Verifica el CAI activo.");
+      return;
+    }
+
+    const sub_total = seleccionados.reduce((s, p) => s + p.precio * p.cantidad, 0);
+    const total = sub_total;
+
+    const productos = seleccionados.map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      precio: p.precio,
+      cantidad: p.cantidad,
+      tipo: p.tipo,
+    }));
+
+    try {
+      const result = await confirmarVentaCredito({
+        factura_numero,
+        cliente_id:     cliente.id,
+        cajero_id:      usuarioActual?.id    ?? "",
+        cajero:         usuarioActual?.nombre ?? "",
+        caja:           caiInfo?.caja_asignada ?? "",
+        cai:            caiInfo?.cai           ?? "",
+        productos,
+        sub_total,
+        isv_15:         0,
+        isv_18:         0,
+        total,
+        fecha_hora:     new Date().toISOString(),
+        tipo_orden:     "PARA LLEVAR",
+        dias_vencimiento: 30,
+      });
+
+      if (!result.ok) {
+        alert("Error al registrar venta a crédito: " + result.error);
+        return;
+      }
+
+      // ── 1. Consultar configuración de etiquetas (igual que venta normal) ──
+      const { data: etiquetaConfig } = await supabase
+        .from("etiquetas_config")
+        .select("*")
+        .eq("nombre", "default")
+        .single();
+
+      // ── 2. Imprimir COMANDA (cocina) ──────────────────────────────────────
+      const comandaHtml = `
+        <div style='font-family:monospace; width:${etiquetaConfig?.etiqueta_ancho || 80}mm; margin:0; padding:${etiquetaConfig?.etiqueta_padding || 8}px;'>
+          <div style='font-size:${etiquetaConfig?.etiqueta_fontsize || 24}px; font-weight:800; color:#000; text-align:center; margin-bottom:6px;'>${etiquetaConfig?.etiqueta_comanda || "COMANDA COCINA"}</div>
+          <div style='font-size:28px; font-weight:900; color:#000; text-align:center; margin:16px 0;'>PARA LLEVAR</div>
+          <div style='font-size:20px; font-weight:800; color:#000; text-align:center; margin-bottom:12px;'>Cliente: <b>${cliente.nombre}</b></div>
+          <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${factura_numero}</div>
+          <div style='font-size:13px; font-weight:700; color:#7c3aed; text-align:center; margin-bottom:10px;'>★ VENTA A CRÉDITO ★</div>
+
+          ${seleccionados.filter((p) => p.tipo === "comida").length > 0 ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMIDAS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:12px;'>
+              ${seleccionados.filter((p) => p.tipo === "comida").map((p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                  ${p.complementos && p.complementos.length > 0 ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍗 Complementos:</div>${p.complementos.map((c) => `<div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${c}</span></div>`).join("")}` : ""}
+                  ${p.piezas && p.piezas !== "PIEZAS VARIAS" ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍖 Piezas:</div><div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${p.piezas}</span></div>` : ""}
+                </li>`).join("")}
+            </ul>
+          ` : ""}
+
+          ${seleccionados.filter((p) => p.tipo === "complemento").length > 0 ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMPLEMENTOS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:12px;'>
+              ${seleccionados.filter((p) => p.tipo === "complemento").map((p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                </li>`).join("")}
+            </ul>
+          ` : ""}
+
+          ${seleccionados.filter((p) => p.tipo === "bebida").length > 0 ? `
+            <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>BEBIDAS</div>
+            <ul style='list-style:none; padding:0; margin-bottom:0;'>
+              ${seleccionados.filter((p) => p.tipo === "bebida").map((p) => `
+                <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
+                  <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
+                  <div style='font-weight:700;'>${p.nombre}</div>
+                </li>`).join("")}
+            </ul>
+          ` : ""}
+        </div>`;
+
+      const pwComanda = window.open("", "", "height=800,width=400");
+      if (pwComanda) {
+        pwComanda.document.write(
+          `<html><head><title>Comanda ${factura_numero}</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`,
+        );
+        pwComanda.document.close();
+        pwComanda.onload = () => {
+          setTimeout(() => { pwComanda.focus(); pwComanda.print(); pwComanda.close(); }, 500);
+        };
+      }
+
+      // ── 3. Imprimir RECIBO de crédito (para el cliente) ──────────────────
+      const filasProductos = seleccionados
+        .map((p) => `<tr>
+          <td>${p.nombre}</td>
+          <td style='text-align:center'>${p.cantidad}</td>
+          <td style='text-align:right'>L ${(p.precio * p.cantidad).toFixed(2)}</td>
+        </tr>`)
+        .join("");
+
+      const receiptHtml = `<html><head><title>Crédito</title>
+        <style>
+          body{font-family:monospace;font-size:12px;max-width:320px;margin:0 auto;padding:12px;}
+          table{width:100%;border-collapse:collapse;}
+          td{padding:3px 4px;}
+          .center{text-align:center;}.bold{font-weight:700;}
+          .divider{border-top:1px dashed #333;margin:6px 0;}
+          .total{font-size:15px;font-weight:900;}
+        </style></head><body>
+        <div class='center bold' style='font-size:15px'>VENTA A CRÉDITO</div>
+        <div class='divider'></div>
+        <div>Cliente: <strong>${cliente.nombre}</strong></div>
+        <div>DNI: ${cliente.dni ?? "—"}</div>
+        <div>Factura: ${factura_numero}</div>
+        <div>Cajero: ${usuarioActual?.nombre ?? ""}</div>
+        <div>Caja: ${caiInfo?.caja_asignada ?? ""}</div>
+        <div>Fecha: ${new Date().toLocaleString("es-HN")}</div>
+        <div class='divider'></div>
+        <table>
+          <thead><tr>
+            <th style='text-align:left'>Producto</th>
+            <th style='text-align:center'>Cant</th>
+            <th style='text-align:right'>Total</th>
+          </tr></thead>
+          <tbody>${filasProductos}</tbody>
+        </table>
+        <div class='divider'></div>
+        <div>Saldo anterior: L ${saldoAnterior.toFixed(2)}</div>
+        <div>Esta venta: <strong>L ${total.toFixed(2)}</strong></div>
+        <div class='total'>Nuevo saldo: L ${(saldoAnterior + total).toFixed(2)}</div>
+        <div class='divider'></div>
+        <div class='center' style='font-size:10px;margin-top:8px'>— Pendiente de cobro —</div>
+      </body></html>`;
+
+      setTimeout(() => {
+        const w = window.open("", "", "height=600,width=400");
+        if (w) {
+          w.document.write(receiptHtml);
+          w.document.close();
+          w.onload = () => { setTimeout(() => { w.focus(); w.print(); w.close(); }, 400); };
+        }
+      }, 800);
+
+      setSeleccionados([]);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  }
 
   // Función para obtener resumen de caja del día (EFECTIVO/TARJETA/TRANSFERENCIA)
   async function fetchResumenCaja() {
@@ -860,7 +1035,9 @@ export default function PuntoDeVentaView({
     number | null
   >(null);
   const [showPiezasModal, setShowPiezasModal] = useState(false);
-  const [complementosOpciones, setComplementosOpciones] = useState<string[]>([]);
+  const [complementosOpciones, setComplementosOpciones] = useState<string[]>(
+    [],
+  );
 
   // Cargar complementos desde la tabla complementos_opciones
   useEffect(() => {
@@ -874,10 +1051,26 @@ export default function PuntoDeVentaView({
           setComplementosOpciones(data.map((c: any) => c.nombre));
         } else {
           // Fallback si la tabla aún no existe o está vacía
-          setComplementosOpciones(["CON TODO", "SIN NADA", "SIN SALSAS", "SIN REPOLLO", "SIN ADEREZO", "SIN CEBOLLA", "SALSAS APARTE"]);
+          setComplementosOpciones([
+            "CON TODO",
+            "SIN NADA",
+            "SIN SALSAS",
+            "SIN REPOLLO",
+            "SIN ADEREZO",
+            "SIN CEBOLLA",
+            "SALSAS APARTE",
+          ]);
         }
       } catch {
-        setComplementosOpciones(["CON TODO", "SIN NADA", "SIN SALSAS", "SIN REPOLLO", "SIN ADEREZO", "SIN CEBOLLA", "SALSAS APARTE"]);
+        setComplementosOpciones([
+          "CON TODO",
+          "SIN NADA",
+          "SIN SALSAS",
+          "SIN REPOLLO",
+          "SIN ADEREZO",
+          "SIN CEBOLLA",
+          "SALSAS APARTE",
+        ]);
       }
     })();
   }, []);
@@ -3488,6 +3681,29 @@ export default function PuntoDeVentaView({
                 >
                   Pedido por Teléfono
                 </button>
+
+                <button
+                  style={{
+                    background: "linear-gradient(90deg,#7c3aed,#6d28d9)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "10px 20px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: seleccionados.length === 0 ? "not-allowed" : "pointer",
+                    opacity: seleccionados.length === 0 ? 0.5 : 1,
+                    boxShadow: "0 6px 18px rgba(124,58,237,0.25)",
+                    transition: "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
+                  }}
+                  disabled={seleccionados.length === 0}
+                  onClick={() => {
+                    if (facturaActual === "Límite alcanzado") { alert("¡Límite de facturas alcanzado!"); return; }
+                    setShowCreditoClienteModal(true);
+                  }}
+                >
+                  💳 Facturar a Crédito
+                </button>
               </div>
 
               <div
@@ -3591,7 +3807,6 @@ export default function PuntoDeVentaView({
                           >
                             🍗
                           </button>
-
                         </>
                       )}
                       <button
@@ -3863,7 +4078,10 @@ export default function PuntoDeVentaView({
             padding: "16px",
             boxSizing: "border-box",
           }}
-          onClick={() => { setShowComplementosModal(false); setSelectedProductIndex(null); }}
+          onClick={() => {
+            setShowComplementosModal(false);
+            setSelectedProductIndex(null);
+          }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3881,28 +4099,47 @@ export default function PuntoDeVentaView({
             }}
           >
             {/* Header fijo */}
-            <div style={{
-              background: "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)",
-              padding: "18px 20px 14px",
-              flexShrink: 0,
-            }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", textAlign: "center", letterSpacing: 0.5 }}>
+            <div
+              style={{
+                background: "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)",
+                padding: "18px 20px 14px",
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: "#fff",
+                  textAlign: "center",
+                  letterSpacing: 0.5,
+                }}
+              >
                 🍗 COMPLEMENTOS INCLUIDOS
               </div>
-              <div style={{ textAlign: "center", color: "rgba(255,255,255,0.85)", fontSize: 13, marginTop: 4 }}>
+              <div
+                style={{
+                  textAlign: "center",
+                  color: "rgba(255,255,255,0.85)",
+                  fontSize: 13,
+                  marginTop: 4,
+                }}
+              >
                 {seleccionados[selectedProductIndex]?.nombre}
               </div>
             </div>
 
             {/* Lista con scroll */}
-            <div style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "12px 16px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}>
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "12px 16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
               {complementosOpciones.map((opcion) => {
                 const currentComplementos =
                   seleccionados[selectedProductIndex]?.complementos || [];
@@ -3913,7 +4150,8 @@ export default function PuntoDeVentaView({
                     onClick={() => {
                       const newSeleccionados = [...seleccionados];
                       const cur =
-                        newSeleccionados[selectedProductIndex]?.complementos || [];
+                        newSeleccionados[selectedProductIndex]?.complementos ||
+                        [];
                       newSeleccionados[selectedProductIndex] = {
                         ...newSeleccionados[selectedProductIndex],
                         complementos: isSelected
@@ -3925,16 +4163,26 @@ export default function PuntoDeVentaView({
                     style={{
                       background: isSelected
                         ? "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)"
-                        : theme === "lite" ? "#f5f5f5" : "#2d2f31",
-                      color: isSelected ? "#fff" : theme === "lite" ? "#222" : "#f0f0f0",
+                        : theme === "lite"
+                          ? "#f5f5f5"
+                          : "#2d2f31",
+                      color: isSelected
+                        ? "#fff"
+                        : theme === "lite"
+                          ? "#222"
+                          : "#f0f0f0",
                       borderRadius: 10,
-                      border: isSelected ? "2px solid #2e7d32" : `2px solid ${theme === "lite" ? "#ddd" : "#444"}`,
+                      border: isSelected
+                        ? "2px solid #2e7d32"
+                        : `2px solid ${theme === "lite" ? "#ddd" : "#444"}`,
                       padding: "13px 16px",
                       fontWeight: isSelected ? 700 : 600,
                       fontSize: 15,
                       cursor: "pointer",
                       transition: "all 0.15s",
-                      boxShadow: isSelected ? "0 3px 10px rgba(76,175,80,0.35)" : "none",
+                      boxShadow: isSelected
+                        ? "0 3px 10px rgba(76,175,80,0.35)"
+                        : "none",
                       display: "flex",
                       alignItems: "center",
                       gap: 12,
@@ -3942,19 +4190,25 @@ export default function PuntoDeVentaView({
                       width: "100%",
                     }}
                   >
-                    <span style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 5,
-                      border: isSelected ? "2px solid #fff" : "2px solid #aaa",
-                      background: isSelected ? "rgba(255,255,255,0.3)" : "transparent",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 14,
-                      flexShrink: 0,
-                      fontWeight: 900,
-                    }}>
+                    <span
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 5,
+                        border: isSelected
+                          ? "2px solid #fff"
+                          : "2px solid #aaa",
+                        background: isSelected
+                          ? "rgba(255,255,255,0.3)"
+                          : "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 14,
+                        flexShrink: 0,
+                        fontWeight: 900,
+                      }}
+                    >
                       {isSelected && "✓"}
                     </span>
                     {opcion}
@@ -3964,13 +4218,15 @@ export default function PuntoDeVentaView({
             </div>
 
             {/* Footer fijo */}
-            <div style={{
-              padding: "12px 16px",
-              borderTop: `1px solid ${theme === "lite" ? "#e0e0e0" : "#333"}`,
-              flexShrink: 0,
-              display: "flex",
-              gap: 10,
-            }}>
+            <div
+              style={{
+                padding: "12px 16px",
+                borderTop: `1px solid ${theme === "lite" ? "#e0e0e0" : "#333"}`,
+                flexShrink: 0,
+                display: "flex",
+                gap: 10,
+              }}
+            >
               <button
                 onClick={() => {
                   const newSeleccionados = [...seleccionados];
@@ -3995,7 +4251,10 @@ export default function PuntoDeVentaView({
                 Limpiar
               </button>
               <button
-                onClick={() => { setShowComplementosModal(false); setSelectedProductIndex(null); }}
+                onClick={() => {
+                  setShowComplementosModal(false);
+                  setSelectedProductIndex(null);
+                }}
                 style={{
                   flex: 2,
                   background: "#1976d2",
@@ -7015,6 +7274,25 @@ export default function PuntoDeVentaView({
                       <div className="btn-desc">Ventas registradas</div>
                     </span>
                   </button>
+                  <button
+                    className="menu-btn"
+                    onClick={() => {
+                      setShowPagoCreditoModal(true);
+                      closeMenuAnimated();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
+                      color: "#4c1d95",
+                      border: "1px solid #c4b5fd",
+                      animationDelay: "360ms",
+                    }}
+                  >
+                    <span className="btn-icon">💳</span>
+                    <span>
+                      <div className="btn-label">Cobrar Crédito</div>
+                      <div className="btn-desc">Recibir pago de cliente</div>
+                    </span>
+                  </button>
                 </>
               )}
             </div>
@@ -7347,6 +7625,23 @@ export default function PuntoDeVentaView({
           </div>
         </div>
       )}
+      {/* ── Modales módulo créditos ───────────────────────────────────────────── */}
+      <CreditoClienteModal
+        isOpen={showCreditoClienteModal}
+        onClose={() => setShowCreditoClienteModal(false)}
+        onClienteSeleccionado={async (cliente, saldo) => {
+          setShowCreditoClienteModal(false);
+          await handleVentaCredito(cliente, saldo);
+        }}
+        theme={theme}
+      />
+      <PagoCreditoPOSModal
+        isOpen={showPagoCreditoModal}
+        onClose={() => setShowPagoCreditoModal(false)}
+        cajero={usuarioActual?.nombre ?? ""}
+        cajeroId={usuarioActual?.id ?? ""}
+        theme={theme}
+      />
     </div>
   );
 }

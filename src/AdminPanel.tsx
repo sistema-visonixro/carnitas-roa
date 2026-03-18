@@ -18,7 +18,9 @@ type ViewType =
   | "etiquetas"
   | "recibo"
   | "datosNegocio"
-  | "gananciasNetas";
+  | "gananciasNetas"
+  | "creditosPendientes"
+  | "proveedores";
 
 const cards: {
   label: string;
@@ -90,6 +92,20 @@ const cards: {
     color: "#0f766e",
     subtitle: "Rentabilidad y margen",
   },
+  {
+    label: "Créditos Pendientes",
+    icon: "💳",
+    view: "creditosPendientes",
+    color: "#7c3aed",
+    subtitle: "Cuentas por cobrar",
+  },
+  {
+    label: "Proveedores y CxP",
+    icon: "🏭",
+    view: "proveedores",
+    color: "#0f766e",
+    subtitle: "Cuentas por pagar",
+  },
 ];
 
 interface AdminPanelProps {
@@ -109,6 +125,8 @@ import FacturasEmitidasView from "./FacturasEmitidasView";
 import CierresAdminView from "./CierresAdminView";
 import DatosNegocioView from "./DatosNegocioView";
 import GananciasNetasView from "./GananciasNetasView";
+import CreditosPendientesView from "./CreditosPendientesView";
+import ProveedoresCxPView from "./ProveedoresCxPView";
 
 const AdminPanel: FC<AdminPanelProps> = ({ onSelect, user }) => {
   const { datos: datosNegocio } = useDatosNegocio();
@@ -764,6 +782,16 @@ const AdminPanel: FC<AdminPanelProps> = ({ onSelect, user }) => {
               )}
               {currentView === "gananciasNetas" && (
                 <GananciasNetasView
+                  onBack={() => setCurrentView("resultados")}
+                />
+              )}
+              {currentView === "creditosPendientes" && (
+                <CreditosPendientesView
+                  onBack={() => setCurrentView("resultados")}
+                />
+              )}
+              {currentView === "proveedores" && (
+                <ProveedoresCxPView
                   onBack={() => setCurrentView("resultados")}
                 />
               )}

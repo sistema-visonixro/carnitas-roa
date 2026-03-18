@@ -21,6 +21,8 @@ import EtiquetasView from "./EtiquetasView";
 import ReciboView from "./ReciboView";
 import DatosNegocioView from "./DatosNegocioView";
 import GananciasNetasView from "./GananciasNetasView";
+import CreditosPendientesView from "./CreditosPendientesView";
+import ProveedoresCxPView from "./ProveedoresCxPView";
 import { useDatosNegocio } from "./useDatosNegocio";
 import "./App.css";
 import { supabase } from "./supabaseClient";
@@ -59,7 +61,9 @@ function App() {
         | "recibo"
         | "cajaOperada"
         | "cierreadmin"
-        | "datosNegocio";
+        | "datosNegocio"
+        | "creditosPendientes"
+        | "proveedores";
     } catch {
       return undefined;
     }
@@ -85,6 +89,8 @@ function App() {
     | "cierreadmin"
     | "datosNegocio"
     | "gananciasNetas"
+    | "creditosPendientes"
+    | "proveedores"
   >(initialView || "home");
   const [cajaApertura, setCajaApertura] = useState<string | null>(null);
 
@@ -512,6 +518,24 @@ function App() {
     return (
       <>
         <GananciasNetasView onBack={() => setView("admin")} />
+        <VersionComponent />
+      </>
+    );
+  }
+
+  if (view === "creditosPendientes" && user?.rol === "Admin") {
+    return (
+      <>
+        <CreditosPendientesView onBack={() => setView("admin")} />
+        <VersionComponent />
+      </>
+    );
+  }
+
+  if (view === "proveedores" && user?.rol === "Admin") {
+    return (
+      <>
+        <ProveedoresCxPView onBack={() => setView("admin")} />
         <VersionComponent />
       </>
     );
