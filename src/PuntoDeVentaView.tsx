@@ -106,6 +106,10 @@ export default function PuntoDeVentaView({
   const [showHistorialVentas, setShowHistorialVentas] = useState(false);
   const [historialVentas, setHistorialVentas] = useState<any[]>([]);
   const [historialLoading, setHistorialLoading] = useState(false);
+  // Estados para historial de facturas de crédito del turno
+  const [showHistorialCreditos, setShowHistorialCreditos] = useState(false);
+  const [historialCreditos, setHistorialCreditos] = useState<any[]>([]);
+  const [historialCreditosLoading, setHistorialCreditosLoading] = useState(false);
   // Menu y modal relacionados
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
@@ -536,6 +540,7 @@ export default function PuntoDeVentaView({
         .from("facturas")
         .select("*")
         .eq("cajero_id", usuarioActual?.id)
+        .or("tipo_venta.eq.contado,tipo_venta.is.null")
         .gte("fecha_hora", aperturaActual.fecha)
         .lte("fecha_hora", dayEnd)
         .order("fecha_hora", { ascending: false });
@@ -546,6 +551,142 @@ export default function PuntoDeVentaView({
       alert("Error al cargar historial de ventas");
     } finally {
       setHistorialLoading(false);
+    }
+  }
+
+  // Función para obtener historial de facturas de crédito del turno actual
+  async function fetchHistorialCreditos() {
+    setShowHistorialCreditos(true);
+    setHistorialCreditosLoading(true);
+    try {
+      const { end: dayEnd } = getLocalDayRange();
+      let cajaAsignada = caiInfo?.caja_asignada;
+      if (!cajaAsignada) {
+        const { data: caiData } = await supabase
+          .from("cai_facturas")
+          .select("caja_asignada")
+          .eq("cajero_id", usuarioActual?.id)
+          .single();
+        cajaAsignada = caiData?.caja_asignada || "";
+      }
+      const { data: aperturaActual } = await supabase
+        .from("cierres")
+        .select("fecha, estado")
+        .eq("cajero_id", usuarioActual?.id)
+        .eq("caja", cajaAsignada)
+        .eq("estado", "APERTURA")
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!aperturaActual) {
+        setHistorialCreditosLoading(false);
+        alert("No hay apertura de caja registrada.");
+        setShowHistorialCreditos(false);
+        return;
+      }
+      const { data: creditosData, error } = await supabase
+        .from("facturas_credito")
+        .select("*, clientes_credito(nombre, dni, telefono)")
+        .eq("cajero_id", usuarioActual?.id)
+        .gte("fecha_hora", aperturaActual.fecha)
+        .lte("fecha_hora", dayEnd)
+        .order("fecha_hora", { ascending: false });
+      if (error) throw error;
+      setHistorialCreditos(creditosData || []);
+    } catch (err) {
+      console.error("Error cargando historial de créditos:", err);
+      alert("Error al cargar historial de créditos");
+    } finally {
+      setHistorialCreditosLoading(false);
+    }
+  }
+
+  // Reimprimir factura de crédito del historial
+  async function imprimirFacturaCreditoHistorial(fc: any) {
+    try {
+      const { data: reciboConfig } = await supabase
+        .from("recibo_config")
+        .select("*")
+        .eq("nombre", "default")
+        .single();
+
+      const prods: Array<{ nombre: string; precio: number; cantidad: number }> = (() => {
+        try {
+          const parsed = typeof fc.productos === "string" ? JSON.parse(fc.productos) : fc.productos;
+          return Array.isArray(parsed) ? parsed : [];
+        } catch { return []; }
+      })();
+
+      const total = parseFloat(fc.total || "0");
+      const saldoAnterior = parseFloat(fc.saldo_anterior || "0");
+      const nuevoSaldo = parseFloat(fc.nuevo_saldo || "0");
+      const cliente = fc.clientes_credito || {};
+      const nombreCliente = cliente.nombre || fc.cajero || "Cliente";
+      const dniCliente = cliente.dni || "—";
+
+      const filasProductos = prods
+        .map((p) => `<tr>
+          <td style='padding:3px 4px'>${p.nombre}</td>
+          <td style='text-align:center;padding:3px 4px'>${p.cantidad}</td>
+          <td style='text-align:right;padding:3px 4px'>L ${(parseFloat(String(p.precio)) * p.cantidad).toFixed(2)}</td>
+        </tr>`)
+        .join("");
+
+      const receiptHtml = `<html><head><title>Crédito ${fc.factura_numero}</title>
+        <style>
+          body{font-family:monospace;font-size:12px;max-width:${reciboConfig?.recibo_ancho || 80}mm;margin:0 auto;padding:${reciboConfig?.recibo_padding || 8}px;background:#fff;}
+          table{width:100%;border-collapse:collapse;}
+          td,th{padding:3px 4px;}
+          .center{text-align:center;}.bold{font-weight:700;}
+          .divider{border-top:1px dashed #333;margin:6px 0;}
+          .total{font-size:15px;font-weight:900;}
+        </style></head><body>
+        <div style='text-align:center;margin-bottom:8px;'>
+          <img src='${datosNegocio.logo_url || "/favicon.ico"}' alt='logo' style='width:80px;height:80px;' />
+        </div>
+        <div class='center bold' style='font-size:15px'>${datosNegocio.nombre_negocio.toUpperCase()}</div>
+        <div class='center' style='font-size:12px;'>${datosNegocio.direccion}</div>
+        <div class='center' style='font-size:12px;'>RTN: ${datosNegocio.rtn}</div>
+        <div class='center' style='font-size:12px;'>TEL: ${datosNegocio.celular}</div>
+        <div class='divider'></div>
+        <div class='center bold' style='font-size:15px'>VENTA A CRÉDITO (COPIA)</div>
+        <div class='divider'></div>
+        <div>Cliente: <strong>${nombreCliente}</strong></div>
+        <div>DNI: ${dniCliente}</div>
+        <div>Factura: ${fc.factura_numero}</div>
+        <div>Cajero: ${fc.cajero || ""}</div>
+        <div>Caja: ${fc.caja || ""}</div>
+        <div>Fecha: ${new Date(fc.fecha_hora).toLocaleString("es-HN", { timeZone: "America/Tegucigalpa" })}</div>
+        <div class='divider'></div>
+        <table>
+          <thead><tr>
+            <th style='text-align:left'>Producto</th>
+            <th style='text-align:center'>Cant</th>
+            <th style='text-align:right'>Total</th>
+          </tr></thead>
+          <tbody>${filasProductos}</tbody>
+        </table>
+        <div class='divider'></div>
+        <div>Saldo anterior: L ${saldoAnterior.toFixed(2)}</div>
+        <div class='bold'>Esta venta: L ${total.toFixed(2)}</div>
+        <div class='total'>Nuevo saldo: L ${nuevoSaldo.toFixed(2)}</div>
+        <div class='divider'></div>
+        <div class='center' style='font-size:11px;margin-top:8px'>— Pendiente de cobro —</div>
+        <div class='center bold' style='margin-top:10px;font-size:13px;'>¡GRACIAS POR SU COMPRA!</div>
+      </body></html>`;
+
+      const pw = window.open("", "", "height=800,width=400");
+      if (pw) {
+        pw.document.write(receiptHtml);
+        pw.document.close();
+        pw.onload = () => {
+          setTimeout(() => { pw.focus(); pw.print(); pw.close(); }, 500);
+        };
+      }
+      setShowHistorialCreditos(false);
+    } catch (err) {
+      console.error("Error reimprimiendo factura de crédito:", err);
+      alert("Error al reimprimir la factura de crédito");
     }
   }
 
@@ -7277,6 +7418,25 @@ export default function PuntoDeVentaView({
                   <button
                     className="menu-btn"
                     onClick={() => {
+                      fetchHistorialCreditos();
+                      closeMenuAnimated();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+                      color: "#9a3412",
+                      border: "1px solid #fb923c",
+                      animationDelay: "360ms",
+                    }}
+                  >
+                    <span className="btn-icon">📄</span>
+                    <span>
+                      <div className="btn-label">Facturas Crédito</div>
+                      <div className="btn-desc">Ventas a crédito del turno</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={() => {
                       setShowPagoCreditoModal(true);
                       closeMenuAnimated();
                     }}
@@ -7284,7 +7444,7 @@ export default function PuntoDeVentaView({
                       background: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
                       color: "#4c1d95",
                       border: "1px solid #c4b5fd",
-                      animationDelay: "360ms",
+                      animationDelay: "400ms",
                     }}
                   >
                     <span className="btn-icon">💳</span>
@@ -7418,6 +7578,169 @@ export default function PuntoDeVentaView({
                     </tr>
                   ))}
                 </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Historial de Facturas de Crédito */}
+      {showHistorialCreditos && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 140000,
+          }}
+          onClick={() => setShowHistorialCreditos(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#111",
+              borderRadius: 12,
+              padding: 20,
+              width: "90%",
+              maxWidth: 1000,
+              maxHeight: "85vh",
+              overflow: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>📄 Facturas de Crédito (turno)</h3>
+              <button
+                onClick={() => setShowHistorialCreditos(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  fontSize: 18,
+                  cursor: "pointer",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            {historialCreditosLoading ? (
+              <div style={{ padding: 20, textAlign: "center" }}>Cargando...</div>
+            ) : historialCreditos.length === 0 ? (
+              <div style={{ padding: 20, textAlign: "center", color: "#888" }}>
+                No hay facturas de crédito en este turno.
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr
+                    style={{
+                      textAlign: "left",
+                      borderBottom: "2px solid #fb923c",
+                      background: "#fff7ed",
+                    }}
+                  >
+                    <th style={{ padding: 8 }}>Hora</th>
+                    <th style={{ padding: 8 }}>Factura</th>
+                    <th style={{ padding: 8 }}>Cliente</th>
+                    <th style={{ padding: 8 }}>Monto</th>
+                    <th style={{ padding: 8 }}>Saldo anterior</th>
+                    <th style={{ padding: 8 }}>Nuevo saldo</th>
+                    <th style={{ padding: 8 }}>Estado</th>
+                    <th style={{ padding: 8 }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historialCreditos.map((fc) => (
+                    <tr
+                      key={fc.id}
+                      style={{ borderBottom: "1px solid #f0f0f0" }}
+                    >
+                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                        {new Date(fc.fecha_hora).toLocaleTimeString("es-HN")}
+                      </td>
+                      <td style={{ padding: 8 }}>{fc.factura_numero}</td>
+                      <td style={{ padding: 8 }}>
+                        {fc.clientes_credito?.nombre || "—"}
+                      </td>
+                      <td style={{ padding: 8, fontWeight: 700, color: "#9a3412" }}>
+                        L {Number(fc.total || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: 8, color: "#64748b" }}>
+                        L {Number(fc.saldo_anterior || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: 8, fontWeight: 700 }}>
+                        L {Number(fc.nuevo_saldo || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            background:
+                              fc.estado === "pagado"
+                                ? "#dcfce7"
+                                : fc.estado === "parcial"
+                                  ? "#fef9c3"
+                                  : fc.estado === "vencido"
+                                    ? "#fee2e2"
+                                    : "#fff7ed",
+                            color:
+                              fc.estado === "pagado"
+                                ? "#166534"
+                                : fc.estado === "parcial"
+                                  ? "#713f12"
+                                  : fc.estado === "vencido"
+                                    ? "#991b1b"
+                                    : "#9a3412",
+                          }}
+                        >
+                          {fc.estado || "pendiente"}
+                        </span>
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <button
+                          onClick={() => imprimirFacturaCreditoHistorial(fc)}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#9a3412",
+                            color: "#fff",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: 13,
+                          }}
+                        >
+                          🖨️ Imprimir
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: "#fff7ed", borderTop: "2px solid #fb923c" }}>
+                    <td colSpan={3} style={{ padding: 8, fontWeight: 700 }}>TOTAL DEL TURNO</td>
+                    <td style={{ padding: 8, fontWeight: 800, color: "#9a3412", fontSize: 15 }}>
+                      L {historialCreditos.reduce((s, fc) => s + Number(fc.total || 0), 0).toFixed(2)}
+                    </td>
+                    <td colSpan={4}></td>
+                  </tr>
+                </tfoot>
               </table>
             )}
           </div>
