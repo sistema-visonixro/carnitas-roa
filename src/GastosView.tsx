@@ -33,9 +33,9 @@ export default function GastosView({ onBack }: GastosViewProps) {
     cajero_id: "",
     caja: "",
   });
-  const [cajeros, setCajeros] = useState<Array<{ id: string; nombre: string }>>(
-    []
-  );
+  const [cajeros, setCajeros] = useState<
+    Array<{ id: string; nombre: string; rol?: string }>
+  >([]);
   const [cajaOptions, setCajaOptions] = useState<string[]>([]);
   const [editId, setEditId] = useState<number | null>(null);
   const [editGasto, setEditGasto] = useState({
@@ -44,6 +44,7 @@ export default function GastosView({ onBack }: GastosViewProps) {
     motivo: "",
   });
   const [loading, setLoading] = useState(false);
+  const [showModalGasto, setShowModalGasto] = useState(false);
 
   useEffect(() => {
     fetchGastos();
@@ -52,8 +53,8 @@ export default function GastosView({ onBack }: GastosViewProps) {
       try {
         const { data } = await supabase
           .from("usuarios")
-          .select("id,nombre")
-          .eq("rol", "cajero");
+          .select("id,nombre,rol")
+          .in("rol", ["cajero", "Admin"]);
         setCajeros(data || []);
       } catch (e) {
         console.warn("No se pudo obtener la lista de cajeros:", e);
@@ -111,7 +112,7 @@ export default function GastosView({ onBack }: GastosViewProps) {
   function calcularTotal(data: Gasto[]) {
     const total = data.reduce(
       (sum, g) => sum + parseFloat(g.monto?.toString() || "0"),
-      0
+      0,
     );
     setMontoTotal(total);
   }
@@ -462,6 +463,119 @@ export default function GastosView({ onBack }: GastosViewProps) {
           .filters, .form-grid { grid-template-columns: 1fr; }
           .gastos-enterprise { padding: 1rem; }
         }
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.55);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 1rem;
+        }
+
+        .modal-box {
+          background: #fff;
+          border-radius: 16px;
+          padding: 2rem;
+          width: 100%;
+          max-width: 540px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+          animation: slideUp 0.25s ease;
+        }
+
+        @keyframes slideUp {
+          from { transform: translateY(30px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-title {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: var(--text-primary);
+          margin: 0 0 1.5rem 0;
+        }
+
+        .modal-form-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        @media (max-width: 520px) {
+          .modal-form-grid { grid-template-columns: 1fr; }
+          .modal-box { padding: 1.25rem; }
+        }
+
+        .modal-label {
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: var(--text-secondary);
+          margin-bottom: 4px;
+          display: block;
+        }
+
+        .modal-input {
+          background: #f8fafc;
+          border: 1.5px solid var(--border);
+          border-radius: 8px;
+          padding: 10px 12px;
+          color: var(--text-primary);
+          font-size: 0.95rem;
+          width: 100%;
+          transition: border-color 0.2s;
+        }
+
+        .modal-input:focus {
+          outline: none;
+          border-color: var(--accent);
+          box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+        }
+
+        .modal-field { display: flex; flex-direction: column; }
+        .modal-field-full { grid-column: 1 / -1; display: flex; flex-direction: column; }
+
+        .modal-actions {
+          display: flex;
+          gap: 0.75rem;
+          justify-content: flex-end;
+          margin-top: 1.5rem;
+        }
+
+        .btn-modal-cancel {
+          background: #f1f5f9;
+          color: var(--text-secondary);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 10px 20px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .btn-modal-cancel:hover { background: #e2e8f0; }
+
+        .btn-add-gasto {
+          background: linear-gradient(135deg, #10b981, #059669);
+          color: white;
+          border: none;
+          border-radius: 8px;
+          padding: 10px 20px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.95rem;
+        }
+
+        .btn-add-gasto:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 14px rgba(16,185,129,0.35);
+        }
       `}</style>
 
       <div className="container">
@@ -474,6 +588,12 @@ export default function GastosView({ onBack }: GastosViewProps) {
             )}
             <h1 className="page-title">💸 Control de Gastos</h1>
           </div>
+          <button
+            className="btn-add-gasto"
+            onClick={() => setShowModalGasto(true)}
+          >
+            ➕ Registrar Gasto
+          </button>
         </header>
 
         {/* Stats */}
@@ -518,119 +638,6 @@ export default function GastosView({ onBack }: GastosViewProps) {
           >
             {loading ? "⏳" : "🔍"} Filtrar
           </button>
-        </div>
-
-        {/* Formulario Nuevo Gasto */}
-        <div className="form-section">
-          <h3 style={{ color: "var(--text-primary)", marginBottom: "1rem" }}>
-            ➕ Nuevo Gasto
-          </h3>
-          <div className="form-grid">
-            <input
-              type="date"
-              value={nuevoGasto.fecha}
-              onChange={(e) =>
-                setNuevoGasto({ ...nuevoGasto, fecha: e.target.value })
-              }
-              className="form-input"
-              required
-            />
-            <input
-              type="number"
-              placeholder="Monto (L)"
-              value={nuevoGasto.monto}
-              onChange={(e) =>
-                setNuevoGasto({ ...nuevoGasto, monto: e.target.value })
-              }
-              className="form-input"
-              required
-              step="0.01"
-            />
-            <input
-              type="text"
-              placeholder="Motivo del gasto"
-              value={nuevoGasto.motivo}
-              onChange={(e) =>
-                setNuevoGasto({ ...nuevoGasto, motivo: e.target.value })
-              }
-              className="form-input"
-              required
-            />
-            {/* Para admins: elegir cajero y caja asignada */}
-            {usuarioActual && usuarioActual.rol === "Admin" && (
-              <>
-                <select
-                  value={nuevoGasto.cajero_id}
-                  onChange={async (e) => {
-                    const selId = e.target.value;
-                    setNuevoGasto({
-                      ...nuevoGasto,
-                      cajero_id: selId,
-                      caja: "",
-                    });
-                    // Obtener caja asignada para ese cajero
-                    try {
-                      const { data: caiData } = await supabase
-                        .from("cai_facturas")
-                        .select("caja_asignada")
-                        .eq("cajero_id", selId)
-                        .single();
-                      const cajaAsig = caiData?.caja_asignada;
-                      if (cajaAsig) {
-                        setNuevoGasto((s) => ({ ...s, caja: cajaAsig }));
-                        setCajaOptions([cajaAsig]);
-                      } else {
-                        // obtener opciones generales
-                        const { data: all } = await supabase
-                          .from("cai_facturas")
-                          .select("caja_asignada");
-                        const opts = (all || [])
-                          .map((r: any) => r.caja_asignada)
-                          .filter(Boolean);
-                        setCajaOptions(opts);
-                      }
-                    } catch (err) {
-                      console.warn("No se pudo obtener caja asignada:", err);
-                    }
-                  }}
-                  className="form-input"
-                >
-                  <option value="">Seleccionar cajero (opcional)</option>
-                  {cajeros.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nombre}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={nuevoGasto.caja}
-                  onChange={(e) =>
-                    setNuevoGasto({ ...nuevoGasto, caja: e.target.value })
-                  }
-                  className="form-input"
-                >
-                  <option value="">Seleccionar caja (opcional)</option>
-                  {cajaOptions.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-            <button
-              onClick={agregarGasto}
-              className="btn-primary"
-              disabled={
-                loading ||
-                !nuevoGasto.fecha ||
-                !nuevoGasto.monto ||
-                !nuevoGasto.motivo
-              }
-            >
-              {loading ? "⏳" : "✅"} Agregar
-            </button>
-          </div>
         </div>
 
         {/* Tabla */}
@@ -737,13 +744,166 @@ export default function GastosView({ onBack }: GastosViewProps) {
                         </button>
                       </td>
                     </tr>
-                  )
+                  ),
                 )}
               </tbody>
             </table>
           )}
         </div>
       </div>
+
+      {/* Modal Registrar Gasto */}
+      {showModalGasto && (
+        <div className="modal-overlay" onClick={() => setShowModalGasto(false)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h2 className="modal-title">➕ Registrar Nuevo Gasto</h2>
+            <div className="modal-form-grid">
+              <div className="modal-field">
+                <label className="modal-label">Fecha *</label>
+                <input
+                  type="date"
+                  value={nuevoGasto.fecha}
+                  onChange={(e) =>
+                    setNuevoGasto({ ...nuevoGasto, fecha: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                />
+              </div>
+              <div className="modal-field">
+                <label className="modal-label">Monto (L) *</label>
+                <input
+                  type="number"
+                  placeholder="0.00"
+                  value={nuevoGasto.monto}
+                  onChange={(e) =>
+                    setNuevoGasto({ ...nuevoGasto, monto: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                  step="0.01"
+                  min="0"
+                />
+              </div>
+              <div className="modal-field-full">
+                <label className="modal-label">Motivo *</label>
+                <input
+                  type="text"
+                  placeholder="Descripción del gasto..."
+                  value={nuevoGasto.motivo}
+                  onChange={(e) =>
+                    setNuevoGasto({ ...nuevoGasto, motivo: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                />
+              </div>
+              {/* Para admins: elegir cajero y caja asignada */}
+              {usuarioActual && usuarioActual.rol === "Admin" && (
+                <>
+                  <div className="modal-field">
+                    <label className="modal-label">Cajero (opcional)</label>
+                    <select
+                      value={nuevoGasto.cajero_id}
+                      onChange={async (e) => {
+                        const selId = e.target.value;
+                        setNuevoGasto({
+                          ...nuevoGasto,
+                          cajero_id: selId,
+                          caja: "",
+                        });
+                        try {
+                          const { data: caiData } = await supabase
+                            .from("cai_facturas")
+                            .select("caja_asignada")
+                            .eq("cajero_id", selId)
+                            .single();
+                          const cajaAsig = caiData?.caja_asignada;
+                          if (cajaAsig) {
+                            setNuevoGasto((s) => ({ ...s, caja: cajaAsig }));
+                            setCajaOptions([cajaAsig]);
+                          } else {
+                            const { data: all } = await supabase
+                              .from("cai_facturas")
+                              .select("caja_asignada");
+                            const opts = (all || [])
+                              .map((r: any) => r.caja_asignada)
+                              .filter(Boolean);
+                            setCajaOptions(opts);
+                          }
+                        } catch (err) {
+                          console.warn(
+                            "No se pudo obtener caja asignada:",
+                            err,
+                          );
+                        }
+                      }}
+                      className="modal-input"
+                    >
+                      <option value="">Seleccionar cajero</option>
+                      {cajeros.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nombre}
+                          {c.rol === "Admin" ? " (Admin)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="modal-field">
+                    <label className="modal-label">Caja (opcional)</label>
+                    <select
+                      value={nuevoGasto.caja}
+                      onChange={(e) =>
+                        setNuevoGasto({ ...nuevoGasto, caja: e.target.value })
+                      }
+                      className="modal-input"
+                    >
+                      <option value="">Seleccionar caja</option>
+                      {cajaOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button
+                className="btn-modal-cancel"
+                onClick={() => {
+                  setShowModalGasto(false);
+                  setNuevoGasto({
+                    fecha: "",
+                    monto: "",
+                    motivo: "",
+                    cajero_id: "",
+                    caja: "",
+                  });
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-add-gasto"
+                onClick={async () => {
+                  await agregarGasto();
+                  setShowModalGasto(false);
+                }}
+                disabled={
+                  loading ||
+                  !nuevoGasto.fecha ||
+                  !nuevoGasto.monto ||
+                  !nuevoGasto.motivo
+                }
+              >
+                {loading ? "⏳ Guardando..." : "✅ Guardar Gasto"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

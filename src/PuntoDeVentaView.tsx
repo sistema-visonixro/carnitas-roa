@@ -402,8 +402,6 @@ export default function PuntoDeVentaView({
         }
       })();
       const totalVenta = parseFloat(venta.total || "0");
-      const subtotalVenta = parseFloat(venta.sub_total || "0");
-      const isv15Venta = parseFloat(venta.isv_15 || "0");
       const efectivoTotal = (pagosVenta || [])
         .filter((p: any) => p.tipo === "efectivo" && p.referencia !== "CAMBIO")
         .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
@@ -478,8 +476,6 @@ export default function PuntoDeVentaView({
               </tbody>
             </table>
           </div>
-          <div style='font-size:15px; margin-bottom:3px;'><span style='float:left;'>SUBTOTAL:</span><span style='float:right; font-weight:700;'>L ${subtotalVenta.toFixed(2)}</span><div style='clear:both;'></div></div>
-          <div style='font-size:15px; margin-bottom:3px;'><span style='float:left;'>ISV 15%:</span><span style='float:right; font-weight:700;'>L ${isv15Venta.toFixed(2)}</span><div style='clear:both;'></div></div>
           <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-size:17px; font-weight:700;'><span style='float:left;'>TOTAL:</span><span style='float:right;'>L ${totalVenta.toFixed(2)}</span><div style='clear:both;'></div></div>
           ${pagosHtml}
           <div style='text-align:center; margin-top:18px; font-size:15px; font-weight:700; border-top:1px dashed #000; padding-top:10px;'>¡GRACIAS POR SU COMPRA!</div>
@@ -2507,22 +2503,6 @@ export default function PuntoDeVentaView({
               </div>
             `;
             // Recibo - Formato SAR
-            // Calcular subtotal e ISV 15%
-            const subtotalRecibo = seleccionados.reduce((sum, p) => {
-              if (p.tipo === "comida") {
-                return sum + (p.precio / 1.15) * p.cantidad;
-              } else if (p.tipo === "bebida") {
-                return sum + (p.precio / 1.18) * p.cantidad;
-              } else {
-                return sum + p.precio * p.cantidad;
-              }
-            }, 0);
-            const isv15Recibo = seleccionados
-              .filter((p) => p.tipo === "comida")
-              .reduce(
-                (sum, p) => sum + (p.precio - p.precio / 1.15) * p.cantidad,
-                0,
-              );
 
             // Calcular pagos para el recibo
             const efectivoTotal =
@@ -2693,20 +2673,6 @@ export default function PuntoDeVentaView({
                 </div>
                 
                 <!-- Totales -->
-                <div style='font-size:15px; margin-bottom:3px;'>
-                  <span style='float:left;'>SUBTOTAL:</span>
-                  <span style='float:right; font-weight:700;'>L ${subtotalRecibo.toFixed(
-                    2,
-                  )}</span>
-                  <div style='clear:both;'></div>
-                </div>
-                <div style='font-size:15px; margin-bottom:3px;'>
-                  <span style='float:left;'>ISV 15%:</span>
-                  <span style='float:right; font-weight:700;'>L ${isv15Recibo.toFixed(
-                    2,
-                  )}</span>
-                  <div style='clear:both;'></div>
-                </div>
                 <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-size:17px; font-weight:700;'>
                   <span style='float:left;'>TOTAL:</span>
                   <span style='float:right;'>L ${total.toFixed(2)}</span>
@@ -4937,21 +4903,6 @@ export default function PuntoDeVentaView({
                       `;
 
                           // Calcular subtotal e ISV 15% para pedido de envío
-                          const subtotalEnvio = registro.productos.reduce(
-                            (sum: number, p: any) => {
-                              // Asumimos que todos los productos son comida (tipo por defecto)
-                              return sum + (p.precio / 1.15) * p.cantidad;
-                            },
-                            0,
-                          );
-                          const isv15Envio = registro.productos.reduce(
-                            (sum: number, p: any) => {
-                              return (
-                                sum + (p.precio - p.precio / 1.15) * p.cantidad
-                              );
-                            },
-                            0,
-                          );
 
                           const comprobanteHtml = `
                         <div style='font-family:monospace; width:${
@@ -5031,20 +4982,6 @@ export default function PuntoDeVentaView({
                           </div>
                           
                           <!-- Totales -->
-                          <div style='font-size:15px; margin-bottom:3px;'>
-                            <span style='float:left;'>SUBTOTAL:</span>
-                            <span style='float:right; font-weight:700;'>L ${subtotalEnvio.toFixed(
-                              2,
-                            )}</span>
-                            <div style='clear:both;'></div>
-                          </div>
-                          <div style='font-size:15px; margin-bottom:3px;'>
-                            <span style='float:left;'>ISV 15%:</span>
-                            <span style='float:right; font-weight:700;'>L ${isv15Envio.toFixed(
-                              2,
-                            )}</span>
-                            <div style='clear:both;'></div>
-                          </div>
                           <div style='font-size:15px; margin-bottom:3px;'>
                             <span style='float:left;'>COSTO ENVÍO:</span>
                             <span style='float:right; font-weight:700;'>L ${registro.costo_envio.toFixed(
