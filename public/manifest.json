@@ -1,6 +1,6 @@
 {
   "name": "Punto de Venta",
-  "short_name": "Pollos Doña Concha",
+  "short_name": "Punto de Venta",
   "start_url": "/index.html",
   "display": "standalone",
   "background_color": "#ffffff",

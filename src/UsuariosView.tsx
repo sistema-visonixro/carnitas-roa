@@ -464,38 +464,41 @@ export default function UsuariosView({ onBack }: UsuariosViewProps) {
           outline: none;
           border-color: var(--accent);
           box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-          background: whitewhite; border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; gap: 12px; align-items: center; box-shadow: 0 6px 18px rgba(0,0,0,0.06); transition: all 0.2s ease; }
-        .user-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-        .user-avatar-sm { width: 56px; height: 56px; border-radius: 999px; display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; background:linear-gradient(135deg,#3b82f6,#8b5cf6); flex-shrink:0; }
-        .user-body { flex:1; min-width:0; }
-        .user-name { font-weight:700; color:var(--text-primary); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .user-meta { color:var(--text-secondary); font-size:13px; }
+          background: #fff;
+        }
 
         .error {
           background: #fee2e2;
-          color: #ef44440 0 3px rgba(30,136,229,0.1);
+          color: #ef4444;
+          padding: 1rem;
+          border-radius: 8px;
+          border-left: 4px solid var(--danger);
+          margin-bottom: 1rem;
         }
 
         .form-input::placeholder {
           color: var(--text-secondary);
         }
 
-        /* Cards para móvil (ocultas por defecto) */
+        /* Cards para móvil */
         .cards-grid { display: none; }
-        .user-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; gap: 12px; align-items: center; box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
-        .user-avatar-sm { width: 56px; height: 56px; border-radius: 999px; display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; background:linear-gradient(135deg,#1e88e5,#42a5f5); flex-shrink:0; }
-        .user-body { flex:1; min-width:0; }
-        .user-name { font-weight:700; color:var(--text-primary); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .user-meta { color:var(--text-secondary); font-size:13px; }
-
-        .error {
-          background: rgba(198,40,40,0.1);
-          color: #c62828;
-          padding: 1rem;
-          border-radius: 8px;
-          border-left: 4px solid var(--danger);
-          margin-bottom: 1rem;
+        .user-card { 
+          background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 16px; 
+          display: flex; flex-direction: column; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); 
+          transition: all 0.2s ease;
         }
+        .user-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+        .user-card-header { display: flex; align-items: center; gap: 12px; }
+        .user-avatar-sm { width: 50px; height: 50px; border-radius: 12px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size: 20px; color:#fff; background:linear-gradient(135deg,#3b82f6,#8b5cf6); flex-shrink:0; }
+        .user-body { flex:1; min-width:0; }
+        .user-name { font-size: 16px; font-weight:800; color:var(--text-primary); margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .user-meta { color:var(--text-secondary); font-size:13px; font-family: monospace; }
+        .user-card-details { background: #f8fafc; border-radius: 8px; padding: 12px; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .user-card-actions { display: flex; gap: 8px; margin-top: 4px; }
+        
+        .role-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+        .role-admin { background: #dbeafe; color: #1e40af; }
+        .role-cajero { background: #dcfce7; color: #16a34a; }
 
         .loading {
           text-align: center;
@@ -507,10 +510,10 @@ export default function UsuariosView({ onBack }: UsuariosViewProps) {
           .header { padding: 1rem; flex-direction: column; gap: 1rem; }
           .main-content { padding: 1rem; }
           .form-grid { grid-template-columns: 1fr; }
-          /* Mostrar cards y ocultar tabla en móvil */
           .table { display: none; }
-          .table-container { box-shadow: none; }
-          .cards-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+          .table-container { box-shadow: none; border: none; background: transparent; }
+          .cards-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+          .stats-grid { grid-template-columns: 1fr 1fr; }
         }
       `}</style>
 
@@ -566,7 +569,6 @@ export default function UsuariosView({ onBack }: UsuariosViewProps) {
               </thead>
               <tbody>
                 {usuarios
-                  .filter((u) => u.rol === "cajero")
                   .map((u) => (
                     <tr key={u.id}>
                       <td style={{ color: "#43a047", fontWeight: 700 }}>
@@ -623,56 +625,38 @@ export default function UsuariosView({ onBack }: UsuariosViewProps) {
                   ))}
               </tbody>
             </table>
-            {/* Cards view para móviles (oculto en escritorio) */}
             <div className="cards-grid" style={{ marginTop: 8 }}>
-              {usuarios
-                .filter((u) => u.rol === "cajero")
-                .map((u) => (
+              {usuarios.map((u) => (
                   <div className="user-card" key={u.id}>
-                    <div className="user-avatar-sm">
-                      {u.nombre?.charAt(0)?.toUpperCase()}
-                    </div>
-                    <div className="user-body">
-                      <div className="user-name">
-                        {u.nombre}{" "}
-                        <span
-                          style={{
-                            color: "var(--text-secondary)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          #{u.codigo}
-                        </span>
+                    <div className="user-card-header">
+                      <div className="user-avatar-sm" style={{ background: u.rol === 'Admin' ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : 'linear-gradient(135deg,#16a34a,#4ade80)' }}>
+                        {u.nombre?.charAt(0)?.toUpperCase() || '?'}
                       </div>
-                      <div className="user-meta">
-                        {u.rol} · Caja: {u.caja || "-"} · IP: {u.ip || "-"}
+                      <div className="user-body">
+                        <div className="user-name">{u.nombre}</div>
+                        <div className="user-meta">Code: {u.codigo}</div>
+                      </div>
+                      <div>
+                        <span className={`role-badge ${u.rol === 'Admin' ? 'role-admin' : 'role-cajero'}`}>{u.rol}</span>
                       </div>
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                      }}
-                    >
+                    
+                    <div className="user-card-details">
+                       <div><strong>Caja:</strong><br/>{u.caja || 'Ninguna'}</div>
+                       <div><strong>IP:</strong><br/>{u.ip || '—'}</div>
+                    </div>
+                    
+                    <div className="user-card-actions">
                       {u.rol !== "Admin" && (
-                        <button
-                          className="btn-table btn-edit"
-                          onClick={() => handleEdit(u)}
-                        >
-                          Editar
+                        <button className="btn-table btn-edit" onClick={() => handleEdit(u)} style={{ flex: 1, padding: '10px', background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#0f172a' }}>
+                          Editar Usuario
                         </button>
                       )}
                       {u.rol === "Admin" && (
-                        <button
-                          className="btn-table btn-update"
-                          onClick={() => handleAdminUpdate(u)}
-                          style={{ background: "#1976d2", color: "#fff" }}
-                        >
-                          Actualizar
+                        <button className="btn-table btn-update" onClick={() => handleAdminUpdate(u)} style={{ flex: 1, padding: '10px', background: '#1e40af', color: '#fff', border: 'none', borderRadius: '6px' }}>
+                          Actualizar Admin
                         </button>
                       )}
-                      {/* Eliminado botón de eliminar en vista móvil */}
                     </div>
                   </div>
                 ))}

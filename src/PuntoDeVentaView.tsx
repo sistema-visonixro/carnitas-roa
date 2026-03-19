@@ -35,7 +35,15 @@ import { useConexion } from "./utils/useConexion";
 import CreditoClienteModal from "./CreditoClienteModal";
 import PagoCreditoPOSModal from "./PagoCreditoPOSModal";
 import { confirmarVentaCredito } from "./services/creditoService";
-import type { ClienteCredito } from "./types/creditos";
+import {
+  obtenerProveedores,
+  crearCuentaPorPagar,
+} from "./services/proveedorService";
+import type {
+  ClienteCredito,
+  CuentaPorPagarInput,
+  Proveedor,
+} from "./types/creditos";
 
 interface Producto {
   id: string;
@@ -109,7 +117,8 @@ export default function PuntoDeVentaView({
   // Estados para historial de facturas de crédito del turno
   const [showHistorialCreditos, setShowHistorialCreditos] = useState(false);
   const [historialCreditos, setHistorialCreditos] = useState<any[]>([]);
-  const [historialCreditosLoading, setHistorialCreditosLoading] = useState(false);
+  const [historialCreditosLoading, setHistorialCreditosLoading] =
+    useState(false);
   // Menu y modal relacionados
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
@@ -137,18 +146,25 @@ export default function PuntoDeVentaView({
   };
 
   // ── Handler venta a crédito ────────────────────────────────────────────────
-  async function handleVentaCredito(cliente: ClienteCredito, saldoAnterior: number) {
+  async function handleVentaCredito(
+    cliente: ClienteCredito,
+    saldoAnterior: number,
+  ) {
     if (seleccionados.length === 0) return;
 
-    const factura_numero = facturaActual && facturaActual !== "Límite alcanzado"
-      ? facturaActual
-      : "";
+    const factura_numero =
+      facturaActual && facturaActual !== "Límite alcanzado"
+        ? facturaActual
+        : "";
     if (!factura_numero) {
       alert("No hay número de factura disponible. Verifica el CAI activo.");
       return;
     }
 
-    const sub_total = seleccionados.reduce((s, p) => s + p.precio * p.cantidad, 0);
+    const sub_total = seleccionados.reduce(
+      (s, p) => s + p.precio * p.cantidad,
+      0,
+    );
     const total = sub_total;
 
     const productos = seleccionados.map((p) => ({
@@ -162,18 +178,18 @@ export default function PuntoDeVentaView({
     try {
       const result = await confirmarVentaCredito({
         factura_numero,
-        cliente_id:     cliente.id,
-        cajero_id:      usuarioActual?.id    ?? "",
-        cajero:         usuarioActual?.nombre ?? "",
-        caja:           caiInfo?.caja_asignada ?? "",
-        cai:            caiInfo?.cai           ?? "",
+        cliente_id: cliente.id,
+        cajero_id: usuarioActual?.id ?? "",
+        cajero: usuarioActual?.nombre ?? "",
+        caja: caiInfo?.caja_asignada ?? "",
+        cai: caiInfo?.cai ?? "",
         productos,
         sub_total,
-        isv_15:         0,
-        isv_18:         0,
+        isv_15: 0,
+        isv_18: 0,
         total,
-        fecha_hora:     new Date().toISOString(),
-        tipo_orden:     "PARA LLEVAR",
+        fecha_hora: new Date().toISOString(),
+        tipo_orden: "PARA LLEVAR",
         dias_vencimiento: 30,
       });
 
@@ -198,40 +214,67 @@ export default function PuntoDeVentaView({
           <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${factura_numero}</div>
           <div style='font-size:13px; font-weight:700; color:#7c3aed; text-align:center; margin-bottom:10px;'>★ VENTA A CRÉDITO ★</div>
 
-          ${seleccionados.filter((p) => p.tipo === "comida").length > 0 ? `
+          ${
+            seleccionados.filter((p) => p.tipo === "comida").length > 0
+              ? `
             <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMIDAS</div>
             <ul style='list-style:none; padding:0; margin-bottom:12px;'>
-              ${seleccionados.filter((p) => p.tipo === "comida").map((p) => `
+              ${seleccionados
+                .filter((p) => p.tipo === "comida")
+                .map(
+                  (p) => `
                 <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
                   <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
                   <div style='font-weight:700;'>${p.nombre}</div>
                   ${p.complementos && p.complementos.length > 0 ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍗 Complementos:</div>${p.complementos.map((c) => `<div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${c}</span></div>`).join("")}` : ""}
                   ${p.piezas && p.piezas !== "PIEZAS VARIAS" ? `<div style='font-size:12px; margin-top:6px; font-weight:600; color:#555;'>🍖 Piezas:</div><div style='font-size:14px; margin-top:2px; padding-left:8px;'><span style='font-weight:700;'>• ${p.piezas}</span></div>` : ""}
-                </li>`).join("")}
+                </li>`,
+                )
+                .join("")}
             </ul>
-          ` : ""}
+          `
+              : ""
+          }
 
-          ${seleccionados.filter((p) => p.tipo === "complemento").length > 0 ? `
+          ${
+            seleccionados.filter((p) => p.tipo === "complemento").length > 0
+              ? `
             <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMPLEMENTOS</div>
             <ul style='list-style:none; padding:0; margin-bottom:12px;'>
-              ${seleccionados.filter((p) => p.tipo === "complemento").map((p) => `
+              ${seleccionados
+                .filter((p) => p.tipo === "complemento")
+                .map(
+                  (p) => `
                 <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
                   <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
                   <div style='font-weight:700;'>${p.nombre}</div>
-                </li>`).join("")}
+                </li>`,
+                )
+                .join("")}
             </ul>
-          ` : ""}
+          `
+              : ""
+          }
 
-          ${seleccionados.filter((p) => p.tipo === "bebida").length > 0 ? `
+          ${
+            seleccionados.filter((p) => p.tipo === "bebida").length > 0
+              ? `
             <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>BEBIDAS</div>
             <ul style='list-style:none; padding:0; margin-bottom:0;'>
-              ${seleccionados.filter((p) => p.tipo === "bebida").map((p) => `
+              ${seleccionados
+                .filter((p) => p.tipo === "bebida")
+                .map(
+                  (p) => `
                 <li style='font-size:${etiquetaConfig?.etiqueta_fontsize || 20}px; margin-bottom:6px; padding-bottom:8px; text-align:left; border-bottom:1px solid #000;'>
                   <div style='font-weight:900; font-size:24px; color:#d32f2f;'>${p.cantidad}x</div>
                   <div style='font-weight:700;'>${p.nombre}</div>
-                </li>`).join("")}
+                </li>`,
+                )
+                .join("")}
             </ul>
-          ` : ""}
+          `
+              : ""
+          }
         </div>`;
 
       const pwComanda = window.open("", "", "height=800,width=400");
@@ -241,17 +284,23 @@ export default function PuntoDeVentaView({
         );
         pwComanda.document.close();
         pwComanda.onload = () => {
-          setTimeout(() => { pwComanda.focus(); pwComanda.print(); pwComanda.close(); }, 500);
+          setTimeout(() => {
+            pwComanda.focus();
+            pwComanda.print();
+            pwComanda.close();
+          }, 500);
         };
       }
 
       // ── 3. Imprimir RECIBO de crédito (para el cliente) ──────────────────
       const filasProductos = seleccionados
-        .map((p) => `<tr>
+        .map(
+          (p) => `<tr>
           <td>${p.nombre}</td>
           <td style='text-align:center'>${p.cantidad}</td>
           <td style='text-align:right'>L ${(p.precio * p.cantidad).toFixed(2)}</td>
-        </tr>`)
+        </tr>`,
+        )
         .join("");
 
       const receiptHtml = `<html><head><title>Crédito</title>
@@ -293,7 +342,13 @@ export default function PuntoDeVentaView({
         if (w) {
           w.document.write(receiptHtml);
           w.document.close();
-          w.onload = () => { setTimeout(() => { w.focus(); w.print(); w.close(); }, 400); };
+          w.onload = () => {
+            setTimeout(() => {
+              w.focus();
+              w.print();
+              w.close();
+            }, 400);
+          };
         }
       }, 800);
 
@@ -610,12 +665,18 @@ export default function PuntoDeVentaView({
         .eq("nombre", "default")
         .single();
 
-      const prods: Array<{ nombre: string; precio: number; cantidad: number }> = (() => {
-        try {
-          const parsed = typeof fc.productos === "string" ? JSON.parse(fc.productos) : fc.productos;
-          return Array.isArray(parsed) ? parsed : [];
-        } catch { return []; }
-      })();
+      const prods: Array<{ nombre: string; precio: number; cantidad: number }> =
+        (() => {
+          try {
+            const parsed =
+              typeof fc.productos === "string"
+                ? JSON.parse(fc.productos)
+                : fc.productos;
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })();
 
       const total = parseFloat(fc.total || "0");
       const saldoAnterior = parseFloat(fc.saldo_anterior || "0");
@@ -625,11 +686,13 @@ export default function PuntoDeVentaView({
       const dniCliente = cliente.dni || "—";
 
       const filasProductos = prods
-        .map((p) => `<tr>
+        .map(
+          (p) => `<tr>
           <td style='padding:3px 4px'>${p.nombre}</td>
           <td style='text-align:center;padding:3px 4px'>${p.cantidad}</td>
           <td style='text-align:right;padding:3px 4px'>L ${(parseFloat(String(p.precio)) * p.cantidad).toFixed(2)}</td>
-        </tr>`)
+        </tr>`,
+        )
         .join("");
 
       const receiptHtml = `<html><head><title>Crédito ${fc.factura_numero}</title>
@@ -680,7 +743,11 @@ export default function PuntoDeVentaView({
         pw.document.write(receiptHtml);
         pw.document.close();
         pw.onload = () => {
-          setTimeout(() => { pw.focus(); pw.print(); pw.close(); }, 500);
+          setTimeout(() => {
+            pw.focus();
+            pw.print();
+            pw.close();
+          }, 500);
         };
       }
       setShowHistorialCreditos(false);
@@ -1154,6 +1221,30 @@ export default function PuntoDeVentaView({
   //   }
   // };
   const [gastoSuccessMessage, setGastoSuccessMessage] = useState<string>("");
+
+  // ── Modal Cuentas por Pagar ─────────────────────────────────
+  const [showCxPModal, setShowCxPModal] = useState(false);
+  const [cxpProveedores, setCxpProveedores] = useState<Proveedor[]>([]);
+  const [cxpProveedorId, setCxpProveedorId] = useState<string>("");
+  const [cxpMonto, setCxpMonto] = useState<string>("");
+  const [cxpMotivo, setCxpMotivo] = useState<string>("");
+  const [guardandoCxP, setGuardandoCxP] = useState(false);
+  const [showCxPSuccess, setShowCxPSuccess] = useState(false);
+  const cerrarCxP = () => {
+    setShowCxPModal(false);
+    setCxpProveedorId("");
+    setCxpMonto("");
+    setCxpMotivo("");
+  };
+
+  // ── Reset formulario Pedido por Teléfono ────────────────────
+  const resetEnvioForm = () => {
+    setEnvioCliente("");
+    setEnvioCelular("");
+    setEnvioTipoPago("Efectivo");
+    setEnvioCosto("0");
+  };
+
   // Estados para modal de devolución
   const [showDevolucionModal, setShowDevolucionModal] = useState(false);
   const [devolucionFactura, setDevolucionFactura] = useState<string>("");
@@ -1848,6 +1939,44 @@ export default function PuntoDeVentaView({
       alert("Error al guardar gasto. Revisa la consola.");
     } finally {
       setGuardandoGasto(false);
+    }
+  };
+
+  // ── Guardar Cuenta por Pagar ────────────────────────────────
+  const guardarCxP = async () => {
+    const montoNum = parseFloat(cxpMonto);
+    if (!cxpProveedorId) {
+      alert("Selecciona un proveedor");
+      return;
+    }
+    if (isNaN(montoNum) || montoNum <= 0) {
+      alert("Ingresa un monto válido mayor que 0");
+      return;
+    }
+    if (!cxpMotivo.trim()) {
+      alert("Ingresa el motivo o concepto de la deuda");
+      return;
+    }
+    setGuardandoCxP(true);
+    try {
+      const input: CuentaPorPagarInput = {
+        proveedor_id: cxpProveedorId,
+        concepto: cxpMotivo.trim(),
+        monto_total: montoNum,
+        saldo_pendiente: montoNum,
+        estado: "pendiente",
+        cajero_id: usuarioActual?.id,
+        cajero: usuarioActual?.nombre || "",
+        fecha_emision: formatToHondurasLocal(),
+      };
+      await crearCuentaPorPagar(input);
+      cerrarCxP();
+      setShowCxPSuccess(true);
+      setTimeout(() => setShowCxPSuccess(false), 3500);
+    } catch (e: any) {
+      alert("Error al registrar cuenta por pagar: " + (e?.message ?? e));
+    } finally {
+      setGuardandoCxP(false);
     }
   };
 
@@ -3818,7 +3947,10 @@ export default function PuntoDeVentaView({
                     e.currentTarget.style.boxShadow =
                       "0 6px 18px rgba(16,24,40,0.06)";
                   }}
-                  onClick={() => setShowEnvioModal(true)}
+                  onClick={() => {
+                    resetEnvioForm();
+                    setShowEnvioModal(true);
+                  }}
                 >
                   Pedido por Teléfono
                 </button>
@@ -3832,14 +3964,19 @@ export default function PuntoDeVentaView({
                     padding: "10px 20px",
                     fontWeight: 700,
                     fontSize: 15,
-                    cursor: seleccionados.length === 0 ? "not-allowed" : "pointer",
+                    cursor:
+                      seleccionados.length === 0 ? "not-allowed" : "pointer",
                     opacity: seleccionados.length === 0 ? 0.5 : 1,
                     boxShadow: "0 6px 18px rgba(124,58,237,0.25)",
-                    transition: "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
+                    transition:
+                      "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
                   }}
                   disabled={seleccionados.length === 0}
                   onClick={() => {
-                    if (facturaActual === "Límite alcanzado") { alert("¡Límite de facturas alcanzado!"); return; }
+                    if (facturaActual === "Límite alcanzado") {
+                      alert("¡Límite de facturas alcanzado!");
+                      return;
+                    }
                     setShowCreditoClienteModal(true);
                   }}
                 >
@@ -6526,6 +6663,234 @@ export default function PuntoDeVentaView({
         </div>
       )}
 
+      {/* Modal Cuentas por Pagar */}
+      {showCxPModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 125000,
+          }}
+          onClick={() => cerrarCxP()}
+        >
+          <div
+            style={{
+              background: theme === "lite" ? "#fff" : "#232526",
+              borderRadius: 14,
+              padding: 24,
+              minWidth: 340,
+              maxWidth: 420,
+              boxShadow: "0 8px 32px #0004",
+              color: theme === "lite" ? "#222" : "#f5f5f5",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{
+                marginTop: 0,
+                color: "#991b1b",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              🧾 Registrar Cuenta por Pagar
+            </h3>
+            <p
+              style={{
+                fontSize: 13,
+                color: theme === "lite" ? "#555" : "#aaa",
+                marginTop: -6,
+              }}
+            >
+              Esta deuda quedará registrada para administración. No afecta el
+              cierre de caja del cajero.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+                marginTop: 16,
+              }}
+            >
+              <div>
+                <label
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
+                  Proveedor *
+                </label>
+                <select
+                  value={cxpProveedorId}
+                  onChange={(e) => setCxpProveedorId(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #ccc",
+                    fontSize: 14,
+                    background: theme === "lite" ? "#fff" : "#1a1a1a",
+                    color: theme === "lite" ? "#222" : "#f5f5f5",
+                  }}
+                >
+                  <option value="">-- Selecciona un proveedor --</option>
+                  {cxpProveedores.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre_comercial}
+                    </option>
+                  ))}
+                </select>
+                {cxpProveedores.length === 0 && (
+                  <p
+                    style={{
+                      fontSize: 12,
+                      color: "#e53e3e",
+                      margin: "4px 0 0",
+                    }}
+                  >
+                    No hay proveedores registrados. Crea uno en el panel de
+                    administración.
+                  </p>
+                )}
+              </div>
+              <div>
+                <label
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
+                  Monto *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={cxpMonto}
+                  onChange={(e) => setCxpMonto(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #ccc",
+                    fontSize: 14,
+                    boxSizing: "border-box",
+                    background: theme === "lite" ? "#fff" : "#1a1a1a",
+                    color: theme === "lite" ? "#222" : "#f5f5f5",
+                  }}
+                />
+              </div>
+              <div>
+                <label
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: "block",
+                    marginBottom: 4,
+                  }}
+                >
+                  Motivo / Concepto *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Compra de insumos, servicio..."
+                  value={cxpMotivo}
+                  onChange={(e) => setCxpMotivo(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #ccc",
+                    fontSize: 14,
+                    boxSizing: "border-box",
+                    background: theme === "lite" ? "#fff" : "#1a1a1a",
+                    color: theme === "lite" ? "#222" : "#f5f5f5",
+                  }}
+                />
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                justifyContent: "flex-end",
+                marginTop: 20,
+              }}
+            >
+              <button
+                onClick={() => cerrarCxP()}
+                disabled={guardandoCxP}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#9e9e9e",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => guardarCxP()}
+                disabled={guardandoCxP}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: guardandoCxP ? "#fca5a5" : "#991b1b",
+                  color: "#fff",
+                  cursor: guardandoCxP ? "not-allowed" : "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                {guardandoCxP ? "Registrando..." : "Registrar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast éxito Cuenta por Pagar */}
+      {showCxPSuccess && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 32,
+            right: 32,
+            background: "#166534",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "14px 24px",
+            boxShadow: "0 4px 16px #0003",
+            zIndex: 130000,
+            fontWeight: 600,
+            fontSize: 15,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          ✅ Cuenta por pagar registrada correctamente
+        </div>
+      )}
+
       {/* Modal de Devolución */}
       {showDevolucionModal && (
         <div
@@ -7320,6 +7685,36 @@ export default function PuntoDeVentaView({
                   </button>
                   <button
                     className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
+                      setCxpProveedorId("");
+                      setCxpMonto("");
+                      setCxpMotivo("");
+                      try {
+                        const provs = await obtenerProveedores(true);
+                        setCxpProveedores(provs);
+                      } catch {
+                        setCxpProveedores([]);
+                      }
+                      setShowCxPModal(true);
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #fef2f2, #fee2e2)",
+                      color: "#991b1b",
+                      border: "1px solid #fca5a5",
+                      animationDelay: "180ms",
+                    }}
+                  >
+                    <span className="btn-icon">🧾</span>
+                    <span>
+                      <div className="btn-label">Cuentas por Pagar</div>
+                      <div className="btn-desc">
+                        Registrar deuda a proveedor
+                      </div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
                     onClick={() => {
                       setShowDevolucionModal(true);
                       closeMenuAnimated();
@@ -7636,7 +8031,9 @@ export default function PuntoDeVentaView({
               </button>
             </div>
             {historialCreditosLoading ? (
-              <div style={{ padding: 20, textAlign: "center" }}>Cargando...</div>
+              <div style={{ padding: 20, textAlign: "center" }}>
+                Cargando...
+              </div>
             ) : historialCreditos.length === 0 ? (
               <div style={{ padding: 20, textAlign: "center", color: "#888" }}>
                 No hay facturas de crédito en este turno.
@@ -7674,7 +8071,13 @@ export default function PuntoDeVentaView({
                       <td style={{ padding: 8 }}>
                         {fc.clientes_credito?.nombre || "—"}
                       </td>
-                      <td style={{ padding: 8, fontWeight: 700, color: "#9a3412" }}>
+                      <td
+                        style={{
+                          padding: 8,
+                          fontWeight: 700,
+                          color: "#9a3412",
+                        }}
+                      >
                         L {Number(fc.total || 0).toFixed(2)}
                       </td>
                       <td style={{ padding: 8, color: "#64748b" }}>
@@ -7733,10 +8136,27 @@ export default function PuntoDeVentaView({
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr style={{ background: "#fff7ed", borderTop: "2px solid #fb923c" }}>
-                    <td colSpan={3} style={{ padding: 8, fontWeight: 700 }}>TOTAL DEL TURNO</td>
-                    <td style={{ padding: 8, fontWeight: 800, color: "#9a3412", fontSize: 15 }}>
-                      L {historialCreditos.reduce((s, fc) => s + Number(fc.total || 0), 0).toFixed(2)}
+                  <tr
+                    style={{
+                      background: "#fff7ed",
+                      borderTop: "2px solid #fb923c",
+                    }}
+                  >
+                    <td colSpan={3} style={{ padding: 8, fontWeight: 700 }}>
+                      TOTAL DEL TURNO
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        fontWeight: 800,
+                        color: "#9a3412",
+                        fontSize: 15,
+                      }}
+                    >
+                      L{" "}
+                      {historialCreditos
+                        .reduce((s, fc) => s + Number(fc.total || 0), 0)
+                        .toFixed(2)}
                     </td>
                     <td colSpan={4}></td>
                   </tr>

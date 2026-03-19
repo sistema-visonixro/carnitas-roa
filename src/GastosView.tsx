@@ -458,10 +458,35 @@ export default function GastosView({ onBack }: GastosViewProps) {
           color: var(--text-secondary);
         }
 
+        /* Gasto Card (Mobile) */
+        .cards-grid { display: none; }
+        .gasto-card {
+           background: #fff;
+           border: 1px solid var(--border);
+           border-radius: 12px;
+           padding: 16px;
+           box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+           display: flex;
+           flex-direction: column;
+        }
+        .gasto-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+        .gasto-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px; }
+        .gasto-card-monto { font-size: 20px; font-weight: 800; color: var(--danger); }
+        .gasto-card-fecha { font-size: 13px; color: var(--text-secondary); font-family: monospace; }
+        .gasto-card-motivo { font-size: 14px; color: var(--text-primary); margin-bottom: 16px; line-height: 1.5; }
+        .gasto-card-actions { display: flex; gap: 8px; }
+
         @media (max-width: 768px) {
-          .header { flex-direction: column; gap: 1rem; }
-          .filters, .form-grid { grid-template-columns: 1fr; }
+          .header { flex-direction: column; gap: 1rem; padding: 1rem; }
+          .page-title { font-size: 1.25rem; }
+          .filters { grid-template-columns: 1fr; padding: 1rem; }
+          .filter-input { width: 100%; box-sizing: border-box; }
+          .btn-primary { width: 100%; justify-content: center; }
           .gastos-enterprise { padding: 1rem; }
+          .table { display: none; }
+          .table-container { background: transparent; box-shadow: none; border-radius: 0; }
+          .cards-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+          .stats-grid { grid-template-columns: 1fr; }
         }
 
         .modal-overlay {
@@ -641,84 +666,27 @@ export default function GastosView({ onBack }: GastosViewProps) {
         </div>
 
         {/* Tabla */}
+        {/* Tabla / Cards Container */}
         <div className="table-container">
           {loading ? (
             <div className="loading">⏳ Cargando gastos...</div>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Monto</th>
-                  <th>Motivo</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {gastos.map((g) =>
-                  editId === g.id ? (
-                    <tr key={g.id}>
-                      <td>
-                        <input
-                          type="date"
-                          value={editGasto.fecha}
-                          onChange={(e) =>
-                            setEditGasto({
-                              ...editGasto,
-                              fecha: e.target.value,
-                            })
-                          }
-                          className="form-input"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          value={editGasto.monto}
-                          onChange={(e) =>
-                            setEditGasto({
-                              ...editGasto,
-                              monto: e.target.value,
-                            })
-                          }
-                          className="form-input"
-                          step="0.01"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="text"
-                          value={editGasto.motivo}
-                          onChange={(e) =>
-                            setEditGasto({
-                              ...editGasto,
-                              motivo: e.target.value,
-                            })
-                          }
-                          className="form-input"
-                        />
-                      </td>
-                      <td>
-                        <button
-                          onClick={guardarEdicion}
-                          className="btn-table btn-save"
-                          disabled={loading}
-                        >
-                          💾
-                        </button>
-                        <button
-                          onClick={() => setEditId(null)}
-                          className="btn-table btn-cancel"
-                          disabled={loading}
-                        >
-                          ❌
-                        </button>
-                      </td>
-                    </tr>
-                  ) : (
+            <>
+              {/* Desktop Table View */}
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Monto</th>
+                    <th>Motivo</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gastos.map((g) => (
                     <tr key={g.id}>
                       <td>{g.fecha}</td>
-                      <td style={{ color: "var(--danger)" }}>
+                      <td style={{ color: "var(--danger)", fontWeight: 700 }}>
                         L {parseFloat(g.monto).toFixed(2)}
                       </td>
                       <td>{g.motivo}</td>
@@ -734,23 +702,132 @@ export default function GastosView({ onBack }: GastosViewProps) {
                           }}
                           className="btn-table btn-edit"
                         >
-                          ✏️
+                          ✏️ Editar
                         </button>
                         <button
                           onClick={() => eliminarGasto(g.id)}
                           className="btn-table btn-delete"
                         >
-                          🗑️
+                          🗑️ Eliminar
                         </button>
                       </td>
                     </tr>
-                  ),
-                )}
-              </tbody>
-            </table>
+                  ))}
+                  {gastos.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: "center", padding: "2rem", color: "#64748b" }}>
+                        No hay gastos registrados en este periodo.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              {/* Mobile Cards View */}
+              <div className="cards-grid">
+                {gastos.map((g) => (
+                  <div key={g.id} className="gasto-card">
+                    <div className="gasto-card-header">
+                      <div className="gasto-card-fecha">📅 {g.fecha}</div>
+                      <div className="gasto-card-monto">L {parseFloat(g.monto).toFixed(2)}</div>
+                    </div>
+                    <div className="gasto-card-motivo">{g.motivo}</div>
+                    <div className="gasto-card-actions">
+                      <button
+                        onClick={() => {
+                          setEditId(g.id);
+                          setEditGasto({ fecha: g.fecha, monto: g.monto, motivo: g.motivo });
+                        }}
+                        className="btn-back" style={{ flex: 1, justifyContent: "center", padding: "10px", color: "#f59e0b", borderColor: "rgba(245,158,11,0.2)", background: "rgba(245,158,11,0.05)" }}
+                      >
+                        ✏️ Editar
+                      </button>
+                      <button
+                        onClick={() => eliminarGasto(g.id)}
+                        className="btn-back" style={{ flex: 1, justifyContent: "center", padding: "10px", color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.05)" }}
+                      >
+                        🗑️ Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      {/* Modal Editar Gasto */}
+      {editId !== null && (
+        <div className="modal-overlay" onClick={() => setEditId(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h2 className="modal-title">✏️ Editar Gasto</h2>
+            <div className="modal-form-grid">
+              <div className="modal-field">
+                <label className="modal-label">Fecha *</label>
+                <input
+                  type="date"
+                  value={editGasto.fecha}
+                  onChange={(e) =>
+                    setEditGasto({ ...editGasto, fecha: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                />
+              </div>
+              <div className="modal-field">
+                <label className="modal-label">Monto (L) *</label>
+                <input
+                  type="number"
+                  placeholder="0.00"
+                  value={editGasto.monto}
+                  onChange={(e) =>
+                    setEditGasto({ ...editGasto, monto: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                  step="0.01"
+                  min="0"
+                />
+              </div>
+              <div className="modal-field-full">
+                <label className="modal-label">Motivo *</label>
+                <input
+                  type="text"
+                  placeholder="Descripción del gasto..."
+                  value={editGasto.motivo}
+                  onChange={(e) =>
+                    setEditGasto({ ...editGasto, motivo: e.target.value })
+                  }
+                  className="modal-input"
+                  required
+                />
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="btn-modal-cancel"
+                onClick={() => setEditId(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-add-gasto"
+                onClick={guardarEdicion}
+                disabled={
+                  loading ||
+                  !editGasto.fecha ||
+                  !editGasto.monto ||
+                  !editGasto.motivo
+                }
+                style={{ background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}
+              >
+                {loading ? "⏳ Guardando..." : "💾 Guardar Cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Registrar Gasto */}
       {showModalGasto && (
