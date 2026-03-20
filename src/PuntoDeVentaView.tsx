@@ -353,6 +353,7 @@ export default function PuntoDeVentaView({
       }, 800);
 
       setSeleccionados([]);
+      setDescuentosProductos(new Set());
     } catch (e: any) {
       alert("Error: " + e.message);
     }
@@ -1325,6 +1326,25 @@ export default function PuntoDeVentaView({
       } catch {}
     }
   }, []);
+
+  // ── Descuentos por producto tipo 'comida' ──────────────────────────────────
+  // Set de IDs de productos en la orden que tienen descuento aplicado
+  const [descuentosProductos, setDescuentosProductos] = useState<Set<string>>(new Set());
+  // Monto del descuento (cargado desde tabla descuentos_config)
+  const [montoDescuentoComida, setMontoDescuentoComida] = useState<number>(20);
+  useEffect(() => {
+    supabase
+      .from("descuentos_config")
+      .select("monto_descuento")
+      .eq("tipo_producto", "comida")
+      .eq("activo", true)
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setMontoDescuentoComida(Number(data[0].monto_descuento) || 20);
+        }
+      });
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<
@@ -1836,11 +1856,21 @@ export default function PuntoDeVentaView({
       localStorage.setItem("seleccionados", JSON.stringify(nuevos));
       return nuevos;
     });
+    // Si la fila del producto se elimina, quitar su descuento
+    const existente = seleccionados.find((p) => p.id === id);
+    if (!existente || existente.cantidad <= 1) {
+      setDescuentosProductos((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+    }
   };
 
   // Clear all selected products
   const limpiarSeleccion = () => {
     setSeleccionados([]);
+    setDescuentosProductos(new Set());
     localStorage.removeItem("seleccionados");
   };
 
@@ -2232,6 +2262,10 @@ export default function PuntoDeVentaView({
     (sum, p) => sum + p.precio * p.cantidad,
     0,
   );
+
+  // Descuento acumulado: 1 descuento de montoDescuentoComida por cada producto marcado
+  const totalDescuento = descuentosProductos.size * montoDescuentoComida;
+  const totalConDescuento = Math.max(0, total - totalDescuento);
 
   // Filter products by type and subcategory
   const productosFiltrados = productos.filter((p) => {
@@ -2701,14 +2735,14 @@ export default function PuntoDeVentaView({
         onClose={() => {
           setShowPagoModal(false);
         }}
-        totalPedido={total}
+        totalPedido={totalConDescuento}
         exchangeRate={tasaCambio}
         theme={theme}
         onPagoConfirmado={async (paymentData) => {
           // Guardar los pagos en la base de datos
           try {
             if (paymentData.pagos && paymentData.pagos.length > 0) {
-              const cambioValue = paymentData.totalPaid - total;
+              const cambioValue = paymentData.totalPaid - totalConDescuento;
 
               const pagosToInsert = paymentData.pagos.map((pago) => ({
                 tipo: pago.tipo,
@@ -3130,9 +3164,20 @@ export default function PuntoDeVentaView({
                 </div>
                 
                 <!-- Totales -->
+                ${totalDescuento > 0 ? `
+                <div style='font-size:14px; margin-top:6px; padding-top:4px;'>
+                  <span style='float:left;'>Subtotal:</span>
+                  <span style='float:right;'>L ${total.toFixed(2)}</span>
+                  <div style='clear:both;'></div>
+                </div>
+                <div style='font-size:14px; margin-bottom:4px; color:#c00;'>
+                  <span style='float:left;'>Aplicaste un descuento de:</span>
+                  <span style='float:right;'>-L ${totalDescuento.toFixed(2)}</span>
+                  <div style='clear:both;'></div>
+                </div>` : ''}
                 <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-size:17px; font-weight:700;'>
                   <span style='float:left;'>TOTAL:</span>
-                  <span style='float:right;'>L ${total.toFixed(2)}</span>
+                  <span style='float:right;'>L ${totalConDescuento.toFixed(2)}</span>
                   <div style='clear:both;'></div>
                 </div>
                 
@@ -3278,9 +3323,8 @@ export default function PuntoDeVentaView({
                 sub_total: subTotal.toFixed(2),
                 isv_15: isv15.toFixed(2),
                 isv_18: isv18.toFixed(2),
-                total: seleccionados
-                  .reduce((sum, p) => sum + p.precio * p.cantidad, 0)
-                  .toFixed(2),
+                descuento: totalDescuento > 0 ? Number(totalDescuento.toFixed(2)) : null,
+                total: totalConDescuento.toFixed(2),
               };
 
               // LÓGICA MEJORADA: usar solo isOnline (que ya verifica conexión real)
@@ -3805,16 +3849,28 @@ export default function PuntoDeVentaView({
           >
             Pedido Actual
           </h2>
-          <div
-            style={{
-              fontSize: 28,
-              fontWeight: 700,
-              color: theme === "lite" ? "#1565c0" : "#90caf9",
-              textAlign: "center",
-              marginBottom: 14,
-            }}
-          >
-            L {total.toFixed(2)}
+          <div style={{ textAlign: "center", marginBottom: 14 }}>
+            <div
+              style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: theme === "lite" ? "#1565c0" : "#90caf9",
+              }}
+            >
+              L {totalConDescuento.toFixed(2)}
+            </div>
+            {totalDescuento > 0 && (
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#ff9800",
+                  fontWeight: 700,
+                  marginTop: 2,
+                }}
+              >
+                🏷️ Descuento: -L {totalDescuento.toFixed(2)}
+              </div>
+            )}
           </div>
           {seleccionados.length === 0 ? (
             <p style={{ color: "#666", textAlign: "center" }}>
@@ -4055,8 +4111,8 @@ export default function PuntoDeVentaView({
                         display: "flex",
                         gap: 6,
                         alignItems: "center",
-                        width: p.tipo === "comida" ? 70 : 36,
-                        flex: p.tipo === "comida" ? "0 0 70px" : "0 0 36px",
+                        width: p.tipo === "comida" ? 108 : 36,
+                        flex: p.tipo === "comida" ? "0 0 108px" : "0 0 36px",
                       }}
                     >
                       {p.tipo === "comida" && (
@@ -4084,6 +4140,45 @@ export default function PuntoDeVentaView({
                             aria-label={`Complementos de ${p.nombre}`}
                           >
                             🍗
+                          </button>
+                          {/* Botón de descuento L 20 — solo comida */}
+                          <button
+                            onClick={() => {
+                              setDescuentosProductos((prev) => {
+                                const newSet = new Set(prev);
+                                if (newSet.has(p.id)) {
+                                  newSet.delete(p.id);
+                                } else {
+                                  newSet.add(p.id);
+                                }
+                                return newSet;
+                              });
+                            }}
+                            style={{
+                              background: descuentosProductos.has(p.id)
+                                ? "#ff9800"
+                                : "#607d8b",
+                              color: "#fff",
+                              border: descuentosProductos.has(p.id)
+                                ? "2px solid #e65100"
+                                : "2px solid transparent",
+                              borderRadius: 4,
+                              width: 32,
+                              height: 32,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              cursor: "pointer",
+                              fontSize: 13,
+                              fontWeight: 800,
+                              lineHeight: 1,
+                            }}
+                            title={descuentosProductos.has(p.id)
+                              ? `Quitar descuento (-L ${montoDescuentoComida})`
+                              : `Aplicar descuento (-L ${montoDescuentoComida})`}
+                            aria-label={`Descuento ${p.nombre}`}
+                          >
+                            %
                           </button>
                         </>
                       )}

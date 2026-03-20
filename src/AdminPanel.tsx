@@ -135,7 +135,7 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
   const [isDesktop, setIsDesktop] = useState<boolean>(
     typeof window !== "undefined" ? window.innerWidth >= 1024 : true,
   );
-  
+
   const [currentView, setCurrentView] = useState<string>("menu");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -589,8 +589,13 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
 
       <div className="desktop-admin-layout">
         <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
-          <button className="mobile-close-btn" onClick={() => setIsSidebarOpen(false)}>✕</button>
-          
+          <button
+            className="mobile-close-btn"
+            onClick={() => setIsSidebarOpen(false)}
+          >
+            ✕
+          </button>
+
           <div className="sidebar-header">
             <div className="sidebar-logo">
               {datosNegocio.logo_url ? (
@@ -599,8 +604,11 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                 <div
                   style={{
                     background: "linear-gradient(135deg, #667eea, #764ba2)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: "1.5rem", color: "white"
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.5rem",
+                    color: "white",
                   }}
                 >
                   🏪
@@ -608,8 +616,15 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               )}
               <div className="sidebar-title">
                 {datosNegocio.nombre_negocio || "Admin Panel"}
-                <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'normal', marginTop: '4px' }}>
-                  Usuario: {user?.nombre || 'Admin'}
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "#64748b",
+                    fontWeight: "normal",
+                    marginTop: "4px",
+                  }}
+                >
+                  Usuario: {user?.nombre || "Admin"}
                 </div>
               </div>
             </div>
@@ -619,7 +634,10 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               onClick={() => handleMenuClick("menu")}
               className={`sidebar-nav-item ${currentView === "menu" ? "active" : ""}`}
             >
-              <div className="sidebar-nav-icon" style={{ background: "#475569", color: "white" }}>
+              <div
+                className="sidebar-nav-icon"
+                style={{ background: "#475569", color: "white" }}
+              >
                 🏠
               </div>
               <div className="sidebar-nav-text">
@@ -627,7 +645,7 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                 <div className="sidebar-nav-subtitle">Vista General</div>
               </div>
             </button>
-            
+
             {cards.map((card) => (
               <button
                 key={card.view}
@@ -660,24 +678,41 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
         </aside>
 
         {isSidebarOpen && (
-          <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)}></div>
+          <div
+            className="sidebar-overlay"
+            onClick={() => setIsSidebarOpen(false)}
+          ></div>
         )}
 
         <section className="desktop-content">
           <div className="mobile-header">
             <div className="mobile-header-left">
-              <button className="hamburger-btn" onClick={() => setIsSidebarOpen(true)}>
+              <button
+                className="hamburger-btn"
+                onClick={() => setIsSidebarOpen(true)}
+              >
                 ☰
               </button>
               <div className="mobile-header-title">
                 {datosNegocio.logo_url ? (
-                  <img src={datosNegocio.logo_url} alt="Logo" className="mobile-header-logo" />
+                  <img
+                    src={datosNegocio.logo_url}
+                    alt="Logo"
+                    className="mobile-header-logo"
+                  />
                 ) : (
                   <span>🏪</span>
                 )}
                 <span>{datosNegocio.nombre_negocio || "Admin"}</span>
-                <span style={{ fontSize: '0.8rem', color: '#64748b', marginLeft: '8px', fontWeight: 'normal' }}>
-                  ({user?.nombre || ''})
+                <span
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "#64748b",
+                    marginLeft: "8px",
+                    fontWeight: "normal",
+                  }}
+                >
+                  ({user?.nombre || ""})
                 </span>
               </div>
             </div>
@@ -698,12 +733,18 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                       key={card.view}
                       className="card"
                       onClick={() => handleMenuClick(card.view)}
-                      style={{ "--card-color": card.color } as React.CSSProperties}
+                      style={
+                        { "--card-color": card.color } as React.CSSProperties
+                      }
                     >
                       <div className="card-header">
                         <div
                           className="card-icon"
-                          style={{ "--card-color": card.color } as React.CSSProperties}
+                          style={
+                            {
+                              "--card-color": card.color,
+                            } as React.CSSProperties
+                          }
                         >
                           {card.icon}
                         </div>
@@ -728,7 +769,9 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               <InventarioView onBack={() => setCurrentView("menu")} />
             )}
             {currentView === "movimientosInventario" && (
-              <MovimientosInventarioView onBack={() => setCurrentView("menu")} />
+              <MovimientosInventarioView
+                onBack={() => setCurrentView("menu")}
+              />
             )}
             {currentView === "cai" && (
               <CaiFacturasView onBack={() => setCurrentView("menu")} />
@@ -743,7 +786,9 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               <GastosView onBack={() => setCurrentView("menu")} />
             )}
             {currentView === "facturasEmitidas" && (
-              <FacturasEmitidasView onBack={() => setCurrentView("resultados")} />
+              <FacturasEmitidasView
+                onBack={() => setCurrentView("resultados")}
+              />
             )}
             {currentView === "cierreadmin" && (
               <CierresAdminView onVolver={() => setCurrentView("menu")} />
@@ -811,11 +856,17 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               ¿Estás seguro que deseas cerrar tu sesión actual?
             </p>
             <div
-              style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "center",
+                flexWrap: "wrap",
+              }}
             >
               <button
                 style={{
-                  background: "linear-gradient(135deg, #ef4444 0%, #f59e0b 100%)",
+                  background:
+                    "linear-gradient(135deg, #ef4444 0%, #f59e0b 100%)",
                   color: "white",
                   fontWeight: 700,
                   border: "none",

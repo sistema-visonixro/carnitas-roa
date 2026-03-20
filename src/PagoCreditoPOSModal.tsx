@@ -19,7 +19,6 @@ import {
 } from "./services/creditoService";
 import { useDatosNegocio } from "./useDatosNegocio";
 
-
 interface Props {
   isOpen: boolean;
   onClose: () => void;
