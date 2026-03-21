@@ -2755,13 +2755,58 @@ export default function PuntoDeVentaView({
           }
           isSubmittingRef.current = true;
 
+          // ── Resolver número correcto de factura ANTES de cualquier operación
+          // Consulta la última fila real en la tabla facturas (por id DESC, que
+          // es numérico y nunca miente). Si el contador en cai_facturas está
+          // por detrás de la realidad, lo corregimos aquí mismo.
+          let facturaResuelta = facturaActual;
+          if (isOnline && usuarioActual?.id && facturaActual !== "Límite alcanzado") {
+            try {
+              const { data: ultimaFila } = await supabase
+                .from("facturas")
+                .select("factura")
+                .eq("cajero_id", usuarioActual.id)
+                .order("id", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (ultimaFila) {
+                const maxReal = parseInt(ultimaFila.factura);
+                const contadorActual = parseInt(facturaActual);
+                if (maxReal >= contadorActual) {
+                  const correcta = (maxReal + 1).toString();
+                  const siguiente = (maxReal + 2).toString();
+                  console.warn(
+                    `[facturar] Contador desincronizado: cai=${contadorActual}, última en BD=${maxReal}. Usando ${correcta}.`,
+                  );
+                  facturaResuelta = correcta;
+                  // Actualizar estado local para el siguiente uso
+                  setFacturaActual(siguiente);
+                  // Actualizar cai_facturas en Supabase
+                  await supabase
+                    .from("cai_facturas")
+                    .update({ factura_actual: siguiente })
+                    .eq("cajero_id", usuarioActual.id);
+                  // Actualizar cache offline
+                  try {
+                    const caiCache = await obtenerCaiCache();
+                    if (caiCache) {
+                      await guardarCaiCache({ ...caiCache, factura_actual: siguiente });
+                    }
+                  } catch { /* no crítico */ }
+                }
+              }
+            } catch (err) {
+              console.error("[facturar] Error al resolver número de factura:", err);
+            }
+          }
+
           // ── Snapshot inmutable: capturar TODOS los datos del formulario
           // en este instante exacto antes de cualquier operación async.
           // Evita que re-renders cambien valores durante el proceso.
           const snap = {
             seleccionados: structuredClone(seleccionados),
             nombreCliente: nombreCliente,
-            facturaActual: facturaActual,
+            facturaActual: facturaResuelta,
             tipoOrden: tipoOrden,
             total: total,
             totalConDescuento: totalConDescuento,
@@ -3434,7 +3479,7 @@ export default function PuntoDeVentaView({
                             .from("facturas")
                             .select("factura")
                             .eq("cajero_id", usuarioActual?.id || "")
-                            .order("factura", { ascending: false })
+                            .order("id", { ascending: false })
                             .limit(1)
                             .maybeSingle();
                           const maxNum = maxRow

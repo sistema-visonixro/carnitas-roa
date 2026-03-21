@@ -586,7 +586,7 @@ export async function sincronizarFacturas(): Promise<{
                 .from("facturas")
                 .select("factura")
                 .eq("cajero_id", factura.cajero_id)
-                .order("factura", { ascending: false })
+                .order("id", { ascending: false })
                 .limit(1)
                 .maybeSingle();
               const maxNum = maxRow
