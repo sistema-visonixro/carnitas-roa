@@ -29,6 +29,7 @@ import {
   limpiarAperturaCache,
   guardarCaiCache,
   obtenerCaiCache,
+  actualizarFacturaVentaEnPagosLocales,
 } from "./utils/offlineSync";
 import { migrarPagosDesdeLocalStorage } from "./utils/migrarLocalStorage";
 import { useConexion } from "./utils/useConexion";
@@ -2768,6 +2769,9 @@ export default function PuntoDeVentaView({
           };
           // ID único por operación de facturación
           const operationId = crypto.randomUUID();
+          // Captura los operation_ids de los pagos para poder corregir
+          // factura_venta si el número de factura se auto-corrige por conflicto.
+          let _pagosOpIds: string[] = [];
           console.log(
             `[facturar] Inicio op=${operationId} | factura=${snap.facturaActual} | cliente=${snap.nombreCliente} | ts=${new Date().toISOString()}`,
           );
@@ -2817,6 +2821,12 @@ export default function PuntoDeVentaView({
                   operation_id: crypto.randomUUID(),
                 });
               }
+
+              // Guardar todos los operation_ids de pagos para la posible
+              // corrección de factura_venta si el número se auto-corrige.
+              _pagosOpIds = pagosToInsert
+                .map((p) => p.operation_id as string)
+                .filter(Boolean);
 
               console.log("Insertando pagos:", pagosToInsert);
 
@@ -3400,6 +3410,96 @@ export default function PuntoDeVentaView({
                       "Error guardando factura en Supabase:",
                       supabaseError,
                     );
+                    if (
+                      supabaseError.code === "23505" ||
+                      (supabaseError as any).status === 409
+                    ) {
+                      // 1º verificar si nuestro operation_id ya existe (doble submit)
+                      const { data: yaGuardada } = await supabase
+                        .from("facturas")
+                        .select("id")
+                        .eq("operation_id", operationId)
+                        .maybeSingle();
+                      if (yaGuardada) {
+                        console.log(
+                          `✓ Factura ya estaba en Supabase (mismo operation_id). Ignorando.`,
+                        );
+                        guardadoEnSupabase = true;
+                      } else {
+                        // Número de factura tomado por otra operación.
+                        // Consultar el último número real en la tabla facturas
+                        // y usar el siguiente disponible.
+                        try {
+                          const { data: maxRow } = await supabase
+                            .from("facturas")
+                            .select("factura")
+                            .eq("cajero_id", usuarioActual?.id || "")
+                            .order("factura", { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+                          const maxNum = maxRow
+                            ? parseInt(maxRow.factura)
+                            : parseInt(snap.facturaActual);
+                          const nuevoNumero = (maxNum + 1).toString();
+                          const siguienteNum = (maxNum + 2).toString();
+                          console.warn(
+                            `⚠ [facturar] Número ${snap.facturaActual} ya tomado. Auto-corrigiendo → ${nuevoNumero}`,
+                          );
+                          const ventaCorregida = { ...venta, factura: nuevoNumero };
+                          const { error: retryError } = await supabase
+                            .from("facturas")
+                            .insert([ventaCorregida]);
+                          if (!retryError) {
+                            guardadoEnSupabase = true;
+                            // 1. Corregir factura_venta en pagos ya en Supabase
+                            //    (insertados en el paso anterior con número viejo)
+                            if (_pagosOpIds.length > 0) {
+                              await supabase
+                                .from("pagos")
+                                .update({ factura_venta: nuevoNumero })
+                                .in("operation_id", _pagosOpIds);
+                              console.log(
+                                `✓ [facturar] ${_pagosOpIds.length} pagos en Supabase: factura_venta → ${nuevoNumero}`,
+                              );
+                            }
+                            // 2. Corregir pagos que hayan caído en IndexedDB
+                            //    (si la red falló para el insert de pagos)
+                            await actualizarFacturaVentaEnPagosLocales(
+                              snap.facturaActual,
+                              nuevoNumero,
+                              usuarioActual?.id || "",
+                            );
+                            // 3. Actualizar contador en Supabase
+                            if (usuarioActual?.id) {
+                              await supabase
+                                .from("cai_facturas")
+                                .update({ factura_actual: siguienteNum })
+                                .eq("cajero_id", usuarioActual.id);
+                            }
+                            // Actualizar estado local y cache offline
+                            setFacturaActual(siguienteNum);
+                            try {
+                              const caiCache = await obtenerCaiCache();
+                              if (caiCache) {
+                                await guardarCaiCache({
+                                  ...caiCache,
+                                  factura_actual: siguienteNum,
+                                });
+                              }
+                            } catch { /* non-critical */ }
+                            console.log(
+                              `✓ [facturar] Factura corregida: ${snap.facturaActual} → ${nuevoNumero}. Próxima: ${siguienteNum}`,
+                            );
+                          }
+                          // Si retryError: guardadoEnSupabase sigue false → va a IndexedDB
+                        } catch (corrErr) {
+                          console.error(
+                            "Error al auto-corregir número de factura:",
+                            corrErr,
+                          );
+                        }
+                      }
+                    }
                   } else {
                     console.log(
                       `✓ Factura ${venta.factura} guardada en Supabase exitosamente`,

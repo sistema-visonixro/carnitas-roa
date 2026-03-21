@@ -286,6 +286,63 @@ export async function guardarFacturaLocal(
 }
 
 /**
+ * Actualiza factura_venta en todos los pagos de IndexedDB que coincidan
+ * con el número antiguo y el cajero. Se llama cada vez que se auto-corrige
+ * un número de factura para mantener consistencia.
+ * @returns cantidad de registros actualizados
+ */
+export async function actualizarFacturaVentaEnPagosLocales(
+  oldFactura: string,
+  newFactura: string,
+  cajeroId: string,
+): Promise<number> {
+  const database = await initIndexedDB();
+
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([PAGOS_STORE], "readwrite");
+    const store = transaction.objectStore(PAGOS_STORE);
+    const request = store.getAll();
+    let actualizados = 0;
+
+    request.onsuccess = () => {
+      const pagos = request.result as PagoPendiente[];
+      const pendientes = pagos.filter(
+        (p) =>
+          p.factura_venta === oldFactura &&
+          (p.cajero_id === cajeroId || !cajeroId),
+      );
+
+      if (pendientes.length === 0) {
+        resolve(0);
+        return;
+      }
+
+      let procesados = 0;
+      for (const pago of pendientes) {
+        const pagoActualizado = { ...pago, factura_venta: newFactura };
+        const putReq = store.put(pagoActualizado);
+        putReq.onsuccess = () => {
+          actualizados++;
+          procesados++;
+          if (procesados === pendientes.length) {
+            console.log(
+              `[sync] ${actualizados} pagos en IndexedDB actualizados: factura_venta ${oldFactura} → ${newFactura}`,
+            );
+            resolve(actualizados);
+          }
+        };
+        putReq.onerror = () => {
+          procesados++;
+          if (procesados === pendientes.length) resolve(actualizados);
+        };
+      }
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
  * Guarda pagos en IndexedDB
  */
 export async function guardarPagosLocal(
@@ -506,14 +563,91 @@ export async function sincronizarFacturas(): Promise<{
         });
 
       if (error) {
-        // Código 23505 = violación de UNIQUE: el registro ya existe en Supabase.
-        // En ese caso es un duplicado; lo tratamos como éxito eliminándolo de IndexedDB.
         if (error.code === "23505") {
-          console.warn(
-            `⚠ Factura ${factura.factura} ya existe en Supabase (duplicate). Eliminando de IndexedDB.`,
-          );
-          await eliminarFacturaLocal(factura.id!);
-          exitosas++;
+          // Verificar si nuestro propio operation_id ya está en Supabase
+          const { data: existe } = await supabase
+            .from("facturas")
+            .select("id")
+            .eq("operation_id", factura.operation_id ?? "")
+            .maybeSingle();
+
+          if (existe) {
+            // Misma operación → ya guardada, borrar de IndexedDB
+            console.warn(
+              `⚠ [sync] Factura ${factura.factura} ya existe (mismo operation_id). Eliminando de IndexedDB.`,
+            );
+            await eliminarFacturaLocal(factura.id!);
+            exitosas++;
+          } else {
+            // Número tomado por otra operación → auto-corregir usando el
+            // último número real en la tabla facturas.
+            try {
+              const { data: maxRow } = await supabase
+                .from("facturas")
+                .select("factura")
+                .eq("cajero_id", factura.cajero_id)
+                .order("factura", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              const maxNum = maxRow
+                ? parseInt(maxRow.factura)
+                : parseInt(factura.factura);
+              const nuevoNumero = (maxNum + 1).toString();
+              const siguienteNum = (maxNum + 2).toString();
+              console.warn(
+                `⚠ [sync] Número ${factura.factura} tomado. Auto-corrigiendo → ${nuevoNumero}`,
+              );
+              const facturaCorregida = { ...facturaData, factura: nuevoNumero };
+              const { error: retryError } = await supabase
+                .from("facturas")
+                .upsert([facturaCorregida], {
+                  onConflict: "operation_id",
+                  ignoreDuplicates: false,
+                });
+              if (!retryError) {
+                // 1. Actualizar contador en Supabase
+                await supabase
+                  .from("cai_facturas")
+                  .update({ factura_actual: siguienteNum })
+                  .eq("cajero_id", factura.cajero_id);
+
+                // 2. Corregir factura_venta en pagos ya en Supabase
+                //    (pueden haberse sincronizado antes que la factura)
+                const { data: pagosActualizados } = await supabase
+                  .from("pagos")
+                  .update({ factura_venta: nuevoNumero })
+                  .eq("factura_venta", factura.factura)
+                  .eq("cajero_id", factura.cajero_id)
+                  .select("id");
+                if ((pagosActualizados?.length ?? 0) > 0) {
+                  console.log(
+                    `[sync] ${pagosActualizados!.length} pagos en Supabase: factura_venta ${factura.factura} → ${nuevoNumero}`,
+                  );
+                }
+
+                // 3. Corregir factura_venta en pagos aún en IndexedDB
+                await actualizarFacturaVentaEnPagosLocales(
+                  factura.factura,
+                  nuevoNumero,
+                  factura.cajero_id || "",
+                );
+
+                await eliminarFacturaLocal(factura.id!);
+                console.log(
+                  `✓ [sync] Factura corregida: ${factura.factura} → ${nuevoNumero}. Próxima: ${siguienteNum}`,
+                );
+                exitosas++;
+              } else {
+                console.error(`[sync] Reintento con número corregido también falló:`, retryError);
+                await incrementarIntentosFactura(factura.id!);
+                fallidas++;
+              }
+            } catch (corrErr) {
+              console.error("[sync] Error al auto-corregir número de factura:", corrErr);
+              await incrementarIntentosFactura(factura.id!);
+              fallidas++;
+            }
+          }
         } else {
           console.error(
             `Error sincronizando factura ${factura.factura}:`,
