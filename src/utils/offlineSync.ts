@@ -22,6 +22,8 @@ const DATOS_NEGOCIO_STORE = "datos_negocio_cache"; // Cache de datos del negocio
 // Tipos
 export interface FacturaPendiente {
   id?: number;
+  /** UUID único por operación — previene duplicados al sincronizar */
+  operation_id?: string;
   fecha_hora: string;
   cajero: string;
   cajero_id: string | null;
@@ -29,17 +31,23 @@ export interface FacturaPendiente {
   cai: string;
   factura: string;
   cliente: string;
-  productos: string;
+  tipo_orden?: string; // "PARA LLEVAR" | "COMER AQUÍ" | "DELIVERY"
+  productos: string; // JSON con complementos y piezas incluidos
   sub_total: string;
   isv_15: string;
   isv_18: string;
+  descuento?: number | null;
   total: string;
+  /** Estado de sincronización: pending | syncing | synced | error */
+  sync_status?: "pending" | "syncing" | "synced" | "error";
   timestamp: number;
   intentos: number;
 }
 
 export interface PagoPendiente {
   id?: number;
+  /** UUID único por registro de pago — previene pagos duplicados al sincronizar */
+  operation_id?: string;
   tipo: string;
   monto: number;
   banco: string | null;
@@ -487,21 +495,37 @@ export async function sincronizarFacturas(): Promise<{
 
   for (const factura of facturasPendientes) {
     try {
-      // Preparar datos para insertar (sin id, timestamp, intentos)
-      const { id, timestamp, intentos, ...facturaData } = factura;
+      // Preparar datos para insertar (sin campos de IndexedDB)
+      const { id, timestamp, intentos, sync_status, ...facturaData } = factura;
 
-      const { error } = await supabase.from("facturas").insert([facturaData]);
+      const { error } = await supabase
+        .from("facturas")
+        .upsert([facturaData], {
+          onConflict: "operation_id",
+          ignoreDuplicates: true,
+        });
 
       if (error) {
-        console.error(`Error sincronizando factura ${factura.factura}:`, error);
-        await incrementarIntentosFactura(factura.id!);
-        fallidas++;
-
-        // Si ha fallado más de 5 veces, notificar
-        if (intentos >= 5) {
-          console.error(
-            `Factura ${factura.factura} ha fallado ${intentos} veces`,
+        // Código 23505 = violación de UNIQUE: el registro ya existe en Supabase.
+        // En ese caso es un duplicado; lo tratamos como éxito eliminándolo de IndexedDB.
+        if (error.code === "23505") {
+          console.warn(
+            `⚠ Factura ${factura.factura} ya existe en Supabase (duplicate). Eliminando de IndexedDB.`,
           );
+          await eliminarFacturaLocal(factura.id!);
+          exitosas++;
+        } else {
+          console.error(
+            `Error sincronizando factura ${factura.factura}:`,
+            error,
+          );
+          await incrementarIntentosFactura(factura.id!);
+          fallidas++;
+          if (intentos >= 5) {
+            console.error(
+              `Factura ${factura.factura} ha fallado ${intentos} veces`,
+            );
+          }
         }
       } else {
         console.log(`Factura ${factura.factura} sincronizada exitosamente`);
@@ -538,19 +562,31 @@ export async function sincronizarPagos(): Promise<{
 
   for (const pago of pagosPendientes) {
     try {
-      // Preparar datos para insertar (sin id, timestamp, intentos)
+      // Preparar datos para insertar (sin campos de IndexedDB)
       const { id, timestamp, intentos, ...pagoData } = pago;
 
-      const { error } = await supabase.from("pagos").insert([pagoData]);
+      const { error } = await supabase
+        .from("pagos")
+        .upsert([pagoData], {
+          onConflict: "operation_id",
+          ignoreDuplicates: true,
+        });
 
       if (error) {
-        console.error(`Error sincronizando pago ${id}:`, error);
-        await incrementarIntentosPago(pago.id!);
-        fallidos++;
-
-        // Si ha fallado más de 5 veces, notificar
-        if (intentos >= 5) {
-          console.error(`Pago ${id} ha fallado ${intentos} veces`);
+        // Código 23505 = violación de UNIQUE: registro duplicado
+        if (error.code === "23505") {
+          console.warn(
+            `⚠ Pago ${id} ya existe en Supabase (duplicate). Eliminando de IndexedDB.`,
+          );
+          await eliminarPagoLocal(pago.id!);
+          exitosos++;
+        } else {
+          console.error(`Error sincronizando pago ${id}:`, error);
+          await incrementarIntentosPago(pago.id!);
+          fallidos++;
+          if (intentos >= 5) {
+            console.error(`Pago ${id} ha fallado ${intentos} veces`);
+          }
         }
       } else {
         console.log(`Pago ${id} sincronizado exitosamente`);
@@ -722,7 +758,9 @@ export async function sincronizarGastos(): Promise<{
         .maybeSingle();
 
       if (existente) {
-        console.log(`⚠ Gasto ${id} ya existe en Supabase, eliminando de IndexedDB`);
+        console.log(
+          `⚠ Gasto ${id} ya existe en Supabase, eliminando de IndexedDB`,
+        );
         await eliminarGastoLocal(gasto.id!);
         exitosos++;
         continue;
@@ -905,7 +943,9 @@ export async function sincronizarEnvios(): Promise<{
         .maybeSingle();
 
       if (existente) {
-        console.log(`⚠ Envío ${id} ya existe en Supabase, eliminando de IndexedDB`);
+        console.log(
+          `⚠ Envío ${id} ya existe en Supabase, eliminando de IndexedDB`,
+        );
         await eliminarEnvioLocal(envio.id!);
         exitosos++;
         continue;
@@ -939,6 +979,13 @@ export async function sincronizarEnvios(): Promise<{
 }
 
 /**
+ * Mutex para evitar sincronizaciones concurrentes que dupliquen registros.
+ * Si sincronizarTodo ya está corriendo (ej: evento "online" + setInterval
+ * al mismo tiempo), la segunda llamada sale inmediatamente.
+ */
+let _isSyncing = false;
+
+/**
  * Sincroniza todos los datos pendientes (facturas, pagos, gastos y envíos)
  */
 export async function sincronizarTodo(): Promise<{
@@ -947,18 +994,37 @@ export async function sincronizarTodo(): Promise<{
   gastos: { exitosos: number; fallidos: number };
   envios: { exitosos: number; fallidos: number };
 }> {
-  console.log("Iniciando sincronización completa...");
+  // Guard: si ya hay una sincronización en curso, salir sin hacer nada
+  if (_isSyncing) {
+    console.log(
+      "[sync] Sincronización ya en curso, saltando llamada concurrente.",
+    );
+    return {
+      facturas: { exitosas: 0, fallidas: 0 },
+      pagos: { exitosos: 0, fallidos: 0 },
+      gastos: { exitosos: 0, fallidos: 0 },
+      envios: { exitosos: 0, fallidos: 0 },
+    };
+  }
 
-  const facturas = await sincronizarFacturas();
-  const pagos = await sincronizarPagos();
-  const gastos = await sincronizarGastos();
-  const envios = await sincronizarEnvios();
+  _isSyncing = true;
+  console.log("[sync] Iniciando sincronización completa...");
 
-  console.log(
-    `Sincronización completa: ${facturas.exitosas} facturas, ${pagos.exitosos} pagos, ${gastos.exitosos} gastos y ${envios.exitosos} envíos sincronizados`,
-  );
+  try {
+    const facturas = await sincronizarFacturas();
+    const pagos = await sincronizarPagos();
+    const gastos = await sincronizarGastos();
+    const envios = await sincronizarEnvios();
 
-  return { facturas, pagos, gastos, envios };
+    console.log(
+      `[sync] Completa: ${facturas.exitosas} facturas, ${pagos.exitosos} pagos, ` +
+        `${gastos.exitosos} gastos y ${envios.exitosos} envíos sincronizados.`,
+    );
+
+    return { facturas, pagos, gastos, envios };
+  } finally {
+    _isSyncing = false;
+  }
 }
 
 /**

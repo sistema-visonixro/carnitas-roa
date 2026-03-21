@@ -51,6 +51,12 @@ export default function PaymentModal({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [loadingGenerating, setLoadingGenerating] = useState<boolean>(false);
   const montoInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Guard sincrónico contra doble-click: useRef porque su valor
+   * no depende del ciclo de render de React (a diferencia de useState).
+   * Se activa en el PRIMER click y se libera en el finally.
+   */
+  const isConfirmingRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -65,6 +71,8 @@ export default function PaymentModal({
       setReferencia("");
       setConfirmDeleteId(null);
       setLoadingGenerating(false);
+      // Liberar guard por si el modal se cierra externamente durante una operación
+      isConfirmingRef.current = false;
     } else {
       // Auto-focus en el input de monto cuando se abre el modal
       setTimeout(() => {
@@ -145,6 +153,15 @@ export default function PaymentModal({
       .replace("HNL", "L");
 
   const handleConfirm = () => {
+    // Guard sincrónico: si ya hay una confirmación en curso, ignorar click adicional
+    if (isConfirmingRef.current || loadingGenerating) {
+      console.warn(
+        "[PagoModal] handleConfirm ignorado: ya hay una operación en curso.",
+      );
+      return;
+    }
+    isConfirmingRef.current = true;
+
     (async () => {
       const parts: string[] = [];
       if (efectivoSum > 0) parts.push(`efectivo:(${efectivoSum.toFixed(2)})`);
@@ -154,8 +171,6 @@ export default function PaymentModal({
       const tipoPagoString = parts.join(",");
       try {
         setLoadingGenerating(true);
-        // mostrar pantalla de carga 1.5s antes de continuar
-        await new Promise((res) => setTimeout(res, 1500));
         if (onPagoConfirmado) {
           await onPagoConfirmado({
             efectivo: efectivoSum,
@@ -169,12 +184,13 @@ export default function PaymentModal({
       } catch (e) {
         console.warn("Error en handleConfirm:", e);
       } finally {
+        isConfirmingRef.current = false;
         try {
           setLoadingGenerating(false);
-        } catch (e) {}
+        } catch (_) {}
         try {
           onClose();
-        } catch (e) {}
+        } catch (_) {}
       }
     })();
   };
@@ -981,9 +997,10 @@ export default function PaymentModal({
             <button
               onClick={handleConfirm}
               className="btn-opaque"
-              disabled={!canConfirm}
+              disabled={!canConfirm || loadingGenerating}
               style={{
-                background: canConfirm ? "#16a34a" : "gray",
+                background:
+                  canConfirm && !loadingGenerating ? "#16a34a" : "gray",
                 color: "white",
                 fontSize: 13,
                 padding: "6px 12px",

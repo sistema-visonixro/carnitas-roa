@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NOMBRE_NEGOCIO } from "./empresa";
 import PagoModal from "./PagoModal";
 import RegistroCierreView from "./RegistroCierreView";
@@ -1033,6 +1033,12 @@ export default function PuntoDeVentaView({
 
   const [facturaActual, setFacturaActual] = useState<string>("");
   const [showPagoModal, setShowPagoModal] = useState(false);
+  /**
+   * Guard síncrono contra doble-submit en el flujo de facturación.
+   * Se usa useRef (no useState) para que el cambio sea inmediato,
+   * sin esperar un ciclo de render de React.
+   */
+  const isSubmittingRef = useRef(false);
   const [tasaCambio, setTasaCambio] = useState<number>(25.0); // Tasa de cambio HNL/USD
   const [showClienteModal, setShowClienteModal] = useState(false);
   // Modal para envíos de pedido
@@ -1329,7 +1335,9 @@ export default function PuntoDeVentaView({
 
   // ── Descuentos por producto tipo 'comida' ──────────────────────────────────
   // Set de IDs de productos en la orden que tienen descuento aplicado
-  const [descuentosProductos, setDescuentosProductos] = useState<Set<string>>(new Set());
+  const [descuentosProductos, setDescuentosProductos] = useState<Set<string>>(
+    new Set(),
+  );
   // Monto del descuento (cargado desde tabla descuentos_config)
   const [montoDescuentoComida, setMontoDescuentoComida] = useState<number>(20);
   useEffect(() => {
@@ -2739,6 +2747,31 @@ export default function PuntoDeVentaView({
         exchangeRate={tasaCambio}
         theme={theme}
         onPagoConfirmado={async (paymentData) => {
+          // ── Guard contra doble submit ──────────────────────────────
+          if (isSubmittingRef.current) {
+            console.warn("[facturar] Operación ya en curso, click ignorado.");
+            return;
+          }
+          isSubmittingRef.current = true;
+
+          // ── Snapshot inmutable: capturar TODOS los datos del formulario
+          // en este instante exacto antes de cualquier operación async.
+          // Evita que re-renders cambien valores durante el proceso.
+          const snap = {
+            seleccionados: structuredClone(seleccionados),
+            nombreCliente: nombreCliente,
+            facturaActual: facturaActual,
+            tipoOrden: tipoOrden,
+            total: total,
+            totalConDescuento: totalConDescuento,
+            totalDescuento: totalDescuento,
+          };
+          // ID único por operación de facturación
+          const operationId = crypto.randomUUID();
+          console.log(
+            `[facturar] Inicio op=${operationId} | factura=${snap.facturaActual} | cliente=${snap.nombreCliente} | ts=${new Date().toISOString()}`,
+          );
+
           // Guardar los pagos en la base de datos
           try {
             if (paymentData.pagos && paymentData.pagos.length > 0) {
@@ -2756,10 +2789,11 @@ export default function PuntoDeVentaView({
                 fecha_hora: formatToHondurasLocal(),
                 cajero: usuarioActual?.nombre || "",
                 cajero_id: usuarioActual?.id || null,
-                cliente: nombreCliente,
-                factura_venta: facturaActual,
+                cliente: snap.nombreCliente,
+                factura_venta: snap.facturaActual,
                 recibido: paymentData.totalPaid,
                 cambio: cambioValue,
+                operation_id: crypto.randomUUID(),
               }));
 
               // Si hay cambio positivo, registrar salida de efectivo
@@ -2776,10 +2810,11 @@ export default function PuntoDeVentaView({
                   fecha_hora: formatToHondurasLocal(),
                   cajero: usuarioActual?.nombre || "",
                   cajero_id: usuarioActual?.id || null,
-                  cliente: nombreCliente,
-                  factura_venta: facturaActual,
+                  cliente: snap.nombreCliente,
+                  factura_venta: snap.facturaActual,
                   recibido: paymentData.totalPaid,
                   cambio: cambioValue,
+                  operation_id: crypto.randomUUID(),
                 });
               }
 
@@ -2840,7 +2875,7 @@ export default function PuntoDeVentaView({
             // En caso de error crítico, intentar guardar en IndexedDB
             if (paymentData.pagos && paymentData.pagos.length > 0) {
               try {
-                const cambioValue = paymentData.totalPaid - total;
+                const cambioValue = paymentData.totalPaid - snap.total;
                 const pagosEmergencia = paymentData.pagos.map((pago) => ({
                   tipo: pago.tipo,
                   monto: pago.monto,
@@ -2853,10 +2888,11 @@ export default function PuntoDeVentaView({
                   fecha_hora: formatToHondurasLocal(),
                   cajero: usuarioActual?.nombre || "",
                   cajero_id: usuarioActual?.id || null,
-                  cliente: nombreCliente,
-                  factura_venta: facturaActual,
+                  cliente: snap.nombreCliente,
+                  factura_venta: snap.facturaActual,
                   recibido: paymentData.totalPaid,
                   cambio: cambioValue,
+                  operation_id: crypto.randomUUID(),
                 }));
                 await guardarPagosLocal(pagosEmergencia);
                 console.log(
@@ -2869,6 +2905,8 @@ export default function PuntoDeVentaView({
                 );
               }
             }
+            // Liberar el guard si terminamos aquí por error en pagos
+            isSubmittingRef.current = false;
             return;
           }
 
@@ -2897,18 +2935,19 @@ export default function PuntoDeVentaView({
                 }px; font-weight:800; color:#000; text-align:center; margin-bottom:6px;'>${
                   etiquetaConfig?.etiqueta_comanda || "COMANDA COCINA"
                 }</div>
-                <div style='font-size:28px; font-weight:900; color:#000; text-align:center; margin:16px 0;'>${tipoOrden}</div>
-                <div style='font-size:20px; font-weight:800; color:#000; text-align:center; margin-bottom:12px;'>Cliente: <b>${nombreCliente}</b></div>
+                <div style='font-size:28px; font-weight:900; color:#000; text-align:center; margin:16px 0;'>${snap.tipoOrden}</div>
+                <div style='font-size:20px; font-weight:800; color:#000; text-align:center; margin-bottom:12px;'>Cliente: <b>${snap.nombreCliente}</b></div>
                 <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${
-                  facturaActual || ""
+                  snap.facturaActual || ""
                 }</div>
                 
                 ${
-                  seleccionados.filter((p) => p.tipo === "comida").length > 0
+                  snap.seleccionados.filter((p) => p.tipo === "comida").length >
+                  0
                     ? `
                   <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMIDAS</div>
                   <ul style='list-style:none; padding:0; margin-bottom:12px;'>
-                    ${seleccionados
+                    ${snap.seleccionados
                       .filter((p) => p.tipo === "comida")
                       .map(
                         (p) =>
@@ -2944,12 +2983,12 @@ export default function PuntoDeVentaView({
                 }
                 
                 ${
-                  seleccionados.filter((p) => p.tipo === "complemento").length >
-                  0
+                  snap.seleccionados.filter((p) => p.tipo === "complemento")
+                    .length > 0
                     ? `
                   <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>COMPLEMENTOS</div>
                   <ul style='list-style:none; padding:0; margin-bottom:12px;'>
-                    ${seleccionados
+                    ${snap.seleccionados
                       .filter((p) => p.tipo === "complemento")
                       .map(
                         (p) =>
@@ -2969,11 +3008,12 @@ export default function PuntoDeVentaView({
                 }
 
                 ${
-                  seleccionados.filter((p) => p.tipo === "bebida").length > 0
+                  snap.seleccionados.filter((p) => p.tipo === "bebida").length >
+                  0
                     ? `
                   <div style='font-size:18px; font-weight:800; color:#000; margin-top:12px; margin-bottom:8px; padding:6px; background:#f0f0f0; border-radius:4px;'>BEBIDAS</div>
                   <ul style='list-style:none; padding:0; margin-bottom:0;'>
-                    ${seleccionados
+                    ${snap.seleccionados
                       .filter((p) => p.tipo === "bebida")
                       .map(
                         (p) =>
@@ -3016,7 +3056,7 @@ export default function PuntoDeVentaView({
               paymentData.pagos
                 ?.filter((p) => p.tipo === "transferencia")
                 .reduce((sum, p) => sum + p.monto, 0) || 0;
-            const cambioValue = paymentData.totalPaid - total;
+            const cambioValue = paymentData.totalPaid - snap.totalConDescuento;
 
             let pagosHtml = "";
             if (
@@ -3123,9 +3163,9 @@ export default function PuntoDeVentaView({
                 </div>
                 
                 <!-- Información del Cliente, Factura y Fecha -->
-                <div style='font-size:14px; margin-bottom:3px;'>Cliente: ${nombreCliente}</div>
+                <div style='font-size:14px; margin-bottom:3px;'>Cliente: ${snap.nombreCliente}</div>
                 <div style='font-size:14px; margin-bottom:3px;'>Factura: ${
-                  facturaActual || ""
+                  snap.facturaActual || ""
                 }</div>
                 <div style='font-size:14px; margin-bottom:10px;'>Fecha: ${new Date().toLocaleString(
                   "es-HN",
@@ -3144,7 +3184,7 @@ export default function PuntoDeVentaView({
                       </tr>
                     </thead>
                     <tbody>
-                      ${seleccionados
+                      ${snap.seleccionados
                         .map(
                           (p) =>
                             `<tr>
@@ -3164,20 +3204,24 @@ export default function PuntoDeVentaView({
                 </div>
                 
                 <!-- Totales -->
-                ${totalDescuento > 0 ? `
+                ${
+                  snap.totalDescuento > 0
+                    ? `
                 <div style='font-size:14px; margin-top:6px; padding-top:4px;'>
                   <span style='float:left;'>Subtotal:</span>
-                  <span style='float:right;'>L ${total.toFixed(2)}</span>
+                  <span style='float:right;'>L ${snap.total.toFixed(2)}</span>
                   <div style='clear:both;'></div>
                 </div>
                 <div style='font-size:14px; margin-bottom:4px; color:#c00;'>
                   <span style='float:left;'>Aplicaste un descuento de:</span>
-                  <span style='float:right;'>-L ${totalDescuento.toFixed(2)}</span>
+                  <span style='float:right;'>-L ${snap.totalDescuento.toFixed(2)}</span>
                   <div style='clear:both;'></div>
-                </div>` : ''}
+                </div>`
+                    : ""
+                }
                 <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-size:17px; font-weight:700;'>
                   <span style='float:left;'>TOTAL:</span>
-                  <span style='float:right;'>L ${totalConDescuento.toFixed(2)}</span>
+                  <span style='float:right;'>L ${snap.totalConDescuento.toFixed(2)}</span>
                   <div style='clear:both;'></div>
                 </div>
                 
@@ -3275,7 +3319,7 @@ export default function PuntoDeVentaView({
             // Guardar venta en la tabla 'facturas' con nuevos campos
             // Primero en IndexedDB, luego en Supabase
             try {
-              const subTotal = seleccionados.reduce((sum, p) => {
+              const subTotal = snap.seleccionados.reduce((sum, p) => {
                 if (p.tipo === "comida") {
                   return sum + (p.precio / 1.15) * p.cantidad;
                 } else if (p.tipo === "bebida") {
@@ -3284,25 +3328,25 @@ export default function PuntoDeVentaView({
                   return sum + p.precio * p.cantidad;
                 }
               }, 0);
-              const isv15 = seleccionados
+              const isv15 = snap.seleccionados
                 .filter((p) => p.tipo === "comida")
                 .reduce(
                   (sum, p) => sum + (p.precio - p.precio / 1.15) * p.cantidad,
                   0,
                 );
-              const isv18 = seleccionados
+              const isv18 = snap.seleccionados
                 .filter((p) => p.tipo === "bebida")
                 .reduce(
                   (sum, p) => sum + (p.precio - p.precio / 1.18) * p.cantidad,
                   0,
                 );
-              if (facturaActual === "Límite alcanzado") {
+              if (snap.facturaActual === "Límite alcanzado") {
                 alert(
                   "¡Se ha alcanzado el límite de facturas para este cajero!",
                 );
                 return;
               }
-              const factura = facturaActual;
+              const factura = snap.facturaActual;
               const venta = {
                 fecha_hora: formatToHondurasLocal(),
                 cajero: usuarioActual?.nombre || "",
@@ -3310,21 +3354,28 @@ export default function PuntoDeVentaView({
                 caja: caiInfo?.caja_asignada || "",
                 cai: caiInfo && caiInfo.cai ? caiInfo.cai : "",
                 factura,
-                cliente: nombreCliente,
+                cliente: snap.nombreCliente,
+                tipo_orden: snap.tipoOrden,
+                operation_id: operationId,
                 productos: JSON.stringify(
-                  seleccionados.map((p) => ({
+                  snap.seleccionados.map((p) => ({
                     id: p.id,
                     nombre: p.nombre,
                     precio: p.precio,
                     cantidad: p.cantidad,
                     tipo: p.tipo,
+                    complementos: p.complementos ?? [],
+                    piezas: p.piezas ?? null,
                   })),
                 ),
                 sub_total: subTotal.toFixed(2),
                 isv_15: isv15.toFixed(2),
                 isv_18: isv18.toFixed(2),
-                descuento: totalDescuento > 0 ? Number(totalDescuento.toFixed(2)) : null,
-                total: totalConDescuento.toFixed(2),
+                descuento:
+                  snap.totalDescuento > 0
+                    ? Number(snap.totalDescuento.toFixed(2))
+                    : null,
+                total: snap.totalConDescuento.toFixed(2),
               };
 
               // LÓGICA MEJORADA: usar solo isOnline (que ya verifica conexión real)
@@ -3377,22 +3428,31 @@ export default function PuntoDeVentaView({
                 );
               }
 
-              // Actualizar el número de factura actual en la vista
-              if (facturaActual !== "Límite alcanzado") {
-                const nuevaFactura = (parseInt(facturaActual) + 1).toString();
-                setFacturaActual(nuevaFactura);
+              // Actualizar el número de factura actual en la vista.
+              // Se usa forma funcional (prev =>) para NO depender del valor
+              // de la closure, evitando que dos operaciones rápidas lean
+              // el mismo valor y generen el mismo número de factura.
+              if (snap.facturaActual !== "Límite alcanzado") {
+                const nuevaFactura = (
+                  parseInt(snap.facturaActual) + 1
+                ).toString();
 
-                // Actualizar factura_actual en cai_facturas (Supabase)
+                // Actualizar estado local con forma funcional
+                setFacturaActual((prev) =>
+                  prev !== "Límite alcanzado"
+                    ? (parseInt(prev) + 1).toString()
+                    : prev,
+                );
+
+                // Actualizar factura_actual en cai_facturas (Supabase) — atómico
                 if (usuarioActual?.id) {
                   try {
                     await supabase
                       .from("cai_facturas")
-                      .update({
-                        factura_actual: nuevaFactura,
-                      })
+                      .update({ factura_actual: nuevaFactura })
                       .eq("cajero_id", usuarioActual.id);
                     console.log(
-                      `✓ Factura actual actualizada a ${nuevaFactura} en Supabase`,
+                      `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase`,
                     );
                   } catch (err) {
                     console.error(
@@ -3402,7 +3462,7 @@ export default function PuntoDeVentaView({
                   }
                 }
 
-                // IMPORTANTE: Actualizar también el cache de CAI para offline
+                // Actualizar también el cache de CAI para modo offline
                 try {
                   const caiCache = await obtenerCaiCache();
                   if (caiCache) {
@@ -3411,7 +3471,7 @@ export default function PuntoDeVentaView({
                       factura_actual: nuevaFactura,
                     });
                     console.log(
-                      `✓ Factura actual actualizada a ${nuevaFactura} en cache`,
+                      `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en cache`,
                     );
                   }
                 } catch (err) {
@@ -3426,10 +3486,14 @@ export default function PuntoDeVentaView({
               alert(
                 "Error al guardar la factura. Por favor, contacte al administrador.",
               );
+            } finally {
+              // Siempre limpiar el formulario y liberar el guard,
+              // independientemente de si la operación fue exitosa o no.
+              limpiarSeleccion();
+              setNombreCliente("");
+              isSubmittingRef.current = false;
+              console.log(`[facturar] op=${operationId} → finalizado.`);
             }
-            // Limpiar selección después de imprimir
-            limpiarSeleccion();
-            setNombreCliente("");
           }, 300);
         }}
       />
@@ -4173,9 +4237,11 @@ export default function PuntoDeVentaView({
                               fontWeight: 800,
                               lineHeight: 1,
                             }}
-                            title={descuentosProductos.has(p.id)
-                              ? `Quitar descuento (-L ${montoDescuentoComida})`
-                              : `Aplicar descuento (-L ${montoDescuentoComida})`}
+                            title={
+                              descuentosProductos.has(p.id)
+                                ? `Quitar descuento (-L ${montoDescuentoComida})`
+                                : `Aplicar descuento (-L ${montoDescuentoComida})`
+                            }
                             aria-label={`Descuento ${p.nombre}`}
                           >
                             %
@@ -4847,6 +4913,9 @@ export default function PuntoDeVentaView({
               onChange={(e) => setNombreCliente(e.target.value.toUpperCase())}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && nombreCliente.trim()) {
+                  // preventDefault evita que el evento llegue al botón
+                  // "Continuar" si tiene el foco, disparando dos veces
+                  e.preventDefault();
                   setShowClienteModal(false);
                   setShowPagoModal(true);
                 }
@@ -6310,7 +6379,19 @@ export default function PuntoDeVentaView({
                                           : "",
                                       factura: facturaActual,
                                       cliente: p.cliente || null,
-                                      productos: JSON.stringify(productos),
+                                      tipo_orden: "DELIVERY",
+                                      operation_id: crypto.randomUUID(),
+                                      productos: JSON.stringify(
+                                        productos.map((pp: any) => ({
+                                          id: pp.id,
+                                          nombre: pp.nombre,
+                                          precio: pp.precio,
+                                          cantidad: pp.cantidad,
+                                          tipo: pp.tipo || "comida",
+                                          complementos: pp.complementos ?? [],
+                                          piezas: pp.piezas ?? null,
+                                        })),
+                                      ),
                                       sub_total: subTotal.toFixed(2),
                                       isv_15: isv15.toFixed(2),
                                       isv_18: isv18.toFixed(2),
@@ -6428,43 +6509,81 @@ export default function PuntoDeVentaView({
                                       const costoEnvio = parseFloat(
                                         p.costo_envio || "0",
                                       );
-                                      if (
-                                        costoEnvio > 0 &&
-                                        isOnline &&
-                                        estaConectado()
-                                      ) {
-                                        await supabase
-                                          .from("costo_delivery")
-                                          .insert([
-                                            {
-                                              pedido_id:
-                                                p.id &&
-                                                !String(p.id).startsWith(
-                                                  "local-",
-                                                )
-                                                  ? Number(p.id)
-                                                  : null,
-                                              monto: costoEnvio,
-                                              fecha:
-                                                p.fecha ||
-                                                formatToHondurasLocal(),
-                                              cliente: p.cliente || null,
-                                              cajero_id:
-                                                usuarioActual?.id || null,
-                                              caja:
-                                                p.caja ||
-                                                caiInfo?.caja_asignada ||
-                                                null,
-                                              tipo_pago: p.tipo_pago || null,
-                                            },
+                                      if (costoEnvio > 0) {
+                                        // Registrar en tabla `pagos` para que aparezca
+                                        // en el cierre de caja y resumen de efectivo
+                                        const tipoPagoDelivery = (
+                                          p.tipo_pago || "efectivo"
+                                        ).toLowerCase();
+                                        const pagoDelivery = {
+                                          tipo: tipoPagoDelivery,
+                                          monto: costoEnvio,
+                                          recibido: costoEnvio,
+                                          cambio: 0,
+                                          referencia: "DELIVERY",
+                                          banco: null,
+                                          tarjeta: null,
+                                          autorizador: null,
+                                          usd_monto: null,
+                                          factura: facturaActual,
+                                          factura_venta: facturaActual,
+                                          fecha_hora: formatToHondurasLocal(),
+                                          cajero: usuarioActual?.nombre || null,
+                                          cajero_id: usuarioActual?.id || null,
+                                          cliente: p.cliente || null,
+                                          operation_id: crypto.randomUUID(),
+                                        };
+                                        if (isOnline && estaConectado()) {
+                                          await supabase
+                                            .from("pagos")
+                                            .insert([pagoDelivery]);
+                                          console.log(
+                                            `✓ Costo delivery L ${costoEnvio} registrado en tabla pagos`,
+                                          );
+                                        } else {
+                                          await guardarPagosLocal([
+                                            pagoDelivery,
                                           ]);
-                                        console.log(
-                                          `✓ Ingreso de delivery L ${costoEnvio} guardado en costo_delivery`,
-                                        );
+                                          console.log(
+                                            `✓ Costo delivery L ${costoEnvio} guardado en IndexedDB (sin conexión)`,
+                                          );
+                                        }
+
+                                        // También mantener registro en costo_delivery para auditoría
+                                        if (isOnline && estaConectado()) {
+                                          await supabase
+                                            .from("costo_delivery")
+                                            .insert([
+                                              {
+                                                pedido_id:
+                                                  p.id &&
+                                                  !String(p.id).startsWith(
+                                                    "local-",
+                                                  )
+                                                    ? Number(p.id)
+                                                    : null,
+                                                monto: costoEnvio,
+                                                fecha:
+                                                  p.fecha ||
+                                                  formatToHondurasLocal(),
+                                                cliente: p.cliente || null,
+                                                cajero_id:
+                                                  usuarioActual?.id || null,
+                                                caja:
+                                                  p.caja ||
+                                                  caiInfo?.caja_asignada ||
+                                                  null,
+                                                tipo_pago: p.tipo_pago || null,
+                                              },
+                                            ]);
+                                          console.log(
+                                            `✓ Ingreso de delivery L ${costoEnvio} guardado en costo_delivery`,
+                                          );
+                                        }
                                       }
                                     } catch (deliveryErr) {
                                       console.error(
-                                        "Error guardando costo_delivery:",
+                                        "Error guardando pago/costo_delivery:",
                                         deliveryErr,
                                       );
                                       // No bloqueamos el flujo principal si falla esto
