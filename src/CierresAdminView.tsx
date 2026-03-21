@@ -80,7 +80,7 @@ export default function CierresAdminView({
   const aperturasFiltradas = cierres.filter(
     (c) =>
       c.tipo_registro === "apertura" &&
-      (fecha ? c.fecha.slice(0, 10) === fecha : true)
+      (fecha ? c.fecha.slice(0, 10) === fecha : true),
   );
 
   const cajasAbiertasList = aperturasFiltradas.filter((ap) => {
@@ -89,14 +89,14 @@ export default function CierresAdminView({
         ci.tipo_registro === "cierre" &&
         ci.caja === ap.caja &&
         ci.cajero === ap.cajero &&
-        ci.fecha.slice(0, 10) === ap.fecha.slice(0, 10)
+        ci.fecha.slice(0, 10) === ap.fecha.slice(0, 10),
     );
   });
   const cajasAbiertas = cajasAbiertasList.length;
 
   // Recalcular diferencias como (lo registrado - lo del día) por cada cierre sin aclarar
   const cierresSinAclarar = cierres.filter(
-    (c) => c.tipo_registro === "cierre" && c.observacion === "sin aclarar"
+    (c) => c.tipo_registro === "cierre" && c.observacion === "sin aclarar",
   );
 
   // Para cada cierre calculamos la diferencia por tipo usando los campos registrados y los del día
@@ -124,19 +124,19 @@ export default function CierresAdminView({
 
   const sumaDiferencia = diferenciaPorCierre.reduce(
     (sum, d) => sum + d.total,
-    0
+    0,
   );
   const sumaEfectivoSinAclarar = diferenciaPorCierre.reduce(
     (sum, d) => sum + d.efectivo,
-    0
+    0,
   );
   const sumaTarjetaSinAclarar = diferenciaPorCierre.reduce(
     (sum, d) => sum + d.tarjeta,
-    0
+    0,
   );
   const sumaTransferenciasSinAclarar = diferenciaPorCierre.reduce(
     (sum, d) => sum + d.transferencias,
-    0
+    0,
   );
 
   const handleCerrarCaja = async () => {
@@ -586,11 +586,154 @@ export default function CierresAdminView({
           color: var(--text-secondary);
         }
 
+        .cierres-list {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          margin-top: 1rem;
+        }
+
+        .cierre-card {
+          background: #fff;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          padding: 1.25rem 1.5rem;
+          box-shadow: var(--shadow);
+          display: grid;
+          grid-template-columns: auto 1fr auto;
+          gap: 1rem;
+          align-items: start;
+          transition: box-shadow 0.2s;
+        }
+
+        .cierre-card:hover {
+          box-shadow: var(--shadow-hover);
+        }
+
+        .cierre-card-left {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          min-width: 72px;
+        }
+
+        .cierre-tipo-badge {
+          font-size: 0.7rem;
+          font-weight: 700;
+          padding: 3px 10px;
+          border-radius: 20px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
+        }
+
+        .badge-apertura {
+          background: #d1fae5;
+          color: #065f46;
+        }
+
+        .badge-cierre {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .cierre-fecha {
+          font-size: 0.78rem;
+          color: var(--text-secondary);
+          text-align: center;
+        }
+
+        .cierre-card-body {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+          gap: 0.6rem 1.2rem;
+          align-items: start;
+        }
+
+        .cierre-field {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .cierre-field-label {
+          font-size: 0.7rem;
+          color: var(--text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          font-weight: 600;
+        }
+
+        .cierre-field-value {
+          font-size: 0.9rem;
+          color: var(--text-primary);
+          font-weight: 600;
+        }
+
+        .diferencia-positive { color: #10b981; }
+        .diferencia-negative { color: #ef4444; }
+        .diferencia-zero { color: #64748b; }
+
+        .cierre-card-right {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px;
+          min-width: 110px;
+        }
+
+        .obs-badge {
+          font-size: 0.75rem;
+          font-weight: 700;
+          padding: 4px 12px;
+          border-radius: 20px;
+          white-space: nowrap;
+        }
+
+        .obs-sin-aclarar {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .obs-cuadrado {
+          background: #d1fae5;
+          color: #065f46;
+        }
+
+        .obs-aclarado {
+          background: #dbeafe;
+          color: #1e40af;
+        }
+
+        .diferencia-big {
+          font-size: 1.1rem;
+          font-weight: 800;
+        }
+
+        @media (max-width: 640px) {
+          .cierre-card {
+            grid-template-columns: 1fr;
+          }
+          .cierre-card-left {
+            flex-direction: row;
+            align-items: center;
+            min-width: unset;
+          }
+          .cierre-card-right {
+            flex-direction: row;
+            align-items: center;
+            flex-wrap: wrap;
+            min-width: unset;
+          }
+        }
+
         @media (max-width: 768px) {
           .header { flex-direction: column; gap: 1rem; }
           .stats-grid { grid-template-columns: 1fr; }
           .open-item { flex-direction: column; gap: 8px; text-align: center; }
           .valores-grid { grid-template-columns: 1fr; }
+          .cierres-enterprise { padding: 1rem; }
         }
       `}</style>
 
@@ -714,83 +857,224 @@ export default function CierresAdminView({
         <h2 className="title">📊 Cierres Registrados</h2>
         {loading ? (
           <div className="loading">⏳ Cargando cierres...</div>
+        ) : cierresFiltrados.length === 0 ? (
+          <div className="loading">
+            No hay registros para la fecha seleccionada.
+          </div>
         ) : (
-          <div
-            className="table-container"
-            style={{
-              maxWidth: "1800px",
-              width: "100%",
-              margin: "0 auto",
-              overflowX: "auto",
-              padding: "0.5rem",
-            }}
-          >
-            <table
-              className="table"
-              style={{
-                fontSize: "0.85rem",
-                minWidth: "1100px",
-                width: "max-content",
-              }}
-            >
-              <thead>
-                <tr>
-                  {cierresFiltrados.length > 0 &&
-                    Object.keys(cierresFiltrados[0]).map((col) => (
-                      <th
-                        key={col}
-                        style={{
-                          padding: "0.5rem",
-                          minWidth: "120px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {col.replace(/_/g, " ").toUpperCase()}
-                      </th>
-                    ))}
-                </tr>
-              </thead>
-              <tbody>
-                {cierresFiltrados.map((c, idx) => (
-                  <tr key={c.id || idx}>
-                    {Object.keys(c).map((col) => {
-                      const valor = c[col];
-                      const esObservacion = col === "observacion";
-                      let className = "";
-                      if (esObservacion) {
-                        if (valor === "sin aclarar")
-                          className = "status-sin-aclarar";
-                        else if (valor === "cuadrado")
-                          className = "status-cuadrado";
-                        else if (valor === "aclarado")
-                          className = "status-aclarado";
-                      }
-                      return (
-                        <td
-                          key={col}
-                          className={className}
-                          style={{
-                            padding: "0.5rem",
-                            minWidth: "120px",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {valor}
-                          {esObservacion && valor === "sin aclarar" && (
-                            <button
-                              className="btn-aclarar"
-                              onClick={() => handleAclararCierre(c.id)}
+          <div className="cierres-list">
+            {cierresFiltrados.map((c, idx) => {
+              const tipo = c.tipo_registro || "";
+              const fecha = c.fecha
+                ? c.fecha.slice(0, 16).replace("T", " ")
+                : "—";
+              const diferencia = parseFloat(c.diferencia || 0);
+              const difClass =
+                diferencia > 0
+                  ? "diferencia-positive"
+                  : diferencia < 0
+                    ? "diferencia-negative"
+                    : "diferencia-zero";
+              const obs = c.observacion || "";
+              const obsClass =
+                obs === "sin aclarar"
+                  ? "obs-sin-aclarar"
+                  : obs === "cuadrado"
+                    ? "obs-cuadrado"
+                    : obs === "aclarado"
+                      ? "obs-aclarado"
+                      : "obs-cuadrado";
+              return (
+                <div key={c.id || idx} className="cierre-card">
+                  {/* Columna izq: tipo + fecha */}
+                  <div className="cierre-card-left">
+                    <span
+                      className={`cierre-tipo-badge ${tipo === "apertura" ? "badge-apertura" : "badge-cierre"}`}
+                    >
+                      {tipo === "apertura" ? "🟢 Apertura" : "🔒 Cierre"}
+                    </span>
+                    <span className="cierre-fecha">{fecha}</span>
+                  </div>
+
+                  {/* Cuerpo: campos clave */}
+                  <div className="cierre-card-body">
+                    <div className="cierre-field">
+                      <span className="cierre-field-label">👤 Cajero</span>
+                      <span className="cierre-field-value">
+                        {c.cajero || "—"}
+                      </span>
+                    </div>
+                    <div className="cierre-field">
+                      <span className="cierre-field-label">📦 Caja</span>
+                      <span className="cierre-field-value">
+                        {c.caja || "—"}
+                      </span>
+                    </div>
+                    {tipo === "cierre" && (
+                      <>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            💵 Efectivo Reg.
+                          </span>
+                          <span className="cierre-field-value">
+                            L{" "}
+                            {parseFloat(c.efectivo_registrado || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            💵 Efectivo Día
+                          </span>
+                          <span className="cierre-field-value">
+                            L {parseFloat(c.efectivo_dia || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            💳 Tarjeta Reg.
+                          </span>
+                          <span className="cierre-field-value">
+                            L{" "}
+                            {parseFloat(
+                              c.monto_tarjeta_registrado || 0,
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            💳 Tarjeta Día
+                          </span>
+                          <span className="cierre-field-value">
+                            L {parseFloat(c.monto_tarjeta_dia || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            🏦 Transf. Reg.
+                          </span>
+                          <span className="cierre-field-value">
+                            L{" "}
+                            {parseFloat(
+                              c.transferencias_registradas || 0,
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="cierre-field">
+                          <span className="cierre-field-label">
+                            🏦 Transf. Día
+                          </span>
+                          <span className="cierre-field-value">
+                            L {parseFloat(c.transferencias_dia || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        {(parseFloat(c.dolares_registrado || 0) > 0 ||
+                          parseFloat(c.dolares_dia || 0) > 0) && (
+                          <>
+                            <div className="cierre-field">
+                              <span className="cierre-field-label">
+                                💱 Dólares Reg.
+                              </span>
+                              <span className="cierre-field-value">
+                                ${" "}
+                                {parseFloat(c.dolares_registrado || 0).toFixed(
+                                  2,
+                                )}
+                              </span>
+                            </div>
+                            <div className="cierre-field">
+                              <span className="cierre-field-label">
+                                💱 Dólares Día
+                              </span>
+                              <span className="cierre-field-value">
+                                $ {parseFloat(c.dolares_dia || 0).toFixed(2)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                        {c.referencia_aclaracion && (
+                          <div
+                            className="cierre-field"
+                            style={{ gridColumn: "1 / -1" }}
+                          >
+                            <span className="cierre-field-label">
+                              📝 Referencia
+                            </span>
+                            <span
+                              className="cierre-field-value"
+                              style={{
+                                fontWeight: 400,
+                                color: "#64748b",
+                                fontSize: "0.85rem",
+                              }}
                             >
-                              ✅ Aclarar
-                            </button>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                              {c.referencia_aclaracion}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {tipo === "apertura" && (
+                      <div className="cierre-field">
+                        <span className="cierre-field-label">
+                          💰 Fondo Fijo
+                        </span>
+                        <span className="cierre-field-value">
+                          L{" "}
+                          {parseFloat(
+                            c.fondo_fijo || c.fondo_fijo_registrado || 0,
+                          ).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Columna der: diferencia + observacion */}
+                  <div className="cierre-card-right">
+                    {tipo === "cierre" && (
+                      <>
+                        <div style={{ textAlign: "right" }}>
+                          <div
+                            style={{
+                              fontSize: "0.7rem",
+                              color: "#64748b",
+                              textTransform: "uppercase",
+                              fontWeight: 600,
+                              marginBottom: 2,
+                            }}
+                          >
+                            Diferencia
+                          </div>
+                          <div className={`diferencia-big ${difClass}`}>
+                            L {diferencia.toFixed(2)}
+                          </div>
+                        </div>
+                        <span className={`obs-badge ${obsClass}`}>
+                          {obs || "—"}
+                        </span>
+                        {obs === "sin aclarar" && (
+                          <button
+                            className="btn-aclarar"
+                            onClick={() => handleAclararCierre(c.id)}
+                            style={{
+                              fontSize: 12,
+                              padding: "5px 12px",
+                              borderRadius: 8,
+                              border: "none",
+                              cursor: "pointer",
+                              background: "#10b981",
+                              color: "#fff",
+                              fontWeight: 700,
+                            }}
+                          >
+                            ✅ Aclarar
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

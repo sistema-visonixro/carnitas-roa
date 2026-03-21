@@ -7,10 +7,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  LineChart,
-  Line,
   CartesianGrid,
 } from "recharts";
 import { useDatosNegocio } from "./useDatosNegocio";
@@ -29,17 +26,48 @@ export default function ResultadosView({
   // Obtener datos del negocio desde la base de datos
   const { datos: datosNegocio } = useDatosNegocio();
 
-  // Inicializar los filtros de fecha al día actual (formato YYYY-MM-DD)
+  // Inicializar los filtros de fecha/hora al día actual (formato datetime-local)
   const today = getLocalDayRange().day;
-  const [desde, setDesde] = useState(() => today);
-  const [hasta, setHasta] = useState(() => today);
+  const [desde, setDesde] = useState(() => today + "T00:00");
+  const [hasta, setHasta] = useState(() => today + "T23:59");
   const [facturas, setFacturas] = useState<any[]>([]);
   const [gastos, setGastos] = useState<any[]>([]);
-  const [ventasMensuales, setVentasMensuales] = useState<any[]>([]);
   const [balance, setBalance] = useState(0);
   const [ventasPorDia, setVentasPorDia] = useState<any[]>([]);
+  const [pagosTotales, setPagosTotales] = useState<{
+    efectivo: number;
+    tarjeta: number;
+    transferencia: number;
+    dolares_lps: number;
+    dolares_usd: number;
+  }>({
+    efectivo: 0,
+    tarjeta: 0,
+    transferencia: 0,
+    dolares_lps: 0,
+    dolares_usd: 0,
+  });
+  const [pagos, setPagos] = useState<any[]>([]);
+  const [filtroTipoPago, setFiltroTipoPago] = useState<string | null>(null);
   const [cajeros, setCajeros] = useState<any[]>([]);
   const [cajeroFiltro, setCajeroFiltro] = useState("");
+  // Estados para modal de resumen admin
+  const [showResumenAdmin, setShowResumenAdmin] = useState(false);
+  const [resumenAdminStep, setResumenAdminStep] = useState<"select" | "data">(
+    "select",
+  );
+  const [cajeroResumenId, setCajeroResumenId] = useState("");
+  const [resumenAdminLoading, setResumenAdminLoading] = useState(false);
+  const [resumenAdminData, setResumenAdminData] = useState<{
+    efectivo: number;
+    tarjeta: number;
+    transferencia: number;
+    dolares: number;
+    dolares_usd: number;
+    dolares_convertidos: number;
+    tasa_dolar: number;
+    gastos: number;
+  } | null>(null);
   // Obtener usuario actual de localStorage
   const usuarioActual = (() => {
     try {
@@ -64,6 +92,148 @@ export default function ResultadosView({
       setCajeros(data || []);
     } catch (error) {
       console.error("Error fetching cajeros:", error);
+    }
+  }
+
+  async function fetchResumenAdmin(cajeroId: string) {
+    setResumenAdminLoading(true);
+    setResumenAdminStep("data");
+    try {
+      // Buscar la última apertura del cajero seleccionado
+      const { data: cierreData } = await supabase
+        .from("cierres")
+        .select("fecha, caja")
+        .eq("cajero_id", cajeroId)
+        .eq("estado", "APERTURA")
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cierreData) {
+        setResumenAdminLoading(false);
+        setResumenAdminData({
+          efectivo: 0,
+          tarjeta: 0,
+          transferencia: 0,
+          dolares: 0,
+          dolares_usd: 0,
+          dolares_convertidos: 0,
+          tasa_dolar: 0,
+          gastos: 0,
+        });
+        return;
+      }
+
+      const start = cierreData.fecha;
+      const cajaAsignada = cierreData.caja;
+      const { end: dayEnd } = getLocalDayRange();
+
+      const [
+        { data: pagosEfectivo },
+        { data: pagosTarjeta },
+        { data: pagosTrans },
+        { data: pagosDolares },
+        { data: gastosDia },
+      ] = await Promise.all([
+        supabase
+          .from("pagos")
+          .select("monto")
+          .eq("tipo", "efectivo")
+          .eq("cajero_id", cajeroId)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd),
+        supabase
+          .from("pagos")
+          .select("monto")
+          .eq("tipo", "tarjeta")
+          .eq("cajero_id", cajeroId)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd),
+        supabase
+          .from("pagos")
+          .select("monto")
+          .eq("tipo", "transferencia")
+          .eq("cajero_id", cajeroId)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd),
+        supabase
+          .from("pagos")
+          .select("monto,usd_monto")
+          .eq("tipo", "dolares")
+          .eq("cajero_id", cajeroId)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd),
+        supabase
+          .from("gastos")
+          .select("monto")
+          .eq("cajero_id", cajeroId)
+          .eq("caja", cajaAsignada)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd),
+      ]);
+
+      const efectivoSum = (pagosEfectivo || []).reduce(
+        (s: number, p: any) => s + parseFloat(p.monto || 0),
+        0,
+      );
+      const tarjetaSum = (pagosTarjeta || []).reduce(
+        (s: number, p: any) => s + parseFloat(p.monto || 0),
+        0,
+      );
+      const transSum = (pagosTrans || []).reduce(
+        (s: number, p: any) => s + parseFloat(p.monto || 0),
+        0,
+      );
+      const dolaresSum = (pagosDolares || []).reduce(
+        (s: number, p: any) => s + parseFloat(p.monto || 0),
+        0,
+      );
+      const dolaresSumUsd = (pagosDolares || []).reduce(
+        (s: number, p: any) => s + parseFloat(p.usd_monto || 0),
+        0,
+      );
+
+      let tasa = 0;
+      try {
+        const { data: tasaData } = await supabase
+          .from("precio_dolar")
+          .select("valor")
+          .eq("id", "singleton")
+          .limit(1)
+          .single();
+        if (tasaData) tasa = Number(tasaData.valor) || 0;
+      } catch (_) {}
+
+      const dolaresConvertidos = Number((dolaresSumUsd * tasa).toFixed(2));
+      const gastosSum = (gastosDia || []).reduce(
+        (s: number, g: any) => s + parseFloat(g.monto || 0),
+        0,
+      );
+
+      setResumenAdminData({
+        efectivo: efectivoSum,
+        tarjeta: tarjetaSum,
+        transferencia: transSum,
+        dolares: dolaresSum,
+        dolares_usd: dolaresSumUsd,
+        dolares_convertidos: dolaresConvertidos,
+        tasa_dolar: tasa,
+        gastos: gastosSum,
+      });
+    } catch (err) {
+      console.error("Error al obtener resumen admin:", err);
+      setResumenAdminData({
+        efectivo: 0,
+        tarjeta: 0,
+        transferencia: 0,
+        dolares: 0,
+        dolares_usd: 0,
+        dolares_convertidos: 0,
+        tasa_dolar: 0,
+        gastos: 0,
+      });
+    } finally {
+      setResumenAdminLoading(false);
     }
   }
 
@@ -94,9 +264,9 @@ export default function ResultadosView({
 
   async function fetchDatos() {
     try {
-      // Normalizar filtros para incluir las 24 horas del día seleccionado
-      const desdeInicio = desde ? `${desde} 00:00:00` : null;
-      const hastaFin = hasta ? `${hasta} 23:59:59` : null;
+      // Normalizar filtros: datetime-local YYYY-MM-DDTHH:MM → YYYY-MM-DD HH:MM:SS
+      const desdeInicio = desde ? desde.replace("T", " ") + ":00" : null;
+      const hastaFin = hasta ? hasta.replace("T", " ") + ":59" : null;
 
       // Función para obtener todos los registros con paginación
       async function obtenerTodasLasFacturas() {
@@ -144,7 +314,9 @@ export default function ResultadosView({
           let query = supabase.from("gastos").select("*");
 
           if (desde && hasta) {
-            query = query.gte("fecha", desde).lte("fecha", hasta);
+            query = query
+              .gte("fecha", desde.split("T")[0])
+              .lte("fecha", hasta.split("T")[0]);
           }
 
           if (cajeroFiltro) {
@@ -210,6 +382,34 @@ export default function ResultadosView({
 
       setFacturas(factData || []);
       setGastos(gastData || []);
+
+      // Calcular totales de pagos por tipo (campo: tipo; valores: efectivo/tarjeta/transferencia/dolares)
+      const pt = {
+        efectivo: 0,
+        tarjeta: 0,
+        transferencia: 0,
+        dolares_lps: 0,
+        dolares_usd: 0,
+      };
+      (pagosData || []).forEach((p: any) => {
+        const tipo = (p.tipo || "").toLowerCase().trim();
+        const monto = parseFloat(String(p.monto || 0).replace(/,/g, ""));
+        if (isNaN(monto)) return;
+        if (tipo === "efectivo") pt.efectivo += monto;
+        else if (tipo === "tarjeta") pt.tarjeta += monto;
+        else if (tipo === "transferencia" || tipo === "transferencias")
+          pt.transferencia += monto;
+        else if (tipo === "dolares" || tipo === "dólares") {
+          // monto ya es en Lempiras; usd_monto es el valor en USD
+          pt.dolares_lps += monto;
+          pt.dolares_usd += parseFloat(
+            String(p.usd_monto || 0).replace(/,/g, ""),
+          );
+        }
+      });
+      setPagosTotales(pt);
+      setPagos(pagosData || []);
+
       calcularMensual(factData || [], gastData || [], pagosData || []);
       calcularPorDia(factData || []);
       function calcularPorDia(facturas: any[]) {
@@ -255,9 +455,8 @@ export default function ResultadosView({
 
     try {
       // Normalizar rango al mismo formato que usa la vista: 'YYYY-MM-DD HH:MM:SS'
-      // (evitamos toISOString() para no introducir desplazamientos por zona horaria)
-      const desdeInicio = `${desde} 00:00:00`;
-      const hastaFin = `${hasta} 23:59:59`;
+      const desdeInicio = desde.replace("T", " ") + ":00";
+      const hastaFin = hasta.replace("T", " ") + ":59";
 
       // Funciones para obtener todos los registros con paginación
       async function obtenerTodasLasFacturasReporte() {
@@ -302,7 +501,9 @@ export default function ResultadosView({
         while (hayMasRegistros) {
           let query = supabase.from("gastos").select("*");
 
-          query = query.gte("fecha", desde).lte("fecha", hasta);
+          query = query
+            .gte("fecha", desde.split("T")[0])
+            .lte("fecha", hasta.split("T")[0]);
 
           if (cajeroFiltro) {
             query = query.eq("cajero_id", cajeroFiltro);
@@ -1655,8 +1856,8 @@ export default function ResultadosView({
     win.document.close();
 
     try {
-      const desdeInicio = `${desde} 00:00:00`;
-      const hastaFin = `${hasta} 23:59:59`;
+      const desdeInicio = desde.replace("T", " ") + ":00";
+      const hastaFin = hasta.replace("T", " ") + ":59";
 
       // Obtener todas las facturas con paginación
       async function obtenerTodasLasFacturasReporte() {
@@ -1769,8 +1970,8 @@ export default function ResultadosView({
     win.document.close();
 
     try {
-      const desdeInicio = `${desde} 00:00:00`;
-      const hastaFin = `${hasta} 23:59:59`;
+      const desdeInicio = desde.replace("T", " ") + ":00";
+      const hastaFin = hasta.replace("T", " ") + ":59";
 
       // Obtener todos los gastos con paginación
       async function obtenerTodosLosGastosReporte() {
@@ -1883,8 +2084,8 @@ export default function ResultadosView({
     win.document.close();
 
     try {
-      const desdeInicio = `${desde} 00:00:00`;
-      const hastaFin = `${hasta} 23:59:59`;
+      const desdeInicio = desde.replace("T", " ") + ":00";
+      const hastaFin = hasta.replace("T", " ") + ":59";
 
       // Obtener todos los pagos con paginación
       async function obtenerTodosLosPagosReporte() {
@@ -1995,33 +2196,7 @@ export default function ResultadosView({
       0,
     );
 
-    // Calcular ventas por mes usando pagos
-    const ventasPorMes: { [mes: string]: number } = {};
-    pagos.forEach((p: any) => {
-      const mes = (p.fecha_hora || p.fecha || "").slice(0, 7);
-      const monto = parseFloat(String(p.monto || 0).replace(/,/g, ""));
-      if (mes && !isNaN(monto)) {
-        ventasPorMes[mes] = (ventasPorMes[mes] || 0) + monto;
-      }
-    });
-
-    const gastosPorMes: { [mes: string]: number } = {};
-    gastos.forEach((g) => {
-      const mes = g.fecha?.slice(0, 7);
-      gastosPorMes[mes] = (gastosPorMes[mes] || 0) + parseFloat(g.monto || 0);
-    });
-
-    const meses = Array.from(
-      new Set([...Object.keys(ventasPorMes), ...Object.keys(gastosPorMes)]),
-    ).sort();
-    const resumen = meses.map((mes) => ({
-      mes,
-      ventas: ventasPorMes[mes] || 0,
-      gastos: gastosPorMes[mes] || 0,
-      balance: (ventasPorMes[mes] || 0) - (gastosPorMes[mes] || 0),
-    }));
-
-    setVentasMensuales(resumen);
+    // Calcular balance total
     const totalGastos = gastos.reduce(
       (sum, g) => sum + parseFloat(g.monto || 0),
       0,
@@ -2029,7 +2204,40 @@ export default function ResultadosView({
     setBalance(totalVentasReal - totalGastos);
   }
 
-  const facturasFiltradas = facturas;
+  // Mapa: número de factura → set de tipos de pago
+  const pagosPorFacturaMap = new Map<string, Set<string>>();
+  pagos.forEach((p: any) => {
+    const factNum = p.factura_venta
+      ? String(p.factura_venta)
+      : p.factura
+        ? String(p.factura)
+        : null;
+    if (!factNum) return;
+    if (!pagosPorFacturaMap.has(factNum)) pagosPorFacturaMap.set(factNum, new Set());
+    const tipo = (p.tipo || "").toLowerCase().trim();
+    if (tipo) pagosPorFacturaMap.get(factNum)!.add(tipo);
+  });
+
+  const facturasFiltradas =
+    filtroTipoPago === null
+      ? facturas
+      : filtroTipoPago === "delivery"
+        ? facturas.filter((f: any) => (f.tipo_orden || "").toUpperCase() === "DELIVERY")
+        : facturas.filter((f: any) => {
+            const tipos = pagosPorFacturaMap.get(String(f.factura || ""));
+            if (!tipos) return false;
+            if (filtroTipoPago === "transferencia")
+              return tipos.has("transferencia") || tipos.has("transferencias");
+            if (filtroTipoPago === "dolares")
+              return tipos.has("dolares") || tipos.has("dólares");
+            return tipos.has(filtroTipoPago);
+          });
+
+  // Total de facturas delivery
+  const deliveryTotal = facturas
+    .filter((f: any) => (f.tipo_orden || "").toUpperCase() === "DELIVERY")
+    .reduce((s: number, f: any) => s + parseFloat(String(f.total || 0)), 0);
+
   const gastosFiltrados = gastos;
 
   // Calcular total de ventas desde el balance (que ya usa pagos)
@@ -2040,6 +2248,19 @@ export default function ResultadosView({
   const totalVentas = balance + totalGastos;
   const facturasCount = facturasFiltradas.length;
   const gastosCount = gastosFiltrados.length;
+
+  // Rango de facturas (primera y última según número de factura)
+  const facturasSorted = [...facturasFiltradas].sort((a, b) => {
+    const fa = parseInt(String(a.factura || "0").replace(/[^0-9]/g, ""), 10);
+    const fb = parseInt(String(b.factura || "0").replace(/[^0-9]/g, ""), 10);
+    return fa - fb;
+  });
+  const facturaInicial =
+    facturasSorted.length > 0 ? facturasSorted[0]?.factura : null;
+  const facturaFinal =
+    facturasSorted.length > 0
+      ? facturasSorted[facturasSorted.length - 1]?.factura
+      : null;
 
   return (
     <div
@@ -2384,7 +2605,7 @@ export default function ResultadosView({
           <div className="filter-group">
             <label>📅 Desde:</label>
             <input
-              type="date"
+              type="datetime-local"
               value={desde}
               onChange={(e) => setDesde(e.target.value)}
               className="filter-input"
@@ -2393,7 +2614,7 @@ export default function ResultadosView({
           <div className="filter-group">
             <label>hasta:</label>
             <input
-              type="date"
+              type="datetime-local"
               value={hasta}
               onChange={(e) => setHasta(e.target.value)}
               className="filter-input"
@@ -2457,6 +2678,19 @@ export default function ResultadosView({
           >
             💳 Reporte Pagos
           </button>
+          <button
+            className="btn-filter"
+            onClick={() => {
+              setResumenAdminStep("select");
+              setCajeroResumenId("");
+              setResumenAdminData(null);
+              setShowResumenAdmin(true);
+            }}
+            title="Ver resumen de caja de un cajero"
+            style={{ marginLeft: 8, background: "#7c3aed", color: "#fff" }}
+          >
+            📊 Resumen por cajero
+          </button>
         </div>
 
         {/* KPIs */}
@@ -2490,10 +2724,81 @@ export default function ResultadosView({
           <div className="kpi-card kpi-success">
             <div className="kpi-value">{facturasCount}</div>
             <div className="kpi-label">Facturas</div>
+            {facturaInicial && facturaFinal && (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: "0.75rem",
+                  color: "#64748b",
+                  lineHeight: 1.6,
+                }}
+              >
+                <div>
+                  De:{" "}
+                  <strong style={{ color: "#10b981" }}>
+                    #{facturaInicial}
+                  </strong>
+                </div>
+                <div>
+                  A:{" "}
+                  <strong style={{ color: "#10b981" }}>#{facturaFinal}</strong>
+                </div>
+              </div>
+            )}
           </div>
           <div className="kpi-card kpi-danger">
             <div className="kpi-value">{gastosCount}</div>
             <div className="kpi-label">Gastos</div>
+          </div>
+          {/* KPIs de pagos por tipo */}
+          <div className="kpi-card" style={{ borderTop: "4px solid #10b981" }}>
+            <div className="kpi-value" style={{ color: "#10b981" }}>
+              L{" "}
+              {pagosTotales.efectivo.toLocaleString("de-DE", {
+                minimumFractionDigits: 2,
+              })}
+            </div>
+            <div className="kpi-label">💵 Efectivo</div>
+          </div>
+          <div className="kpi-card" style={{ borderTop: "4px solid #3b82f6" }}>
+            <div className="kpi-value" style={{ color: "#3b82f6" }}>
+              L{" "}
+              {pagosTotales.tarjeta.toLocaleString("de-DE", {
+                minimumFractionDigits: 2,
+              })}
+            </div>
+            <div className="kpi-label">💳 Tarjeta</div>
+          </div>
+          <div className="kpi-card" style={{ borderTop: "4px solid #8b5cf6" }}>
+            <div className="kpi-value" style={{ color: "#8b5cf6" }}>
+              L{" "}
+              {pagosTotales.transferencia.toLocaleString("de-DE", {
+                minimumFractionDigits: 2,
+              })}
+            </div>
+            <div className="kpi-label">🏦 Transferencia</div>
+          </div>
+          <div className="kpi-card" style={{ borderTop: "4px solid #f59e0b" }}>
+            <div
+              className="kpi-value"
+              style={{ color: "#f59e0b", fontSize: "1.6rem" }}
+            >
+              ${" "}
+              {pagosTotales.dolares_usd.toLocaleString("de-DE", {
+                minimumFractionDigits: 2,
+              })}
+              {pagosTotales.dolares_lps > 0 && (
+                <div
+                  style={{ fontSize: "1rem", color: "#64748b", marginTop: 2 }}
+                >
+                  ≈ L{" "}
+                  {pagosTotales.dolares_lps.toLocaleString("de-DE", {
+                    minimumFractionDigits: 2,
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="kpi-label">💱 Dólares</div>
           </div>
         </div>
 
@@ -2502,7 +2807,21 @@ export default function ResultadosView({
           <div className="table-container">
             <div className="table-card">
               <div className="table-header">
-                <h3 className="table-title">📋 Facturas Recientes</h3>
+                <h3 className="table-title">
+                  📋 Historial de Ventas
+                  {filtroTipoPago && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: "0.8rem",
+                        fontWeight: 500,
+                        color: "#64748b",
+                      }}
+                    >
+                      — {facturasFiltradas.length} resultado{facturasFiltradas.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </h3>
                 {onVerFacturasEmitidas && (
                   <button
                     className="btn-secondary"
@@ -2511,6 +2830,64 @@ export default function ResultadosView({
                     Ver todas
                   </button>
                 )}
+              </div>
+              {/* Filtros por tipo de pago */}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  padding: "10px 0 6px",
+                  borderBottom: "1px solid var(--border, #e2e8f0)",
+                  marginBottom: 8,
+                }}
+              >
+                {([
+                  { key: null,             label: "Todas",          icon: "🔄", color: "#64748b", total: null },
+                  { key: "efectivo",       label: "Efectivo",       icon: "💵", color: "#10b981", total: pagosTotales.efectivo },
+                  { key: "tarjeta",        label: "Tarjeta",        icon: "💳", color: "#3b82f6", total: pagosTotales.tarjeta },
+                  { key: "transferencia",  label: "Transferencia",  icon: "🏦", color: "#8b5cf6", total: pagosTotales.transferencia },
+                  { key: "dolares",        label: "Dólares",        icon: "💱", color: "#f59e0b", total: pagosTotales.dolares_lps },
+                  { key: "delivery",       label: "Delivery",       icon: "🛵", color: "#f43f5e", total: deliveryTotal },
+                ] as const).map(({ key, label, icon, color, total }) => {
+                  const isActive = filtroTipoPago === key;
+                  return (
+                    <button
+                      key={String(key)}
+                      onClick={() => setFiltroTipoPago(key as string | null)}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 1,
+                        padding: "5px 12px",
+                        border: `2px solid ${isActive ? color : "var(--border, #e2e8f0)"}`,
+                        borderRadius: 20,
+                        background: isActive ? color : "transparent",
+                        color: isActive ? "#fff" : color,
+                        cursor: "pointer",
+                        fontWeight: isActive ? 700 : 500,
+                        fontSize: "0.75rem",
+                        lineHeight: 1.3,
+                        transition: "all 0.18s",
+                        minWidth: 72,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{ fontSize: "1rem" }}>{icon} {label}</span>
+                      {total !== null && (
+                        <span style={{ fontSize: "0.7rem", opacity: 0.85 }}>
+                          L {total.toLocaleString("de-DE", { minimumFractionDigits: 2 })}
+                        </span>
+                      )}
+                      {key === null && (
+                        <span style={{ fontSize: "0.7rem", opacity: 0.85 }}>
+                          {facturas.length} fact.
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
               <div style={{ maxHeight: "400px", overflowY: "auto" }}>
                 <div className="table-responsive">
@@ -2522,11 +2899,12 @@ export default function ResultadosView({
                         <th>Cajero</th>
                         <th>Factura</th>
                         <th>Cliente</th>
+                        <th>Tipo Pago</th>
                         <th>Total</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {facturasFiltradas.slice(0, 10).map((f) => {
+                      {facturasFiltradas.slice(0, filtroTipoPago ? 500 : 10).map((f) => {
                         // Extraer hora en formato 12h
                         let horaVenta = "";
                         if (f.fecha_hora) {
@@ -2548,6 +2926,19 @@ export default function ResultadosView({
                           }
                         }
 
+                        // Tipos de pago de esta factura
+                        const tiposFactura = pagosPorFacturaMap.get(String(f.factura || ""));
+                        const tipoIcons: Record<string, { icon: string; color: string }> = {
+                          efectivo:      { icon: "💵", color: "#10b981" },
+                          tarjeta:       { icon: "💳", color: "#3b82f6" },
+                          transferencia: { icon: "🏦", color: "#8b5cf6" },
+                          transferencias:{ icon: "🏦", color: "#8b5cf6" },
+                          dolares:       { icon: "💱", color: "#f59e0b" },
+                          "dólares":     { icon: "💱", color: "#f59e0b" },
+                        };
+                        // Si es delivery, también mostrar etiqueta
+                        const esDelivery = (f.tipo_orden || "").toUpperCase() === "DELIVERY";
+
                         return (
                           <tr key={f.id}>
                             <td data-label="Fecha">
@@ -2557,6 +2948,50 @@ export default function ResultadosView({
                             <td data-label="Cajero">{f.cajero}</td>
                             <td data-label="Factura">{f.factura}</td>
                             <td data-label="Cliente">{f.cliente}</td>
+                            <td data-label="Tipo Pago" style={{ whiteSpace: "nowrap" }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {esDelivery && (
+                                  <span
+                                    style={{
+                                      background: "#fef2f2",
+                                      color: "#f43f5e",
+                                      border: "1px solid #fecdd3",
+                                      borderRadius: 10,
+                                      padding: "1px 7px",
+                                      fontSize: "0.68rem",
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    🛵 Delivery
+                                  </span>
+                                )}
+                                {tiposFactura && Array.from(tiposFactura).map((t) => {
+                                  const ti = tipoIcons[t];
+                                  if (!ti) return null;
+                                  const label = t === "transferencia" || t === "transferencias"
+                                    ? "Transf."
+                                    : t === "dolares" || t === "dólares"
+                                      ? "Dólares"
+                                      : t.charAt(0).toUpperCase() + t.slice(1);
+                                  return (
+                                    <span
+                                      key={t}
+                                      style={{
+                                        background: ti.color + "18",
+                                        color: ti.color,
+                                        border: `1px solid ${ti.color}44`,
+                                        borderRadius: 10,
+                                        padding: "1px 7px",
+                                        fontSize: "0.68rem",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {ti.icon} {label}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
                             <td
                               data-label="Total"
                               style={{ color: "var(--success)" }}
@@ -2611,94 +3046,6 @@ export default function ResultadosView({
 
         {/* Gráficas */}
         <div className="charts-container">
-          <h3 className="charts-title">📈 Análisis Mensual</h3>
-          <div className="charts-grid">
-            <div>
-              <ResponsiveContainer width="100%" height={350}>
-                <BarChart
-                  data={ventasMensuales}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke={"var(--border)"}
-                  />
-                  <XAxis dataKey="mes" stroke={"var(--text-secondary)"} />
-                  <YAxis stroke={"var(--text-secondary)"} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgba(26,26,46,0.95)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                    }}
-                  />
-                  <Legend />
-                  <Bar dataKey="ventas" fill="url(#ventas)" name="Ventas" />
-                  <Bar dataKey="gastos" fill="url(#gastos)" name="Gastos" />
-                  <defs>
-                    <linearGradient id="ventas" x1="0" y1="0" x2="0" y2="1">
-                      <stop
-                        offset="5%"
-                        stopColor={"var(--success)"}
-                        stopOpacity={0.8}
-                      />
-                      <stop
-                        offset="95%"
-                        stopColor={"var(--success)"}
-                        stopOpacity={0.2}
-                      />
-                    </linearGradient>
-                    <linearGradient id="gastos" x1="0" y1="0" x2="0" y2="1">
-                      <stop
-                        offset="5%"
-                        stopColor={"var(--danger)"}
-                        stopOpacity={0.8}
-                      />
-                      <stop
-                        offset="95%"
-                        stopColor={"var(--danger)"}
-                        stopOpacity={0.2}
-                      />
-                    </linearGradient>
-                  </defs>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div>
-              <ResponsiveContainer width="100%" height={350}>
-                <LineChart
-                  data={ventasMensuales}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke={"var(--border)"}
-                  />
-                  <XAxis dataKey="mes" stroke={"var(--text-secondary)"} />
-                  <YAxis stroke={"var(--text-secondary)"} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgba(26,26,46,0.95)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                    }}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="balance"
-                    stroke={balance >= 0 ? "var(--success)" : "var(--danger)"}
-                    strokeWidth={3}
-                    name="Balance Mensual"
-                    dot={{
-                      fill: balance >= 0 ? "var(--success)" : "var(--danger)",
-                      r: 4,
-                    }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
           {/* Gráfica de ventas por día */}
           <h3 className="charts-title" style={{ marginTop: 32 }}>
             🗓️ Ventas por Día
@@ -2725,6 +3072,262 @@ export default function ResultadosView({
           </div>
         </div>
       </main>
+
+      {/* Modal de Resumen de Caja (admin) */}
+      {showResumenAdmin && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 99999,
+          }}
+          onClick={() => setShowResumenAdmin(false)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 14,
+              padding: 28,
+              minWidth: 320,
+              maxWidth: 420,
+              boxShadow: "0 8px 32px #0004",
+              color: "#222",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ marginTop: 0, color: "#7c3aed", marginBottom: 18 }}>
+              📊 Resumen de Caja
+            </h3>
+
+            {resumenAdminStep === "select" && (
+              <>
+                <p style={{ margin: "0 0 12px", color: "#555", fontSize: 14 }}>
+                  Selecciona el cajero del que deseas ver el resumen del turno
+                  actual:
+                </p>
+                <select
+                  value={cajeroResumenId}
+                  onChange={(e) => setCajeroResumenId(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1.5px solid #bbb",
+                    fontSize: 15,
+                    marginBottom: 16,
+                  }}
+                >
+                  <option value="">-- Elige un cajero --</option>
+                  {cajeros.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                    </option>
+                  ))}
+                </select>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    justifyContent: "flex-end",
+                  }}
+                >
+                  <button
+                    onClick={() => setShowResumenAdmin(false)}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      border: "1px solid #ccc",
+                      background: "#f5f5f5",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    disabled={!cajeroResumenId}
+                    onClick={() => fetchResumenAdmin(cajeroResumenId)}
+                    style={{
+                      padding: "8px 18px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: cajeroResumenId ? "#7c3aed" : "#ccc",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: cajeroResumenId ? "pointer" : "default",
+                    }}
+                  >
+                    Consultar
+                  </button>
+                </div>
+              </>
+            )}
+
+            {resumenAdminStep === "data" && (
+              <>
+                {resumenAdminLoading ? (
+                  <div
+                    style={{
+                      padding: 16,
+                      textAlign: "center",
+                      color: "#7c3aed",
+                    }}
+                  >
+                    Cargando...
+                  </div>
+                ) : resumenAdminData ? (
+                  <>
+                    <p
+                      style={{
+                        margin: "0 0 14px",
+                        fontSize: 13,
+                        color: "#888",
+                      }}
+                    >
+                      Cajero:{" "}
+                      <strong>
+                        {cajeros.find((c) => c.id === cajeroResumenId)
+                          ?.nombre || "—"}
+                      </strong>{" "}
+                      · Desde apertura hasta ahora
+                    </p>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 10,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#f0fdf4",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <strong>EFECTIVO (LPS):</strong>
+                        <span>
+                          L{" "}
+                          {(
+                            resumenAdminData.efectivo - resumenAdminData.gastos
+                          ).toFixed(2)}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#eff6ff",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <strong>TARJETA:</strong>
+                        <span>L {resumenAdminData.tarjeta.toFixed(2)}</span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#eff6ff",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <strong>TRANSFERENCIA:</strong>
+                        <span>
+                          L {resumenAdminData.transferencia.toFixed(2)}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#fdf4ff",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <strong>DÓLARES:</strong>
+                        <span>
+                          ({resumenAdminData.dolares_usd.toFixed(2)} $) : Lps{" "}
+                          {resumenAdminData.dolares_convertidos.toFixed(2)}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#fef2f2",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <strong>GASTOS:</strong>
+                        <span>L {resumenAdminData.gastos.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    style={{ color: "#888", textAlign: "center", padding: 12 }}
+                  >
+                    Sin datos disponibles
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    justifyContent: "flex-end",
+                    marginTop: 16,
+                  }}
+                >
+                  <button
+                    onClick={() => {
+                      setResumenAdminStep("select");
+                      setResumenAdminData(null);
+                    }}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "1px solid #ccc",
+                      background: "#f5f5f5",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ← Volver
+                  </button>
+                  <button
+                    onClick={() => setShowResumenAdmin(false)}
+                    style={{
+                      padding: "8px 18px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: "#7c3aed",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

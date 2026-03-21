@@ -156,6 +156,199 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
     if (!isDesktop) setIsSidebarOpen(false);
   };
 
+  const navIcons: Record<string, React.ReactNode> = {
+    menu: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <polyline points="9 22 9 12 15 12 15 22" />
+      </svg>
+    ),
+    usuarios: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+    inventario: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line x1="12" y1="22.08" x2="12" y2="12" />
+      </svg>
+    ),
+    movimientosInventario: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polygon points="12 2 2 7 12 12 22 7 12 2" />
+        <polyline points="2 17 12 22 22 17" />
+        <polyline points="2 12 12 17 22 12" />
+      </svg>
+    ),
+    cai: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    ),
+    resultados: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <line x1="18" y1="20" x2="18" y2="10" />
+        <line x1="12" y1="20" x2="12" y2="4" />
+        <line x1="6" y1="20" x2="6" y2="14" />
+      </svg>
+    ),
+    gastos: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+        <line x1="1" y1="10" x2="23" y2="10" />
+      </svg>
+    ),
+    cierreadmin: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+    ),
+    datosNegocio: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </svg>
+    ),
+    gananciasNetas: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+        <polyline points="17 6 23 6 23 12" />
+      </svg>
+    ),
+    creditosPendientes: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+        <line x1="1" y1="10" x2="23" y2="10" />
+        <path d="M12 16h.01" strokeWidth="3" />
+      </svg>
+    ),
+    proveedores: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="1" y="3" width="15" height="13" />
+        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
+        <circle cx="5.5" cy="18.5" r="2.5" />
+        <circle cx="18.5" cy="18.5" r="2.5" />
+      </svg>
+    ),
+  };
+
   return (
     <div
       className="admin-panel-enterprise"
@@ -209,156 +402,170 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
         position: relative;
       }
       
-      .sidebar { 
+      .sidebar {
         width: 260px;
         min-width: 260px;
         height: 100vh;
         overflow-y: auto;
-        background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-        border-right: 1px solid #e2e8f0;
-        box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+        background: linear-gradient(180deg, #0f1923 0%, #080e14 100%);
+        border-right: 1px solid rgba(255,255,255,0.05);
+        box-shadow: 2px 0 24px rgba(0,0,0,0.3);
         display: flex;
         flex-direction: column;
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.38s ease;
+        will-change: transform;
         z-index: 1000;
         position: relative;
       }
-      .sidebar::-webkit-scrollbar { width: 6px; }
+      .sidebar::-webkit-scrollbar { width: 4px; }
       .sidebar::-webkit-scrollbar-track { background: transparent; }
-      .sidebar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-      
+      .sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
       .sidebar-header {
-        padding: 1.5rem 1rem;
-        border-bottom: 1px solid #e2e8f0;
-        background: white;
+        padding: 1.4rem 1.2rem;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.02);
       }
-      
       .sidebar-logo {
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 8px;
         text-decoration: none;
       }
       .sidebar-logo img, .sidebar-logo > div {
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
+        width: 38px;
+        height: 38px;
+        border-radius: 9px;
         object-fit: cover;
+        flex-shrink: 0;
       }
       .sidebar-title {
-        font-size: 0.95rem;
-        font-weight: 800;
-        color: #0f172a;
-        line-height: 1.2;
+        font-size: 0.87rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        line-height: 1.3;
       }
-      
       .sidebar-nav {
         flex: 1;
-        padding: 1rem 0.75rem;
+        padding: 0.75rem 0.6rem;
         overflow-y: auto;
       }
       .sidebar-nav-item {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 10px 12px;
+        padding: 9px 10px;
         border-radius: 8px;
         border: none;
         background: transparent;
         cursor: pointer;
         text-align: left;
         width: 100%;
-        transition: all 0.2s ease;
-        margin-bottom: 4px;
+        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+        margin-bottom: 2px;
+        color: rgba(255,255,255,0.52);
       }
       .sidebar-nav-item:hover {
-        background: #f1f5f9;
+        background: rgba(255,255,255,0.07);
+        color: rgba(255,255,255,0.9);
         transform: translateX(2px);
       }
       .sidebar-nav-item.active {
-        background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%);
-        border-left: 3px solid #3b82f6;
-        font-weight: 600;
+        background: rgba(99,102,241,0.18);
+        border-left: 2px solid #818cf8;
+        color: #e0e7ff;
+        padding-left: 8px;
       }
       .sidebar-nav-icon {
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
+        width: 28px;
+        height: 28px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.1rem;
         flex-shrink: 0;
+        color: inherit;
       }
+      .sidebar-nav-item.active .sidebar-nav-icon { color: #a5b4fc; }
       .sidebar-nav-text {
         flex: 1;
         min-width: 0;
       }
       .sidebar-nav-label {
-        font-size: 0.875rem;
-        font-weight: 600;
-        color: #0f172a;
+        font-size: 0.82rem;
+        font-weight: 500;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        color: inherit;
       }
+      .sidebar-nav-item.active .sidebar-nav-label { font-weight: 600; }
       .sidebar-nav-subtitle {
-        font-size: 0.7rem;
-        color: #64748b;
+        font-size: 0.67rem;
+        color: rgba(255,255,255,0.3);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      
       .sidebar-footer {
-        padding: 1rem;
-        border-top: 1px solid #e2e8f0;
-        background: white;
+        padding: 0.875rem 0.75rem;
+        border-top: 1px solid rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.02);
       }
       .sidebar-logout-btn {
         width: 100%;
-        padding: 12px;
+        padding: 9px 14px;
         border-radius: 8px;
-        background: linear-gradient(135deg, #ef4444 0%, #f59e0b 100%);
-        color: white;
-        border: none;
+        background: rgba(239,68,68,0.1);
+        color: rgba(252,165,165,0.9);
+        border: 1px solid rgba(239,68,68,0.2);
         font-weight: 600;
-        font-size: 0.875rem;
+        font-size: 0.78rem;
         cursor: pointer;
         transition: all 0.2s ease;
-        box-shadow: 0 2px 8px rgba(239,68,68,0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        letter-spacing: 0.01em;
       }
       .sidebar-logout-btn:hover {
+        background: rgba(239,68,68,0.22);
+        color: #fff;
+        border-color: rgba(239,68,68,0.4);
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(239,68,68,0.3);
       }
-
       .mobile-close-btn {
         display: none;
         position: absolute;
-        top: 25px;
-        right: 15px;
-        background: none;
-        border: none;
-        font-size: 1.5rem;
+        top: 16px;
+        right: 14px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.1);
         cursor: pointer;
-        color: #64748b;
+        color: rgba(255,255,255,0.65);
         padding: 0;
         z-index: 10;
-        width: 40px;
-        height: 40px;
+        width: 30px;
+        height: 30px;
         align-items: center;
         justify-content: center;
-        border-radius: 8px;
+        border-radius: 6px;
+        transition: all 0.15s ease;
       }
+      .mobile-close-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
       .sidebar-overlay {
-        display: none;
         position: fixed;
         inset: 0;
-        background: rgba(15, 23, 42, 0.4);
-        backdrop-filter: blur(4px);
+        background: rgba(0,0,0,0.55);
+        backdrop-filter: blur(3px);
         z-index: 999;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.38s ease, visibility 0.38s ease;
+      }
+      .sidebar-overlay.open {
+        opacity: 1;
+        visibility: visible;
       }
 
       .desktop-content { 
@@ -558,13 +765,12 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
            position: fixed;
            top: 0;
            left: 0;
-           transform: translateX(-100%);
+           transform: translateX(-108%);
+           box-shadow: none;
         }
         .sidebar.open {
            transform: translateX(0);
-        }
-        .sidebar-overlay {
-           display: block;
+           box-shadow: 6px 0 40px rgba(0,0,0,0.5);
         }
         .mobile-close-btn {
            display: flex;
@@ -592,8 +798,21 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
           <button
             className="mobile-close-btn"
             onClick={() => setIsSidebarOpen(false)}
+            aria-label="Cerrar menú"
           >
-            ✕
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
 
           <div className="sidebar-header">
@@ -603,46 +822,53 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               ) : (
                 <div
                   style={{
-                    background: "linear-gradient(135deg, #667eea, #764ba2)",
+                    background: "linear-gradient(135deg, #6366f1, #4f46e5)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: "1.5rem",
                     color: "white",
                   }}
                 >
-                  🏪
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                  </svg>
                 </div>
               )}
               <div className="sidebar-title">
                 {datosNegocio.nombre_negocio || "Admin Panel"}
                 <div
                   style={{
-                    fontSize: "0.75rem",
-                    color: "#64748b",
+                    fontSize: "0.68rem",
+                    color: "rgba(255,255,255,0.38)",
                     fontWeight: "normal",
-                    marginTop: "4px",
+                    marginTop: "3px",
                   }}
                 >
-                  Usuario: {user?.nombre || "Admin"}
+                  {user?.nombre || "Admin"}
                 </div>
               </div>
             </div>
           </div>
+
           <nav className="sidebar-nav">
             <button
               onClick={() => handleMenuClick("menu")}
               className={`sidebar-nav-item ${currentView === "menu" ? "active" : ""}`}
             >
-              <div
-                className="sidebar-nav-icon"
-                style={{ background: "#475569", color: "white" }}
-              >
-                🏠
-              </div>
+              <div className="sidebar-nav-icon">{navIcons["menu"]}</div>
               <div className="sidebar-nav-text">
-                <div className="sidebar-nav-label">Dashboard</div>
-                <div className="sidebar-nav-subtitle">Vista General</div>
+                <div className="sidebar-nav-label">Inicio</div>
+                <div className="sidebar-nav-subtitle">Panel principal</div>
               </div>
             </button>
 
@@ -650,15 +876,12 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               <button
                 key={card.view}
                 onClick={() => handleMenuClick(card.view)}
-                className={`sidebar-nav-item ${
-                  currentView === card.view ? "active" : ""
-                }`}
+                className={`sidebar-nav-item ${currentView === card.view ? "active" : ""}`}
               >
-                <div
-                  className="sidebar-nav-icon"
-                  style={{ background: card.color, color: "white" }}
-                >
-                  {card.icon}
+                <div className="sidebar-nav-icon">
+                  {navIcons[card.view] ?? (
+                    <span style={{ fontSize: "1rem" }}>{card.icon}</span>
+                  )}
                 </div>
                 <div className="sidebar-nav-text">
                   <div className="sidebar-nav-label">{card.label}</div>
@@ -667,22 +890,35 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               </button>
             ))}
           </nav>
+
           <div className="sidebar-footer">
             <button
               onClick={() => setShowLogoutModal(true)}
               className="sidebar-logout-btn"
             >
-              🔒 Salir
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Cerrar sesión
             </button>
           </div>
         </aside>
 
-        {isSidebarOpen && (
-          <div
-            className="sidebar-overlay"
-            onClick={() => setIsSidebarOpen(false)}
-          ></div>
-        )}
+        <div
+          className={`sidebar-overlay ${isSidebarOpen ? "open" : ""}`}
+          onClick={() => setIsSidebarOpen(false)}
+        />
 
         <section className="desktop-content">
           <div className="mobile-header">
@@ -690,8 +926,22 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
               <button
                 className="hamburger-btn"
                 onClick={() => setIsSidebarOpen(true)}
+                aria-label="Abrir menú"
               >
-                ☰
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
               </button>
               <div className="mobile-header-title">
                 {datosNegocio.logo_url ? (

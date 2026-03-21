@@ -115,6 +115,8 @@ export default function PuntoDeVentaView({
   const [showHistorialVentas, setShowHistorialVentas] = useState(false);
   const [historialVentas, setHistorialVentas] = useState<any[]>([]);
   const [historialLoading, setHistorialLoading] = useState(false);
+  const [historialPagos, setHistorialPagos] = useState<any[]>([]);
+  const [historialFiltroTipo, setHistorialFiltroTipo] = useState<string | null>(null);
   // Estados para historial de facturas de crédito del turno
   const [showHistorialCreditos, setShowHistorialCreditos] = useState(false);
   const [historialCreditos, setHistorialCreditos] = useState<any[]>([]);
@@ -593,16 +595,26 @@ export default function PuntoDeVentaView({
         setShowHistorialVentas(false);
         return;
       }
-      const { data: ventas, error } = await supabase
-        .from("facturas")
-        .select("*")
-        .eq("cajero_id", usuarioActual?.id)
-        .or("tipo_venta.eq.contado,tipo_venta.is.null")
-        .gte("fecha_hora", aperturaActual.fecha)
-        .lte("fecha_hora", dayEnd)
-        .order("fecha_hora", { ascending: false });
+      const [{ data: ventas, error }, { data: pagosData }] = await Promise.all([
+        supabase
+          .from("facturas")
+          .select("*")
+          .eq("cajero_id", usuarioActual?.id)
+          .or("tipo_venta.eq.contado,tipo_venta.is.null")
+          .gte("fecha_hora", aperturaActual.fecha)
+          .lte("fecha_hora", dayEnd)
+          .order("fecha_hora", { ascending: false }),
+        supabase
+          .from("pagos")
+          .select("tipo, monto, usd_monto, factura_venta, factura")
+          .eq("cajero_id", usuarioActual?.id)
+          .gte("fecha_hora", aperturaActual.fecha)
+          .lte("fecha_hora", dayEnd),
+      ]);
       if (error) throw error;
       setHistorialVentas(ventas || []);
+      setHistorialPagos(pagosData || []);
+      setHistorialFiltroTipo(null);
     } catch (err) {
       console.error("Error cargando historial:", err);
       alert("Error al cargar historial de ventas");
@@ -1084,6 +1096,7 @@ export default function PuntoDeVentaView({
   const [showPedidosModal, setShowPedidosModal] = useState(false);
   const [pedidosList, setPedidosList] = useState<any[]>([]);
   const [pedidosLoading] = useState(false);
+  const [pedidosPendientesCount, setPedidosPendientesCount] = useState(0);
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
@@ -1278,6 +1291,36 @@ export default function PuntoDeVentaView({
   const [complementosOpciones, setComplementosOpciones] = useState<string[]>(
     [],
   );
+
+  // Cargar conteo de pedidos pendientes (domicilios/teléfono) al montar
+  useEffect(() => {
+    // Cargar conteo inicial de pedidos pendientes (domicilios/teléfono)
+    const cargarContPedidos = async () => {
+      try {
+        let total = 0;
+        try {
+          const locales = await obtenerEnviosPendientes();
+          total += locales.length;
+        } catch (_) {}
+        if (estaConectado()) {
+          const { count } = await supabase
+            .from("pedidos_envio")
+            .select("id", { count: "exact", head: true })
+            .eq("cajero_id", usuarioActual?.id);
+          total += count || 0;
+        }
+        setPedidosPendientesCount(total);
+      } catch (_) {}
+    };
+    cargarContPedidos();
+    const interval = setInterval(cargarContPedidos, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sincronizar conteo cuando la lista del modal de pedidos cambia
+  useEffect(() => {
+    setPedidosPendientesCount(pedidosList.length);
+  }, [pedidosList]);
 
   // Cargar complementos desde la tabla complementos_opciones
   useEffect(() => {
@@ -2093,7 +2136,7 @@ export default function PuntoDeVentaView({
         cajero_id: usuarioActual?.id || null,
         caja: caiInfo?.caja_asignada || "",
         cai: factura.cai || "",
-        factura: factura.factura,
+        factura: "DEV-" + factura.factura, // ← prefijo para evitar constraint uq_facturas_numero_cajero
         cliente: factura.cliente + " (DEVOLUCIÓN)",
         productos: factura.productos,
         sub_total: (-parseFloat(factura.sub_total || 0)).toFixed(2),
@@ -2401,114 +2444,136 @@ export default function PuntoDeVentaView({
           left: 32,
           zIndex: 10001,
           display: "flex",
-          alignItems: "center",
-          gap: 8,
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 4,
         }}
       >
-        <span
-          style={{
-            color: isOnline ? "#43a047" : "#d32f2f",
-            fontWeight: 700,
-            fontSize: 15,
-            marginLeft: 12,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            maxWidth: "48vw",
-            display: "inline-block",
-          }}
-          title={
-            caiInfo
-              ? `${caiInfo.nombre_cajero} | Caja: ${caiInfo.caja_asignada}${
-                  facturaActual ? ` | Factura: ${facturaActual}` : ""
-                }`
-              : facturaActual
+        {/* Primera fila: cajero + botones */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              color: isOnline ? "#43a047" : "#d32f2f",
+              fontWeight: 700,
+              fontSize: 15,
+              marginLeft: 12,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              maxWidth: "48vw",
+              display: "inline-block",
+            }}
+            title={
+              caiInfo
+                ? `${caiInfo.nombre_cajero} | Caja: ${caiInfo.caja_asignada}${
+                    facturaActual ? ` | Factura: ${facturaActual}` : ""
+                  }`
+                : facturaActual
+                  ? `Factura: ${facturaActual}`
+                  : ""
+            }
+          >
+            {caiInfo &&
+              `${caiInfo.nombre_cajero} | Caja: ${caiInfo.caja_asignada}`}
+            {caiInfo && facturaActual
+              ? ` | Factura: ${facturaActual}`
+              : !caiInfo && facturaActual
                 ? `Factura: ${facturaActual}`
-                : ""
-          }
-        >
-          {caiInfo &&
-            `${caiInfo.nombre_cajero} | Caja: ${caiInfo.caja_asignada}`}
-          {caiInfo && facturaActual
-            ? ` | Factura: ${facturaActual}`
-            : !caiInfo && facturaActual
-              ? `Factura: ${facturaActual}`
-              : ""}
-        </span>
-        {/* Botones de tema y funciones principales en la misma fila */}
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginLeft: 16,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          {/* Los controles de tema ahora están en el Menú central */}
+                : ""}
+          </span>
+          {/* Botones de tema y funciones principales en la misma fila */}
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              marginLeft: 16,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            {/* Los controles de tema ahora están en el Menú central */}
 
-          {/* Botones que requieren apertura registrada */}
-          {aperturaRegistrada && (
-            <>
-              {/* Separador visual */}
-              <div
-                style={{
-                  width: 1,
-                  height: 24,
-                  background:
-                    theme === "lite"
-                      ? "rgba(0,0,0,0.1)"
-                      : "rgba(255,255,255,0.1)",
+            {/* Botones que requieren apertura registrada */}
+            {aperturaRegistrada && (
+              <>
+                {/* Separador visual */}
+                <div
+                  style={{
+                    width: 1,
+                    height: 24,
+                    background:
+                      theme === "lite"
+                        ? "rgba(0,0,0,0.1)"
+                        : "rgba(255,255,255,0.1)",
+                  }}
+                />
+              </>
+            )}
+
+            {/* Botón Aclaraciones - solo visible si hay 1 o más cierres sin aclarar */}
+            {cierresSinAclarar >= 1 && (
+              <button
+                onClick={() => {
+                  if (setView) setView("resultadosCaja");
                 }}
-              />
-            </>
-          )}
-
-          {/* Botón Aclaraciones - solo visible si hay 1 o más cierres sin aclarar */}
-          {cierresSinAclarar >= 1 && (
-            <button
-              onClick={() => {
-                if (setView) setView("resultadosCaja");
-              }}
-              style={{
-                fontSize: 12,
-                padding: "6px 12px",
-                borderRadius: 6,
-                background: "#f57c00",
-                color: "#fff",
-                fontWeight: 600,
-                border: "none",
-                cursor: "pointer",
-                position: "relative",
-              }}
-              title={`Hay ${cierresSinAclarar} cierre(s) sin aclarar este mes`}
-            >
-              📝 Aclaraciones
-              <span
                 style={{
-                  position: "absolute",
-                  top: -6,
-                  right: -6,
-                  background: "#d32f2f",
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  background: "#f57c00",
                   color: "#fff",
-                  borderRadius: "50%",
-                  width: 20,
-                  height: 20,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  position: "relative",
                 }}
+                title={`Hay ${cierresSinAclarar} cierre(s) sin aclarar este mes`}
               >
-                {cierresSinAclarar}
-              </span>
-            </button>
-          )}
+                📝 Aclaraciones
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -6,
+                    right: -6,
+                    background: "#d32f2f",
+                    color: "#fff",
+                    borderRadius: "50%",
+                    width: 20,
+                    height: 20,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  {cierresSinAclarar}
+                </span>
+              </button>
+            )}
 
-          {/* Botones principales: el botón de Cierre ahora está dentro del menú central */}
+            {/* Botones principales: el botón de Cierre ahora está dentro del menú central */}
+          </div>
         </div>
+        {/* fin primera fila */}
+        {/* Segunda fila: conteo de pedidos a domicilio pendientes */}
+        {pedidosPendientesCount > 0 && (
+          <div
+            style={{
+              marginLeft: 12,
+              fontSize: 16,
+              fontWeight: 700,
+              color: "#1239e7",
+              background: "rgba(255, 255, 254, 0.12)",
+              borderRadius: 6,
+              padding: "2px 8px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            📦 Pedidos a domicilio pendientes: {pedidosPendientesCount}
+          </div>
+        )}
         {/* QZ Tray indicators removed */}
       </div>
       {/* Modal de resumen de caja (fuera del header) */}
@@ -2760,7 +2825,11 @@ export default function PuntoDeVentaView({
           // es numérico y nunca miente). Si el contador en cai_facturas está
           // por detrás de la realidad, lo corregimos aquí mismo.
           let facturaResuelta = facturaActual;
-          if (isOnline && usuarioActual?.id && facturaActual !== "Límite alcanzado") {
+          if (
+            isOnline &&
+            usuarioActual?.id &&
+            facturaActual !== "Límite alcanzado"
+          ) {
             try {
               const { data: ultimaFila } = await supabase
                 .from("facturas")
@@ -2790,13 +2859,21 @@ export default function PuntoDeVentaView({
                   try {
                     const caiCache = await obtenerCaiCache();
                     if (caiCache) {
-                      await guardarCaiCache({ ...caiCache, factura_actual: siguiente });
+                      await guardarCaiCache({
+                        ...caiCache,
+                        factura_actual: siguiente,
+                      });
                     }
-                  } catch { /* no crítico */ }
+                  } catch {
+                    /* no crítico */
+                  }
                 }
               }
             } catch (err) {
-              console.error("[facturar] Error al resolver número de factura:", err);
+              console.error(
+                "[facturar] Error al resolver número de factura:",
+                err,
+              );
             }
           }
 
@@ -3490,7 +3567,10 @@ export default function PuntoDeVentaView({
                           console.warn(
                             `⚠ [facturar] Número ${snap.facturaActual} ya tomado. Auto-corrigiendo → ${nuevoNumero}`,
                           );
-                          const ventaCorregida = { ...venta, factura: nuevoNumero };
+                          const ventaCorregida = {
+                            ...venta,
+                            factura: nuevoNumero,
+                          };
                           const { error: retryError } = await supabase
                             .from("facturas")
                             .insert([ventaCorregida]);
@@ -3531,7 +3611,9 @@ export default function PuntoDeVentaView({
                                   factura_actual: siguienteNum,
                                 });
                               }
-                            } catch { /* non-critical */ }
+                            } catch {
+                              /* non-critical */
+                            }
                             console.log(
                               `✓ [facturar] Factura corregida: ${snap.facturaActual} → ${nuevoNumero}. Próxima: ${siguienteNum}`,
                             );
@@ -8111,6 +8193,7 @@ export default function PuntoDeVentaView({
                         const { data, error } = await supabase
                           .from("pedidos_envio")
                           .select("*")
+                          .eq("cajero_id", usuarioActual?.id)
                           .order("id", { ascending: false })
                           .limit(100);
                         if (!error && data) {
@@ -8215,128 +8298,228 @@ export default function PuntoDeVentaView({
       )}
 
       {/* Modal Historial de Ventas */}
-      {showHistorialVentas && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 140000,
-          }}
-          onClick={() => setShowHistorialVentas(false)}
-        >
+      {showHistorialVentas && (() => {
+        // ── Mapa factura → set de tipos de pago ──────────────────────────────
+        const hPagosPorFacturaMap = new Map<string, Set<string>>();
+        historialPagos.forEach((p: any) => {
+          const k = p.factura_venta ? String(p.factura_venta) : p.factura ? String(p.factura) : null;
+          if (!k) return;
+          if (!hPagosPorFacturaMap.has(k)) hPagosPorFacturaMap.set(k, new Set());
+          const t = (p.tipo || "").toLowerCase().trim();
+          if (t) hPagosPorFacturaMap.get(k)!.add(t);
+        });
+
+        // ── Totales por tipo ─────────────────────────────────────────────────
+        const hTotales = { efectivo: 0, tarjeta: 0, transferencia: 0, dolares_lps: 0, dolares_usd: 0, delivery: 0 };
+        historialPagos.forEach((p: any) => {
+          const t = (p.tipo || "").toLowerCase().trim();
+          const m = parseFloat(String(p.monto || 0).replace(/,/g, "")) || 0;
+          if (t === "efectivo") hTotales.efectivo += m;
+          else if (t === "tarjeta") hTotales.tarjeta += m;
+          else if (t === "transferencia" || t === "transferencias") hTotales.transferencia += m;
+          else if (t === "dolares" || t === "dólares") {
+            hTotales.dolares_lps += m;
+            hTotales.dolares_usd += parseFloat(String(p.usd_monto || 0).replace(/,/g, "")) || 0;
+          }
+        });
+        historialVentas.forEach((v: any) => {
+          if ((v.tipo_orden || "").toUpperCase() === "DELIVERY")
+            hTotales.delivery += parseFloat(String(v.total || 0)) || 0;
+        });
+
+        // ── Filtrado ─────────────────────────────────────────────────────────
+        const hFiltradas =
+          historialFiltroTipo === null
+            ? historialVentas
+            : historialFiltroTipo === "delivery"
+              ? historialVentas.filter((v: any) => (v.tipo_orden || "").toUpperCase() === "DELIVERY")
+              : historialVentas.filter((v: any) => {
+                  const tipos = hPagosPorFacturaMap.get(String(v.factura || ""));
+                  if (!tipos) return false;
+                  if (historialFiltroTipo === "transferencia") return tipos.has("transferencia") || tipos.has("transferencias");
+                  if (historialFiltroTipo === "dolares") return tipos.has("dolares") || tipos.has("dólares");
+                  return tipos.has(historialFiltroTipo);
+                });
+
+        const tipoIconos: Record<string, { icon: string; color: string }> = {
+          efectivo:      { icon: "💵", color: "#10b981" },
+          tarjeta:       { icon: "💳", color: "#3b82f6" },
+          transferencia: { icon: "🏦", color: "#8b5cf6" },
+          transferencias:{ icon: "🏦", color: "#8b5cf6" },
+          dolares:       { icon: "💱", color: "#f59e0b" },
+          "dólares":     { icon: "💱", color: "#f59e0b" },
+        };
+
+        const fmt = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 2 });
+
+        return (
           <div
-            onClick={(e) => e.stopPropagation()}
             style={{
-              background: "#fff",
-              color: "#111",
-              borderRadius: 12,
-              padding: 20,
-              width: "90%",
-              maxWidth: 1000,
-              maxHeight: "85vh",
-              overflow: "auto",
+              position: "fixed",
+              top: 0,
+              left: 0,
+              width: "100vw",
+              height: "100vh",
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 140000,
             }}
+            onClick={() => setShowHistorialVentas(false)}
           >
             <div
+              onClick={(e) => e.stopPropagation()}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 12,
+                background: "#fff",
+                color: "#111",
+                borderRadius: 12,
+                padding: 20,
+                width: "90%",
+                maxWidth: 1050,
+                maxHeight: "90vh",
+                overflow: "auto",
               }}
             >
-              <h3 style={{ margin: 0 }}>Historial de ventas (turno)</h3>
-              <button
-                onClick={() => setShowHistorialVentas(false)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  fontSize: 18,
-                  cursor: "pointer",
-                }}
-              >
-                ✕
-              </button>
+              {/* Encabezado */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>
+                  📋 Historial de ventas (turno)
+                  {historialFiltroTipo && (
+                    <span style={{ marginLeft: 8, fontSize: "0.8rem", fontWeight: 500, color: "#64748b" }}>
+                      — {hFiltradas.length} resultado{hFiltradas.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </h3>
+                <button
+                  onClick={() => setShowHistorialVentas(false)}
+                  style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer" }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Botones filtro por tipo de pago */}
+              {!historialLoading && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingBottom: 10, borderBottom: "1px solid #e2e8f0", marginBottom: 12 }}>
+                  {([
+                    { key: null,            label: "Todas",         icon: "🔄", color: "#64748b", totalTxt: `${historialVentas.length} fact.` },
+                    { key: "efectivo",      label: "Efectivo",      icon: "💵", color: "#10b981", totalTxt: `L ${fmt(hTotales.efectivo)}` },
+                    { key: "tarjeta",       label: "Tarjeta",       icon: "💳", color: "#3b82f6", totalTxt: `L ${fmt(hTotales.tarjeta)}` },
+                    { key: "transferencia", label: "Transferencia", icon: "🏦", color: "#8b5cf6", totalTxt: `L ${fmt(hTotales.transferencia)}` },
+                    { key: "dolares",       label: "Dólares",       icon: "💱", color: "#f59e0b", totalTxt: `L ${fmt(hTotales.dolares_lps)}` },
+                    { key: "delivery",      label: "Delivery",      icon: "🛵", color: "#f43f5e", totalTxt: `L ${fmt(hTotales.delivery)}` },
+                  ] as const).map(({ key, label, icon, color, totalTxt }) => {
+                    const isActive = historialFiltroTipo === key;
+                    return (
+                      <button
+                        key={String(key)}
+                        onClick={() => setHistorialFiltroTipo(key as string | null)}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: 1,
+                          padding: "5px 12px",
+                          border: `2px solid ${isActive ? color : "#e2e8f0"}`,
+                          borderRadius: 20,
+                          background: isActive ? color : "transparent",
+                          color: isActive ? "#fff" : color,
+                          cursor: "pointer",
+                          fontWeight: isActive ? 700 : 500,
+                          fontSize: "0.74rem",
+                          lineHeight: 1.3,
+                          transition: "all 0.18s",
+                          minWidth: 80,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <span style={{ fontSize: "0.9rem" }}>{icon} {label}</span>
+                        <span style={{ fontSize: "0.68rem", opacity: 0.85 }}>{totalTxt}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Tabla */}
+              {historialLoading ? (
+                <div style={{ padding: 20, textAlign: "center" }}>Cargando...</div>
+              ) : hFiltradas.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "#888" }}>Sin resultados para este filtro.</div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0", background: "#f8fafc" }}>
+                        <th style={{ padding: 8 }}>Hora</th>
+                        <th style={{ padding: 8 }}>Factura</th>
+                        <th style={{ padding: 8 }}>Cliente</th>
+                        <th style={{ padding: 8 }}>Tipo Pago</th>
+                        <th style={{ padding: 8 }}>Monto</th>
+                        <th style={{ padding: 8 }}>Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hFiltradas.map((venta) => {
+                        const tiposVenta = hPagosPorFacturaMap.get(String(venta.factura || ""));
+                        const esDelivery = (venta.tipo_orden || "").toUpperCase() === "DELIVERY";
+                        return (
+                          <tr key={venta.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                            <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                              {new Date(venta.fecha_hora).toLocaleTimeString("es-HN")}
+                            </td>
+                            <td style={{ padding: 8 }}>{venta.factura}</td>
+                            <td style={{ padding: 8 }}>{venta.cliente || "—"}</td>
+                            <td style={{ padding: 8 }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {esDelivery && (
+                                  <span style={{ background: "#fef2f2", color: "#f43f5e", border: "1px solid #fecdd3", borderRadius: 10, padding: "1px 7px", fontSize: "0.68rem", fontWeight: 600 }}>
+                                    🛵 Delivery
+                                  </span>
+                                )}
+                                {tiposVenta && Array.from(tiposVenta).map((t) => {
+                                  const ti = tipoIconos[t];
+                                  if (!ti) return null;
+                                  const lbl = t === "transferencia" || t === "transferencias" ? "Transf."
+                                    : t === "dolares" || t === "dólares" ? "Dólares"
+                                    : t.charAt(0).toUpperCase() + t.slice(1);
+                                  return (
+                                    <span key={t} style={{ background: ti.color + "18", color: ti.color, border: `1px solid ${ti.color}44`, borderRadius: 10, padding: "1px 7px", fontSize: "0.68rem", fontWeight: 600 }}>
+                                      {ti.icon} {lbl}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                            <td style={{ padding: 8, fontWeight: 600, color: "#16a34a" }}>
+                              L {Number(venta.total || 0).toFixed(2)}
+                            </td>
+                            <td style={{ padding: 8 }}>
+                              <button
+                                onClick={() => imprimirFacturaHistorial(venta)}
+                                style={{ marginRight: 6, padding: "5px 10px", borderRadius: 8, border: "none", background: "#1976d2", color: "#fff", cursor: "pointer", fontSize: "0.78rem" }}
+                              >
+                                🖨️ Factura
+                              </button>
+                              <button
+                                onClick={() => { setSelectedVentaForComanda(venta); setShowTipoOrdenModal(true); }}
+                                style={{ padding: "5px 10px", borderRadius: 8, border: "none", background: "#6a1b9a", color: "#fff", cursor: "pointer", fontSize: "0.78rem" }}
+                              >
+                                🖨️ Comanda
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            {historialLoading ? (
-              <div>Cargando...</div>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr
-                    style={{
-                      textAlign: "left",
-                      borderBottom: "1px solid #ddd",
-                    }}
-                  >
-                    <th style={{ padding: 8 }}>Hora</th>
-                    <th style={{ padding: 8 }}>Factura</th>
-                    <th style={{ padding: 8 }}>Cliente</th>
-                    <th style={{ padding: 8 }}>Monto</th>
-                    <th style={{ padding: 8 }}>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historialVentas.map((venta) => (
-                    <tr
-                      key={venta.id}
-                      style={{ borderBottom: "1px solid #f0f0f0" }}
-                    >
-                      <td style={{ padding: 8 }}>
-                        {new Date(venta.fecha_hora).toLocaleTimeString("es-HN")}
-                      </td>
-                      <td style={{ padding: 8 }}>{venta.factura}</td>
-                      <td style={{ padding: 8 }}>{venta.cliente}</td>
-                      <td style={{ padding: 8 }}>
-                        {Number(venta.total || 0).toFixed(2)}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <button
-                          onClick={() => imprimirFacturaHistorial(venta)}
-                          style={{
-                            marginRight: 8,
-                            padding: "6px 10px",
-                            borderRadius: 8,
-                            border: "none",
-                            background: "#1976d2",
-                            color: "#fff",
-                            cursor: "pointer",
-                          }}
-                        >
-                          Imprimir factura
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedVentaForComanda(venta);
-                            setShowTipoOrdenModal(true);
-                          }}
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: 8,
-                            border: "none",
-                            background: "#6a1b9a",
-                            color: "#fff",
-                            cursor: "pointer",
-                          }}
-                        >
-                          Imprimir comanda
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Modal Historial de Facturas de Crédito */}
       {showHistorialCreditos && (

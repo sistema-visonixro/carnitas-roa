@@ -79,8 +79,8 @@ const ICONOS: Record<string, string> = {
 export default function GananciasNetasView({
   onBack,
 }: GananciasNetasViewProps) {
-  const [desde, setDesde] = useState(inicioMes());
-  const [hasta, setHasta] = useState(hoy());
+  const [desde, setDesde] = useState(inicioMes() + "T00:00");
+  const [hasta, setHasta] = useState(hoy() + "T23:59");
   const [loading, setLoading] = useState(false);
   const [calculado, setCalculado] = useState(false);
   const [error, setError] = useState("");
@@ -106,8 +106,8 @@ export default function GananciasNetasView({
     setCalculado(false);
 
     try {
-      const desdeStr = `${desde} 00:00:00`;
-      const hastaStr = `${hasta} 23:59:59`;
+      const desdeStr = desde.replace("T", " ") + ":00";
+      const hastaStr = hasta.replace("T", " ") + ":59";
 
       // ── 1. Cargar facturas del rango ──────────────────────────────
       let todasFacturas: any[] = [];
@@ -602,7 +602,7 @@ export default function GananciasNetasView({
           <div className="gn-field">
             <span className="gn-label">Desde</span>
             <input
-              type="date"
+              type="datetime-local"
               className="gn-input"
               value={desde}
               onChange={(e) => setDesde(e.target.value)}
@@ -611,7 +611,7 @@ export default function GananciasNetasView({
           <div className="gn-field">
             <span className="gn-label">Hasta</span>
             <input
-              type="date"
+              type="datetime-local"
               className="gn-input"
               value={hasta}
               onChange={(e) => setHasta(e.target.value)}
@@ -621,8 +621,8 @@ export default function GananciasNetasView({
             <button
               onClick={() => {
                 const h = hoy();
-                setDesde(h);
-                setHasta(h);
+                setDesde(h + "T00:00");
+                setHasta(h + "T23:59");
               }}
             >
               Hoy
@@ -632,16 +632,16 @@ export default function GananciasNetasView({
                 const d = new Date();
                 const lun = new Date(d);
                 lun.setDate(d.getDate() - d.getDay() + 1);
-                setDesde(lun.toISOString().split("T")[0]);
-                setHasta(hoy());
+                setDesde(lun.toISOString().split("T")[0] + "T00:00");
+                setHasta(hoy() + "T23:59");
               }}
             >
               Esta semana
             </button>
             <button
               onClick={() => {
-                setDesde(inicioMes());
-                setHasta(hoy());
+                setDesde(inicioMes() + "T00:00");
+                setHasta(hoy() + "T23:59");
               }}
             >
               Este mes
@@ -654,8 +654,8 @@ export default function GananciasNetasView({
                   d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear();
                 const ini = `${anio}-${String(mes + 1).padStart(2, "0")}-01`;
                 const fin = new Date(anio, mes + 1, 0);
-                setDesde(ini);
-                setHasta(fin.toISOString().split("T")[0]);
+                setDesde(ini + "T00:00");
+                setHasta(fin.toISOString().split("T")[0] + "T23:59");
               }}
             >
               Mes anterior

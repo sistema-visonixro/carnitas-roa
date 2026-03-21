@@ -555,12 +555,10 @@ export async function sincronizarFacturas(): Promise<{
       // Preparar datos para insertar (sin campos de IndexedDB)
       const { id, timestamp, intentos, sync_status, ...facturaData } = factura;
 
-      const { error } = await supabase
-        .from("facturas")
-        .upsert([facturaData], {
-          onConflict: "operation_id",
-          ignoreDuplicates: true,
-        });
+      const { error } = await supabase.from("facturas").upsert([facturaData], {
+        onConflict: "operation_id",
+        ignoreDuplicates: true,
+      });
 
       if (error) {
         if (error.code === "23505") {
@@ -638,12 +636,18 @@ export async function sincronizarFacturas(): Promise<{
                 );
                 exitosas++;
               } else {
-                console.error(`[sync] Reintento con número corregido también falló:`, retryError);
+                console.error(
+                  `[sync] Reintento con número corregido también falló:`,
+                  retryError,
+                );
                 await incrementarIntentosFactura(factura.id!);
                 fallidas++;
               }
             } catch (corrErr) {
-              console.error("[sync] Error al auto-corregir número de factura:", corrErr);
+              console.error(
+                "[sync] Error al auto-corregir número de factura:",
+                corrErr,
+              );
               await incrementarIntentosFactura(factura.id!);
               fallidas++;
             }
@@ -699,12 +703,10 @@ export async function sincronizarPagos(): Promise<{
       // Preparar datos para insertar (sin campos de IndexedDB)
       const { id, timestamp, intentos, ...pagoData } = pago;
 
-      const { error } = await supabase
-        .from("pagos")
-        .upsert([pagoData], {
-          onConflict: "operation_id",
-          ignoreDuplicates: true,
-        });
+      const { error } = await supabase.from("pagos").upsert([pagoData], {
+        onConflict: "operation_id",
+        ignoreDuplicates: true,
+      });
 
       if (error) {
         // Código 23505 = violación de UNIQUE: registro duplicado
