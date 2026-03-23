@@ -85,6 +85,8 @@ export default function RegistroCierreView({
         tarjetaDia: 0,
         transferenciasDia: 0,
         dolaresDia: 0,
+        platillosDia: 0,
+        bebidasDia: 0,
       };
     }
 
@@ -201,6 +203,58 @@ export default function RegistroCierreView({
       : 0;
     console.debug("dolaresDia computed (suma usd_monto):", dolaresDia);
 
+    // Contar platillos (comidas) y bebidas vendidas en el turno
+    let platillosDia = 0;
+    let bebidasDia = 0;
+    try {
+      const facturasQuery = cajeroFilterIsId
+        ? supabase
+            .from("facturas")
+            .select("productos, factura")
+            .eq("cajero_id", usuarioActual.id)
+            .gte("fecha_hora", desde)
+            .lte("fecha_hora", hasta)
+        : supabase
+            .from("facturas")
+            .select("productos, factura")
+            .eq("cajero", usuarioActual?.nombre)
+            .gte("fecha_hora", desde)
+            .lte("fecha_hora", hasta);
+      const { data: facturasData } = await facturasQuery;
+      if (facturasData && Array.isArray(facturasData)) {
+        const facturasVistas = new Set<string>();
+        for (const fac of facturasData) {
+          try {
+            const numFac = String(fac.factura || "");
+            const esDevolucion =
+              typeof fac.factura === "string" && fac.factura.startsWith("DEV-");
+            if (!esDevolucion) {
+              if (facturasVistas.has(numFac)) continue;
+              facturasVistas.add(numFac);
+            }
+            const items =
+              typeof fac.productos === "string"
+                ? JSON.parse(fac.productos)
+                : fac.productos;
+            if (Array.isArray(items)) {
+              for (const item of items) {
+                const qty = parseFloat(item.cantidad || 1);
+                if (item.tipo === "comida") {
+                  platillosDia += esDevolucion ? -qty : qty;
+                } else if (item.tipo === "bebida") {
+                  bebidasDia += esDevolucion ? -qty : qty;
+                }
+              }
+            }
+          } catch (_) {
+            /* ignorar error de parse */
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("No se pudieron contar platillos/bebidas:", e);
+    }
+
     // Actualizar estados del resumen
     setEfectivoSistema(efectivoDiaNet);
     setTarjetaSistema(tarjetaDia);
@@ -214,10 +268,17 @@ export default function RegistroCierreView({
       transferenciasDia,
       dolaresDia,
       gastosDia,
+      platillosDia,
+      bebidasDia,
     };
   }
 
-  const printCierreReport = (registro: any, gastosDia: number) => {
+  const printCierreReport = (
+    registro: any,
+    gastosDia: number,
+    platillosDia = 0,
+    bebidasDia = 0,
+  ) => {
     const logoUrl = datosNegocio.logo_url || "/favicon.ico";
     const img = new Image();
     img.src = logoUrl;
@@ -263,6 +324,16 @@ export default function RegistroCierreView({
               <div><strong>Caja:</strong> ${registro.caja}</div>
             </div>
 
+            <div class="divider"></div>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">RESUMEN DE VENTAS</div>
+            <div class="row">
+              <span>Platillos Vendidos:</span>
+              <span>${Math.round(platillosDia)}</span>
+            </div>
+            <div class="row">
+              <span>Bebidas Vendidas:</span>
+              <span>${Math.round(bebidasDia)}</span>
+            </div>
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
             
@@ -389,6 +460,8 @@ export default function RegistroCierreView({
         transferenciasDia,
         dolaresDia,
         gastosDia,
+        platillosDia,
+        bebidasDia,
       } = await obtenerValoresAutomaticos();
 
       // dolares_registrado: el cajero ingresa directamente el valor en USD
@@ -544,7 +617,12 @@ export default function RegistroCierreView({
       } else {
         // Imprimir reporte si es CIERRE
         if (registro.tipo_registro === "cierre") {
-          printCierreReport({ ...registro, id: registroId }, gastosDia || 0);
+          printCierreReport(
+            { ...registro, id: registroId },
+            gastosDia || 0,
+            platillosDia || 0,
+            bebidasDia || 0,
+          );
         }
 
         // Enviar datos al script de Google (fire-and-forget)

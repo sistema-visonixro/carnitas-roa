@@ -109,6 +109,8 @@ export default function PuntoDeVentaView({
     dolares_convertidos?: number;
     tasa_dolar?: number;
     gastos: number;
+    platillos?: number;
+    bebidas?: number;
   } | null>(null);
 
   // Estados para historial de ventas del turno
@@ -116,7 +118,9 @@ export default function PuntoDeVentaView({
   const [historialVentas, setHistorialVentas] = useState<any[]>([]);
   const [historialLoading, setHistorialLoading] = useState(false);
   const [historialPagos, setHistorialPagos] = useState<any[]>([]);
-  const [historialFiltroTipo, setHistorialFiltroTipo] = useState<string | null>(null);
+  const [historialFiltroTipo, setHistorialFiltroTipo] = useState<string | null>(
+    null,
+  );
   // Estados para historial de facturas de crédito del turno
   const [showHistorialCreditos, setShowHistorialCreditos] = useState(false);
   const [historialCreditos, setHistorialCreditos] = useState<any[]>([]);
@@ -465,6 +469,50 @@ export default function PuntoDeVentaView({
         })(),
       ]);
 
+      // Contar platillos y bebidas del turno desde facturas
+      let platillosSum = 0;
+      let bebidasSum = 0;
+      try {
+        const { data: facturasResumen } = await supabase
+          .from("facturas")
+          .select("productos, factura")
+          .eq("cajero_id", usuarioActual?.id)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", end);
+        if (facturasResumen && Array.isArray(facturasResumen)) {
+          const facturasVistas = new Set<string>();
+          for (const fac of facturasResumen) {
+            try {
+              const numFac = String(fac.factura || "");
+              const esDevolucion =
+                typeof fac.factura === "string" &&
+                fac.factura.startsWith("DEV-");
+              // Para devoluciones: siempre procesar (restan)
+              // Para ventas normales: saltar si ya se contó este número de factura
+              if (!esDevolucion) {
+                if (facturasVistas.has(numFac)) continue;
+                facturasVistas.add(numFac);
+              }
+              const items =
+                typeof fac.productos === "string"
+                  ? JSON.parse(fac.productos)
+                  : fac.productos;
+              if (Array.isArray(items)) {
+                for (const item of items) {
+                  const qty = parseFloat(item.cantidad || 1);
+                  if (item.tipo === "comida")
+                    platillosSum += esDevolucion ? -qty : qty;
+                  else if (item.tipo === "bebida")
+                    bebidasSum += esDevolucion ? -qty : qty;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("No se pudieron contar platillos/bebidas:", e);
+      }
+
       console.log("Resultados consultas:", {
         efectivo: {
           data: pagosEfectivo,
@@ -550,6 +598,8 @@ export default function PuntoDeVentaView({
         dolares_convertidos: dolaresConvertidos,
         tasa_dolar: tasa,
         gastos: gastosSum,
+        platillos: platillosSum,
+        bebidas: bebidasSum,
       });
     } catch (err) {
       console.error("Error al obtener resumen de caja:", err);
@@ -2616,6 +2666,21 @@ export default function PuntoDeVentaView({
               <div style={{ padding: 12 }}>Cargando...</div>
             ) : resumenData ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div>
+                  <strong>PLATILLOS VENDIDOS:</strong>{" "}
+                  {Math.round(resumenData.platillos ?? 0)}
+                </div>
+                <div>
+                  <strong>BEBIDAS VENDIDAS:</strong>{" "}
+                  {Math.round(resumenData.bebidas ?? 0)}
+                </div>
+                <div
+                  style={{
+                    borderTop: "1px dashed #aaa",
+                    marginTop: 4,
+                    paddingTop: 4,
+                  }}
+                />
                 <div>
                   <strong>EFECTIVO(LPS):</strong>{" "}
                   {(resumenData.efectivo - resumenData.gastos).toFixed(2)}
@@ -8298,228 +8363,413 @@ export default function PuntoDeVentaView({
       )}
 
       {/* Modal Historial de Ventas */}
-      {showHistorialVentas && (() => {
-        // ── Mapa factura → set de tipos de pago ──────────────────────────────
-        const hPagosPorFacturaMap = new Map<string, Set<string>>();
-        historialPagos.forEach((p: any) => {
-          const k = p.factura_venta ? String(p.factura_venta) : p.factura ? String(p.factura) : null;
-          if (!k) return;
-          if (!hPagosPorFacturaMap.has(k)) hPagosPorFacturaMap.set(k, new Set());
-          const t = (p.tipo || "").toLowerCase().trim();
-          if (t) hPagosPorFacturaMap.get(k)!.add(t);
-        });
+      {showHistorialVentas &&
+        (() => {
+          // ── Mapa factura → set de tipos de pago ──────────────────────────────
+          const hPagosPorFacturaMap = new Map<string, Set<string>>();
+          historialPagos.forEach((p: any) => {
+            const k = p.factura_venta
+              ? String(p.factura_venta)
+              : p.factura
+                ? String(p.factura)
+                : null;
+            if (!k) return;
+            if (!hPagosPorFacturaMap.has(k))
+              hPagosPorFacturaMap.set(k, new Set());
+            const t = (p.tipo || "").toLowerCase().trim();
+            if (t) hPagosPorFacturaMap.get(k)!.add(t);
+          });
 
-        // ── Totales por tipo ─────────────────────────────────────────────────
-        const hTotales = { efectivo: 0, tarjeta: 0, transferencia: 0, dolares_lps: 0, dolares_usd: 0, delivery: 0 };
-        historialPagos.forEach((p: any) => {
-          const t = (p.tipo || "").toLowerCase().trim();
-          const m = parseFloat(String(p.monto || 0).replace(/,/g, "")) || 0;
-          if (t === "efectivo") hTotales.efectivo += m;
-          else if (t === "tarjeta") hTotales.tarjeta += m;
-          else if (t === "transferencia" || t === "transferencias") hTotales.transferencia += m;
-          else if (t === "dolares" || t === "dólares") {
-            hTotales.dolares_lps += m;
-            hTotales.dolares_usd += parseFloat(String(p.usd_monto || 0).replace(/,/g, "")) || 0;
-          }
-        });
-        historialVentas.forEach((v: any) => {
-          if ((v.tipo_orden || "").toUpperCase() === "DELIVERY")
-            hTotales.delivery += parseFloat(String(v.total || 0)) || 0;
-        });
+          // ── Totales por tipo ─────────────────────────────────────────────────
+          const hTotales = {
+            efectivo: 0,
+            tarjeta: 0,
+            transferencia: 0,
+            dolares_lps: 0,
+            dolares_usd: 0,
+            delivery: 0,
+          };
+          historialPagos.forEach((p: any) => {
+            const t = (p.tipo || "").toLowerCase().trim();
+            const m = parseFloat(String(p.monto || 0).replace(/,/g, "")) || 0;
+            if (t === "efectivo") hTotales.efectivo += m;
+            else if (t === "tarjeta") hTotales.tarjeta += m;
+            else if (t === "transferencia" || t === "transferencias")
+              hTotales.transferencia += m;
+            else if (t === "dolares" || t === "dólares") {
+              hTotales.dolares_lps += m;
+              hTotales.dolares_usd +=
+                parseFloat(String(p.usd_monto || 0).replace(/,/g, "")) || 0;
+            }
+          });
+          historialVentas.forEach((v: any) => {
+            if ((v.tipo_orden || "").toUpperCase() === "DELIVERY")
+              hTotales.delivery += parseFloat(String(v.total || 0)) || 0;
+          });
 
-        // ── Filtrado ─────────────────────────────────────────────────────────
-        const hFiltradas =
-          historialFiltroTipo === null
-            ? historialVentas
-            : historialFiltroTipo === "delivery"
-              ? historialVentas.filter((v: any) => (v.tipo_orden || "").toUpperCase() === "DELIVERY")
-              : historialVentas.filter((v: any) => {
-                  const tipos = hPagosPorFacturaMap.get(String(v.factura || ""));
-                  if (!tipos) return false;
-                  if (historialFiltroTipo === "transferencia") return tipos.has("transferencia") || tipos.has("transferencias");
-                  if (historialFiltroTipo === "dolares") return tipos.has("dolares") || tipos.has("dólares");
-                  return tipos.has(historialFiltroTipo);
-                });
+          // ── Filtrado ─────────────────────────────────────────────────────────
+          const hFiltradas =
+            historialFiltroTipo === null
+              ? historialVentas
+              : historialFiltroTipo === "delivery"
+                ? historialVentas.filter(
+                    (v: any) =>
+                      (v.tipo_orden || "").toUpperCase() === "DELIVERY",
+                  )
+                : historialVentas.filter((v: any) => {
+                    const tipos = hPagosPorFacturaMap.get(
+                      String(v.factura || ""),
+                    );
+                    if (!tipos) return false;
+                    if (historialFiltroTipo === "transferencia")
+                      return (
+                        tipos.has("transferencia") ||
+                        tipos.has("transferencias")
+                      );
+                    if (historialFiltroTipo === "dolares")
+                      return tipos.has("dolares") || tipos.has("dólares");
+                    return tipos.has(historialFiltroTipo);
+                  });
 
-        const tipoIconos: Record<string, { icon: string; color: string }> = {
-          efectivo:      { icon: "💵", color: "#10b981" },
-          tarjeta:       { icon: "💳", color: "#3b82f6" },
-          transferencia: { icon: "🏦", color: "#8b5cf6" },
-          transferencias:{ icon: "🏦", color: "#8b5cf6" },
-          dolares:       { icon: "💱", color: "#f59e0b" },
-          "dólares":     { icon: "💱", color: "#f59e0b" },
-        };
+          const tipoIconos: Record<string, { icon: string; color: string }> = {
+            efectivo: { icon: "💵", color: "#10b981" },
+            tarjeta: { icon: "💳", color: "#3b82f6" },
+            transferencia: { icon: "🏦", color: "#8b5cf6" },
+            transferencias: { icon: "🏦", color: "#8b5cf6" },
+            dolares: { icon: "💱", color: "#f59e0b" },
+            dólares: { icon: "💱", color: "#f59e0b" },
+          };
 
-        const fmt = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 2 });
+          const fmt = (n: number) =>
+            n.toLocaleString("de-DE", { minimumFractionDigits: 2 });
 
-        return (
-          <div
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              width: "100vw",
-              height: "100vh",
-              background: "rgba(0,0,0,0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 140000,
-            }}
-            onClick={() => setShowHistorialVentas(false)}
-          >
+          return (
             <div
-              onClick={(e) => e.stopPropagation()}
               style={{
-                background: "#fff",
-                color: "#111",
-                borderRadius: 12,
-                padding: 20,
-                width: "90%",
-                maxWidth: 1050,
-                maxHeight: "90vh",
-                overflow: "auto",
+                position: "fixed",
+                top: 0,
+                left: 0,
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0,0,0,0.5)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 140000,
               }}
+              onClick={() => setShowHistorialVentas(false)}
             >
-              {/* Encabezado */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>
-                  📋 Historial de ventas (turno)
-                  {historialFiltroTipo && (
-                    <span style={{ marginLeft: 8, fontSize: "0.8rem", fontWeight: 500, color: "#64748b" }}>
-                      — {hFiltradas.length} resultado{hFiltradas.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </h3>
-                <button
-                  onClick={() => setShowHistorialVentas(false)}
-                  style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer" }}
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  background: "#fff",
+                  color: "#111",
+                  borderRadius: 12,
+                  padding: 20,
+                  width: "90%",
+                  maxWidth: 1050,
+                  maxHeight: "90vh",
+                  overflow: "auto",
+                }}
+              >
+                {/* Encabezado */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
                 >
-                  ✕
-                </button>
-              </div>
-
-              {/* Botones filtro por tipo de pago */}
-              {!historialLoading && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingBottom: 10, borderBottom: "1px solid #e2e8f0", marginBottom: 12 }}>
-                  {([
-                    { key: null,            label: "Todas",         icon: "🔄", color: "#64748b", totalTxt: `${historialVentas.length} fact.` },
-                    { key: "efectivo",      label: "Efectivo",      icon: "💵", color: "#10b981", totalTxt: `L ${fmt(hTotales.efectivo)}` },
-                    { key: "tarjeta",       label: "Tarjeta",       icon: "💳", color: "#3b82f6", totalTxt: `L ${fmt(hTotales.tarjeta)}` },
-                    { key: "transferencia", label: "Transferencia", icon: "🏦", color: "#8b5cf6", totalTxt: `L ${fmt(hTotales.transferencia)}` },
-                    { key: "dolares",       label: "Dólares",       icon: "💱", color: "#f59e0b", totalTxt: `L ${fmt(hTotales.dolares_lps)}` },
-                    { key: "delivery",      label: "Delivery",      icon: "🛵", color: "#f43f5e", totalTxt: `L ${fmt(hTotales.delivery)}` },
-                  ] as const).map(({ key, label, icon, color, totalTxt }) => {
-                    const isActive = historialFiltroTipo === key;
-                    return (
-                      <button
-                        key={String(key)}
-                        onClick={() => setHistorialFiltroTipo(key as string | null)}
+                  <h3 style={{ margin: 0 }}>
+                    📋 Historial de ventas (turno)
+                    {historialFiltroTipo && (
+                      <span
                         style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 1,
-                          padding: "5px 12px",
-                          border: `2px solid ${isActive ? color : "#e2e8f0"}`,
-                          borderRadius: 20,
-                          background: isActive ? color : "transparent",
-                          color: isActive ? "#fff" : color,
-                          cursor: "pointer",
-                          fontWeight: isActive ? 700 : 500,
-                          fontSize: "0.74rem",
-                          lineHeight: 1.3,
-                          transition: "all 0.18s",
-                          minWidth: 80,
-                          whiteSpace: "nowrap",
+                          marginLeft: 8,
+                          fontSize: "0.8rem",
+                          fontWeight: 500,
+                          color: "#64748b",
                         }}
                       >
-                        <span style={{ fontSize: "0.9rem" }}>{icon} {label}</span>
-                        <span style={{ fontSize: "0.68rem", opacity: 0.85 }}>{totalTxt}</span>
-                      </button>
-                    );
-                  })}
+                        — {hFiltradas.length} resultado
+                        {hFiltradas.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </h3>
+                  <button
+                    onClick={() => setShowHistorialVentas(false)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      fontSize: 18,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✕
+                  </button>
                 </div>
-              )}
 
-              {/* Tabla */}
-              {historialLoading ? (
-                <div style={{ padding: 20, textAlign: "center" }}>Cargando...</div>
-              ) : hFiltradas.length === 0 ? (
-                <div style={{ padding: 20, textAlign: "center", color: "#888" }}>Sin resultados para este filtro.</div>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0", background: "#f8fafc" }}>
-                        <th style={{ padding: 8 }}>Hora</th>
-                        <th style={{ padding: 8 }}>Factura</th>
-                        <th style={{ padding: 8 }}>Cliente</th>
-                        <th style={{ padding: 8 }}>Tipo Pago</th>
-                        <th style={{ padding: 8 }}>Monto</th>
-                        <th style={{ padding: 8 }}>Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hFiltradas.map((venta) => {
-                        const tiposVenta = hPagosPorFacturaMap.get(String(venta.factura || ""));
-                        const esDelivery = (venta.tipo_orden || "").toUpperCase() === "DELIVERY";
-                        return (
-                          <tr key={venta.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                            <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                              {new Date(venta.fecha_hora).toLocaleTimeString("es-HN")}
-                            </td>
-                            <td style={{ padding: 8 }}>{venta.factura}</td>
-                            <td style={{ padding: 8 }}>{venta.cliente || "—"}</td>
-                            <td style={{ padding: 8 }}>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                                {esDelivery && (
-                                  <span style={{ background: "#fef2f2", color: "#f43f5e", border: "1px solid #fecdd3", borderRadius: 10, padding: "1px 7px", fontSize: "0.68rem", fontWeight: 600 }}>
-                                    🛵 Delivery
-                                  </span>
+                {/* Botones filtro por tipo de pago */}
+                {!historialLoading && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      paddingBottom: 10,
+                      borderBottom: "1px solid #e2e8f0",
+                      marginBottom: 12,
+                    }}
+                  >
+                    {(
+                      [
+                        {
+                          key: null,
+                          label: "Todas",
+                          icon: "🔄",
+                          color: "#64748b",
+                          totalTxt: `${historialVentas.length} fact.`,
+                        },
+                        {
+                          key: "efectivo",
+                          label: "Efectivo",
+                          icon: "💵",
+                          color: "#10b981",
+                          totalTxt: `L ${fmt(hTotales.efectivo)}`,
+                        },
+                        {
+                          key: "tarjeta",
+                          label: "Tarjeta",
+                          icon: "💳",
+                          color: "#3b82f6",
+                          totalTxt: `L ${fmt(hTotales.tarjeta)}`,
+                        },
+                        {
+                          key: "transferencia",
+                          label: "Transferencia",
+                          icon: "🏦",
+                          color: "#8b5cf6",
+                          totalTxt: `L ${fmt(hTotales.transferencia)}`,
+                        },
+                        {
+                          key: "dolares",
+                          label: "Dólares",
+                          icon: "💱",
+                          color: "#f59e0b",
+                          totalTxt: `L ${fmt(hTotales.dolares_lps)}`,
+                        },
+                        {
+                          key: "delivery",
+                          label: "Delivery",
+                          icon: "🛵",
+                          color: "#f43f5e",
+                          totalTxt: `L ${fmt(hTotales.delivery)}`,
+                        },
+                      ] as const
+                    ).map(({ key, label, icon, color, totalTxt }) => {
+                      const isActive = historialFiltroTipo === key;
+                      return (
+                        <button
+                          key={String(key)}
+                          onClick={() =>
+                            setHistorialFiltroTipo(key as string | null)
+                          }
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            gap: 1,
+                            padding: "5px 12px",
+                            border: `2px solid ${isActive ? color : "#e2e8f0"}`,
+                            borderRadius: 20,
+                            background: isActive ? color : "transparent",
+                            color: isActive ? "#fff" : color,
+                            cursor: "pointer",
+                            fontWeight: isActive ? 700 : 500,
+                            fontSize: "0.74rem",
+                            lineHeight: 1.3,
+                            transition: "all 0.18s",
+                            minWidth: 80,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <span style={{ fontSize: "0.9rem" }}>
+                            {icon} {label}
+                          </span>
+                          <span style={{ fontSize: "0.68rem", opacity: 0.85 }}>
+                            {totalTxt}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Tabla */}
+                {historialLoading ? (
+                  <div style={{ padding: 20, textAlign: "center" }}>
+                    Cargando...
+                  </div>
+                ) : hFiltradas.length === 0 ? (
+                  <div
+                    style={{ padding: 20, textAlign: "center", color: "#888" }}
+                  >
+                    Sin resultados para este filtro.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table
+                      style={{ width: "100%", borderCollapse: "collapse" }}
+                    >
+                      <thead>
+                        <tr
+                          style={{
+                            textAlign: "left",
+                            borderBottom: "2px solid #e2e8f0",
+                            background: "#f8fafc",
+                          }}
+                        >
+                          <th style={{ padding: 8 }}>Hora</th>
+                          <th style={{ padding: 8 }}>Factura</th>
+                          <th style={{ padding: 8 }}>Cliente</th>
+                          <th style={{ padding: 8 }}>Tipo Pago</th>
+                          <th style={{ padding: 8 }}>Monto</th>
+                          <th style={{ padding: 8 }}>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hFiltradas.map((venta) => {
+                          const tiposVenta = hPagosPorFacturaMap.get(
+                            String(venta.factura || ""),
+                          );
+                          const esDelivery =
+                            (venta.tipo_orden || "").toUpperCase() ===
+                            "DELIVERY";
+                          return (
+                            <tr
+                              key={venta.id}
+                              style={{ borderBottom: "1px solid #f0f0f0" }}
+                            >
+                              <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                                {new Date(venta.fecha_hora).toLocaleTimeString(
+                                  "es-HN",
                                 )}
-                                {tiposVenta && Array.from(tiposVenta).map((t) => {
-                                  const ti = tipoIconos[t];
-                                  if (!ti) return null;
-                                  const lbl = t === "transferencia" || t === "transferencias" ? "Transf."
-                                    : t === "dolares" || t === "dólares" ? "Dólares"
-                                    : t.charAt(0).toUpperCase() + t.slice(1);
-                                  return (
-                                    <span key={t} style={{ background: ti.color + "18", color: ti.color, border: `1px solid ${ti.color}44`, borderRadius: 10, padding: "1px 7px", fontSize: "0.68rem", fontWeight: 600 }}>
-                                      {ti.icon} {lbl}
+                              </td>
+                              <td style={{ padding: 8 }}>{venta.factura}</td>
+                              <td style={{ padding: 8 }}>
+                                {venta.cliente || "—"}
+                              </td>
+                              <td style={{ padding: 8 }}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 3,
+                                  }}
+                                >
+                                  {esDelivery && (
+                                    <span
+                                      style={{
+                                        background: "#fef2f2",
+                                        color: "#f43f5e",
+                                        border: "1px solid #fecdd3",
+                                        borderRadius: 10,
+                                        padding: "1px 7px",
+                                        fontSize: "0.68rem",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      🛵 Delivery
                                     </span>
-                                  );
-                                })}
-                              </div>
-                            </td>
-                            <td style={{ padding: 8, fontWeight: 600, color: "#16a34a" }}>
-                              L {Number(venta.total || 0).toFixed(2)}
-                            </td>
-                            <td style={{ padding: 8 }}>
-                              <button
-                                onClick={() => imprimirFacturaHistorial(venta)}
-                                style={{ marginRight: 6, padding: "5px 10px", borderRadius: 8, border: "none", background: "#1976d2", color: "#fff", cursor: "pointer", fontSize: "0.78rem" }}
+                                  )}
+                                  {tiposVenta &&
+                                    Array.from(tiposVenta).map((t) => {
+                                      const ti = tipoIconos[t];
+                                      if (!ti) return null;
+                                      const lbl =
+                                        t === "transferencia" ||
+                                        t === "transferencias"
+                                          ? "Transf."
+                                          : t === "dolares" || t === "dólares"
+                                            ? "Dólares"
+                                            : t.charAt(0).toUpperCase() +
+                                              t.slice(1);
+                                      return (
+                                        <span
+                                          key={t}
+                                          style={{
+                                            background: ti.color + "18",
+                                            color: ti.color,
+                                            border: `1px solid ${ti.color}44`,
+                                            borderRadius: 10,
+                                            padding: "1px 7px",
+                                            fontSize: "0.68rem",
+                                            fontWeight: 600,
+                                          }}
+                                        >
+                                          {ti.icon} {lbl}
+                                        </span>
+                                      );
+                                    })}
+                                </div>
+                              </td>
+                              <td
+                                style={{
+                                  padding: 8,
+                                  fontWeight: 600,
+                                  color: "#16a34a",
+                                }}
                               >
-                                🖨️ Factura
-                              </button>
-                              <button
-                                onClick={() => { setSelectedVentaForComanda(venta); setShowTipoOrdenModal(true); }}
-                                style={{ padding: "5px 10px", borderRadius: 8, border: "none", background: "#6a1b9a", color: "#fff", cursor: "pointer", fontSize: "0.78rem" }}
-                              >
-                                🖨️ Comanda
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                                L {Number(venta.total || 0).toFixed(2)}
+                              </td>
+                              <td style={{ padding: 8 }}>
+                                <button
+                                  onClick={() =>
+                                    imprimirFacturaHistorial(venta)
+                                  }
+                                  style={{
+                                    marginRight: 6,
+                                    padding: "5px 10px",
+                                    borderRadius: 8,
+                                    border: "none",
+                                    background: "#1976d2",
+                                    color: "#fff",
+                                    cursor: "pointer",
+                                    fontSize: "0.78rem",
+                                  }}
+                                >
+                                  🖨️ Factura
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setSelectedVentaForComanda(venta);
+                                    setShowTipoOrdenModal(true);
+                                  }}
+                                  style={{
+                                    padding: "5px 10px",
+                                    borderRadius: 8,
+                                    border: "none",
+                                    background: "#6a1b9a",
+                                    color: "#fff",
+                                    cursor: "pointer",
+                                    fontSize: "0.78rem",
+                                  }}
+                                >
+                                  🖨️ Comanda
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {/* Modal Historial de Facturas de Crédito */}
       {showHistorialCreditos && (

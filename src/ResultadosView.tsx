@@ -2213,7 +2213,8 @@ export default function ResultadosView({
         ? String(p.factura)
         : null;
     if (!factNum) return;
-    if (!pagosPorFacturaMap.has(factNum)) pagosPorFacturaMap.set(factNum, new Set());
+    if (!pagosPorFacturaMap.has(factNum))
+      pagosPorFacturaMap.set(factNum, new Set());
     const tipo = (p.tipo || "").toLowerCase().trim();
     if (tipo) pagosPorFacturaMap.get(factNum)!.add(tipo);
   });
@@ -2222,7 +2223,9 @@ export default function ResultadosView({
     filtroTipoPago === null
       ? facturas
       : filtroTipoPago === "delivery"
-        ? facturas.filter((f: any) => (f.tipo_orden || "").toUpperCase() === "DELIVERY")
+        ? facturas.filter(
+            (f: any) => (f.tipo_orden || "").toUpperCase() === "DELIVERY",
+          )
         : facturas.filter((f: any) => {
             const tipos = pagosPorFacturaMap.get(String(f.factura || ""));
             if (!tipos) return false;
@@ -2818,7 +2821,8 @@ export default function ResultadosView({
                         color: "#64748b",
                       }}
                     >
-                      — {facturasFiltradas.length} resultado{facturasFiltradas.length !== 1 ? "s" : ""}
+                      — {facturasFiltradas.length} resultado
+                      {facturasFiltradas.length !== 1 ? "s" : ""}
                     </span>
                   )}
                 </h3>
@@ -2842,14 +2846,52 @@ export default function ResultadosView({
                   marginBottom: 8,
                 }}
               >
-                {([
-                  { key: null,             label: "Todas",          icon: "🔄", color: "#64748b", total: null },
-                  { key: "efectivo",       label: "Efectivo",       icon: "💵", color: "#10b981", total: pagosTotales.efectivo },
-                  { key: "tarjeta",        label: "Tarjeta",        icon: "💳", color: "#3b82f6", total: pagosTotales.tarjeta },
-                  { key: "transferencia",  label: "Transferencia",  icon: "🏦", color: "#8b5cf6", total: pagosTotales.transferencia },
-                  { key: "dolares",        label: "Dólares",        icon: "💱", color: "#f59e0b", total: pagosTotales.dolares_lps },
-                  { key: "delivery",       label: "Delivery",       icon: "🛵", color: "#f43f5e", total: deliveryTotal },
-                ] as const).map(({ key, label, icon, color, total }) => {
+                {(
+                  [
+                    {
+                      key: null,
+                      label: "Todas",
+                      icon: "🔄",
+                      color: "#64748b",
+                      total: null,
+                    },
+                    {
+                      key: "efectivo",
+                      label: "Efectivo",
+                      icon: "💵",
+                      color: "#10b981",
+                      total: pagosTotales.efectivo,
+                    },
+                    {
+                      key: "tarjeta",
+                      label: "Tarjeta",
+                      icon: "💳",
+                      color: "#3b82f6",
+                      total: pagosTotales.tarjeta,
+                    },
+                    {
+                      key: "transferencia",
+                      label: "Transferencia",
+                      icon: "🏦",
+                      color: "#8b5cf6",
+                      total: pagosTotales.transferencia,
+                    },
+                    {
+                      key: "dolares",
+                      label: "Dólares",
+                      icon: "💱",
+                      color: "#f59e0b",
+                      total: pagosTotales.dolares_lps,
+                    },
+                    {
+                      key: "delivery",
+                      label: "Delivery",
+                      icon: "🛵",
+                      color: "#f43f5e",
+                      total: deliveryTotal,
+                    },
+                  ] as const
+                ).map(({ key, label, icon, color, total }) => {
                   const isActive = filtroTipoPago === key;
                   return (
                     <button
@@ -2874,10 +2916,15 @@ export default function ResultadosView({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <span style={{ fontSize: "1rem" }}>{icon} {label}</span>
+                      <span style={{ fontSize: "1rem" }}>
+                        {icon} {label}
+                      </span>
                       {total !== null && (
                         <span style={{ fontSize: "0.7rem", opacity: 0.85 }}>
-                          L {total.toLocaleString("de-DE", { minimumFractionDigits: 2 })}
+                          L{" "}
+                          {total.toLocaleString("de-DE", {
+                            minimumFractionDigits: 2,
+                          })}
                         </span>
                       )}
                       {key === null && (
@@ -2904,103 +2951,124 @@ export default function ResultadosView({
                       </tr>
                     </thead>
                     <tbody>
-                      {facturasFiltradas.slice(0, filtroTipoPago ? 500 : 10).map((f) => {
-                        // Extraer hora en formato 12h
-                        let horaVenta = "";
-                        if (f.fecha_hora) {
-                          try {
-                            const fechaCompleta = f.fecha_hora.includes("T")
-                              ? f.fecha_hora
-                              : f.fecha_hora.replace(" ", "T");
-                            const fecha = new Date(fechaCompleta);
-                            let horas = fecha.getHours();
-                            const minutos = fecha
-                              .getMinutes()
-                              .toString()
-                              .padStart(2, "0");
-                            const ampm = horas >= 12 ? "PM" : "AM";
-                            horas = horas % 12 || 12;
-                            horaVenta = `${horas}:${minutos} ${ampm}`;
-                          } catch (e) {
-                            horaVenta = f.fecha_hora.slice(11, 16) || "";
+                      {facturasFiltradas
+                        .slice(0, filtroTipoPago ? 500 : 10)
+                        .map((f) => {
+                          // Extraer hora en formato 12h
+                          let horaVenta = "";
+                          if (f.fecha_hora) {
+                            try {
+                              const fechaCompleta = f.fecha_hora.includes("T")
+                                ? f.fecha_hora
+                                : f.fecha_hora.replace(" ", "T");
+                              const fecha = new Date(fechaCompleta);
+                              let horas = fecha.getHours();
+                              const minutos = fecha
+                                .getMinutes()
+                                .toString()
+                                .padStart(2, "0");
+                              const ampm = horas >= 12 ? "PM" : "AM";
+                              horas = horas % 12 || 12;
+                              horaVenta = `${horas}:${minutos} ${ampm}`;
+                            } catch (e) {
+                              horaVenta = f.fecha_hora.slice(11, 16) || "";
+                            }
                           }
-                        }
 
-                        // Tipos de pago de esta factura
-                        const tiposFactura = pagosPorFacturaMap.get(String(f.factura || ""));
-                        const tipoIcons: Record<string, { icon: string; color: string }> = {
-                          efectivo:      { icon: "💵", color: "#10b981" },
-                          tarjeta:       { icon: "💳", color: "#3b82f6" },
-                          transferencia: { icon: "🏦", color: "#8b5cf6" },
-                          transferencias:{ icon: "🏦", color: "#8b5cf6" },
-                          dolares:       { icon: "💱", color: "#f59e0b" },
-                          "dólares":     { icon: "💱", color: "#f59e0b" },
-                        };
-                        // Si es delivery, también mostrar etiqueta
-                        const esDelivery = (f.tipo_orden || "").toUpperCase() === "DELIVERY";
+                          // Tipos de pago de esta factura
+                          const tiposFactura = pagosPorFacturaMap.get(
+                            String(f.factura || ""),
+                          );
+                          const tipoIcons: Record<
+                            string,
+                            { icon: string; color: string }
+                          > = {
+                            efectivo: { icon: "💵", color: "#10b981" },
+                            tarjeta: { icon: "💳", color: "#3b82f6" },
+                            transferencia: { icon: "🏦", color: "#8b5cf6" },
+                            transferencias: { icon: "🏦", color: "#8b5cf6" },
+                            dolares: { icon: "💱", color: "#f59e0b" },
+                            dólares: { icon: "💱", color: "#f59e0b" },
+                          };
+                          // Si es delivery, también mostrar etiqueta
+                          const esDelivery =
+                            (f.tipo_orden || "").toUpperCase() === "DELIVERY";
 
-                        return (
-                          <tr key={f.id}>
-                            <td data-label="Fecha">
-                              {f.fecha_hora?.slice(0, 10)}
-                            </td>
-                            <td data-label="Hora de venta">{horaVenta}</td>
-                            <td data-label="Cajero">{f.cajero}</td>
-                            <td data-label="Factura">{f.factura}</td>
-                            <td data-label="Cliente">{f.cliente}</td>
-                            <td data-label="Tipo Pago" style={{ whiteSpace: "nowrap" }}>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                                {esDelivery && (
-                                  <span
-                                    style={{
-                                      background: "#fef2f2",
-                                      color: "#f43f5e",
-                                      border: "1px solid #fecdd3",
-                                      borderRadius: 10,
-                                      padding: "1px 7px",
-                                      fontSize: "0.68rem",
-                                      fontWeight: 600,
-                                    }}
-                                  >
-                                    🛵 Delivery
-                                  </span>
-                                )}
-                                {tiposFactura && Array.from(tiposFactura).map((t) => {
-                                  const ti = tipoIcons[t];
-                                  if (!ti) return null;
-                                  const label = t === "transferencia" || t === "transferencias"
-                                    ? "Transf."
-                                    : t === "dolares" || t === "dólares"
-                                      ? "Dólares"
-                                      : t.charAt(0).toUpperCase() + t.slice(1);
-                                  return (
+                          return (
+                            <tr key={f.id}>
+                              <td data-label="Fecha">
+                                {f.fecha_hora?.slice(0, 10)}
+                              </td>
+                              <td data-label="Hora de venta">{horaVenta}</td>
+                              <td data-label="Cajero">{f.cajero}</td>
+                              <td data-label="Factura">{f.factura}</td>
+                              <td data-label="Cliente">{f.cliente}</td>
+                              <td
+                                data-label="Tipo Pago"
+                                style={{ whiteSpace: "nowrap" }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 3,
+                                  }}
+                                >
+                                  {esDelivery && (
                                     <span
-                                      key={t}
                                       style={{
-                                        background: ti.color + "18",
-                                        color: ti.color,
-                                        border: `1px solid ${ti.color}44`,
+                                        background: "#fef2f2",
+                                        color: "#f43f5e",
+                                        border: "1px solid #fecdd3",
                                         borderRadius: 10,
                                         padding: "1px 7px",
                                         fontSize: "0.68rem",
                                         fontWeight: 600,
                                       }}
                                     >
-                                      {ti.icon} {label}
+                                      🛵 Delivery
                                     </span>
-                                  );
-                                })}
-                              </div>
-                            </td>
-                            <td
-                              data-label="Total"
-                              style={{ color: "var(--success)" }}
-                            >
-                              L {parseFloat(f.total || 0).toFixed(2)}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                  )}
+                                  {tiposFactura &&
+                                    Array.from(tiposFactura).map((t) => {
+                                      const ti = tipoIcons[t];
+                                      if (!ti) return null;
+                                      const label =
+                                        t === "transferencia" ||
+                                        t === "transferencias"
+                                          ? "Transf."
+                                          : t === "dolares" || t === "dólares"
+                                            ? "Dólares"
+                                            : t.charAt(0).toUpperCase() +
+                                              t.slice(1);
+                                      return (
+                                        <span
+                                          key={t}
+                                          style={{
+                                            background: ti.color + "18",
+                                            color: ti.color,
+                                            border: `1px solid ${ti.color}44`,
+                                            borderRadius: 10,
+                                            padding: "1px 7px",
+                                            fontSize: "0.68rem",
+                                            fontWeight: 600,
+                                          }}
+                                        >
+                                          {ti.icon} {label}
+                                        </span>
+                                      );
+                                    })}
+                                </div>
+                              </td>
+                              <td
+                                data-label="Total"
+                                style={{ color: "var(--success)" }}
+                              >
+                                L {parseFloat(f.total || 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>
