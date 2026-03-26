@@ -111,6 +111,8 @@ export default function PuntoDeVentaView({
     gastos: number;
     platillos?: number;
     bebidas?: number;
+    platillos_donados?: number;
+    bebidas_donadas?: number;
   } | null>(null);
 
   // Estados para historial de ventas del turno
@@ -477,6 +479,7 @@ export default function PuntoDeVentaView({
           .from("facturas")
           .select("productos, factura")
           .eq("cajero_id", usuarioActual?.id)
+          .or("es_donacion.is.null,es_donacion.eq.false")
           .gte("fecha_hora", start)
           .lte("fecha_hora", end);
         if (facturasResumen && Array.isArray(facturasResumen)) {
@@ -581,6 +584,38 @@ export default function PuntoDeVentaView({
         0,
       );
 
+      // Contar platillos/bebidas donados en este turno
+      let platillosDonados = 0;
+      let bebidasDonadas = 0;
+      try {
+        const { data: facturaDonaciones } = await supabase
+          .from("facturas")
+          .select("productos")
+          .eq("cajero_id", usuarioActual?.id)
+          .eq("es_donacion", true)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", end);
+        if (facturaDonaciones && Array.isArray(facturaDonaciones)) {
+          for (const fac of facturaDonaciones) {
+            try {
+              const items =
+                typeof fac.productos === "string"
+                  ? JSON.parse(fac.productos)
+                  : fac.productos;
+              if (Array.isArray(items)) {
+                for (const item of items) {
+                  const qty = parseFloat(item.cantidad || 1);
+                  if (item.tipo === "comida") platillosDonados += qty;
+                  else if (item.tipo === "bebida") bebidasDonadas += qty;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("No se pudieron contar donaciones:", e);
+      }
+
       console.log("Sumas calculadas:", {
         efectivo: efectivoSum,
         tarjeta: tarjetaSum,
@@ -600,6 +635,8 @@ export default function PuntoDeVentaView({
         gastos: gastosSum,
         platillos: platillosSum,
         bebidas: bebidasSum,
+        platillos_donados: platillosDonados,
+        bebidas_donadas: bebidasDonadas,
       });
     } catch (err) {
       console.error("Error al obtener resumen de caja:", err);
@@ -2635,109 +2672,470 @@ export default function PuntoDeVentaView({
             left: 0,
             width: "100vw",
             height: "100vh",
-            background: "rgba(0,0,0,0.4)",
+            background: "rgba(0,0,0,0.55)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             zIndex: 110000,
+            padding: "8px",
+            boxSizing: "border-box",
           }}
           onClick={() => setShowResumen(false)}
         >
           <div
             style={{
-              background: theme === "lite" ? "#fff" : "#232526",
-              color: theme === "lite" ? "#222" : "#fbc02d",
-              borderRadius: 12,
-              padding: 24,
-              minWidth: 300,
-              boxShadow: "0 8px 32px #0003",
+              background: theme === "lite" ? "#fff" : "#1e2130",
+              color: theme === "lite" ? "#1e293b" : "#f1f5f9",
+              borderRadius: "clamp(10px, 2vw, 18px)",
+              padding: 0,
+              width: "min(500px, 100%)",
+              maxHeight: "95dvh",
+              overflowY: "auto",
+              boxShadow: "0 20px 60px #0007",
+              display: "flex",
+              flexDirection: "column",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3
+            {/* Encabezado */}
+            <div
               style={{
-                marginTop: 0,
-                color: theme === "lite" ? "#1976d2" : "#fbc02d",
+                background: "linear-gradient(135deg,#1976d2,#0d47a1)",
+                color: "#fff",
+                padding: "clamp(12px,3vw,20px) clamp(14px,4vw,24px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                position: "sticky",
+                top: 0,
+                zIndex: 1,
+                flexShrink: 0,
+                borderRadius: "clamp(10px,2vw,18px) clamp(10px,2vw,18px) 0 0",
               }}
             >
-              Resumen de caja
-            </h3>
-            {resumenLoading ? (
-              <div style={{ padding: 12 }}>Cargando...</div>
-            ) : resumenData ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div>
-                  <strong>PLATILLOS VENDIDOS:</strong>{" "}
-                  {Math.round(resumenData.platillos ?? 0)}
-                </div>
-                <div>
-                  <strong>BEBIDAS VENDIDAS:</strong>{" "}
-                  {Math.round(resumenData.bebidas ?? 0)}
+              <div>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: "clamp(16px,4.5vw,22px)",
+                  }}
+                >
+                  🏦 Resumen de Caja
                 </div>
                 <div
                   style={{
-                    borderTop: "1px dashed #aaa",
-                    marginTop: 4,
-                    paddingTop: 4,
+                    fontSize: "clamp(10px,2.5vw,13px)",
+                    opacity: 0.85,
+                    marginTop: 2,
                   }}
-                />
-                <div>
-                  <strong>EFECTIVO(LPS):</strong>{" "}
-                  {(resumenData.efectivo - resumenData.gastos).toFixed(2)}
-                </div>
-
-                <div>
-                  <strong>TARJETA:</strong> {resumenData.tarjeta.toFixed(2)}
-                </div>
-                <div>
-                  <strong>TRANSFERENCIA:</strong>{" "}
-                  {resumenData.transferencia.toFixed(2)}
-                </div>
-                <div>
-                  <strong>DÓLARES:</strong>{" "}
-                  {typeof resumenData.dolares_usd !== "undefined" ? (
-                    <>
-                      ({resumenData.dolares_usd.toFixed(2)} $) : Lps{" "}
-                      {resumenData.dolares_convertidos?.toFixed(2) ??
-                        resumenData.dolares.toFixed(2)}
-                    </>
-                  ) : (
-                    <>L {resumenData.dolares.toFixed(2)}</>
-                  )}
-                </div>
-                <div>
-                  <strong>GASTOS:</strong> {resumenData.gastos.toFixed(2)}
+                >
+                  Resumen del turno actual
                 </div>
               </div>
-            ) : (
-              <div>No hay datos</div>
-            )}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: 16,
-              }}
-            >
               <button
                 onClick={() => setShowResumen(false)}
                 style={{
-                  padding: "8px 16px",
-                  borderRadius: 8,
+                  background: "rgba(255,255,255,0.18)",
                   border: "none",
-                  background: "#1976d2",
                   color: "#fff",
+                  borderRadius: 8,
+                  padding: "6px 13px",
                   fontWeight: 700,
+                  fontSize: 16,
                   cursor: "pointer",
+                  flexShrink: 0,
                 }}
               >
-                Cerrar
+                ✕
               </button>
             </div>
+
+            {resumenLoading ? (
+              <div
+                style={{
+                  padding: 40,
+                  textAlign: "center",
+                  color: "#1976d2",
+                  fontSize: 16,
+                }}
+              >
+                Cargando...
+              </div>
+            ) : resumenData ? (
+              <div style={{ padding: "clamp(12px,3.5vw,20px)" }}>
+                {/* ── INGRESOS POR MÉTODO DE PAGO ── */}
+                <div
+                  style={{
+                    fontSize: "clamp(9px,2.2vw,11px)",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                    color: "#64748b",
+                    marginBottom: 8,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Ingresos por método de pago
+                </div>
+
+                {[
+                  {
+                    label: "Efectivo",
+                    raw: resumenData.efectivo,
+                    display: `L ${resumenData.efectivo.toFixed(2)}`,
+                    sub: `Neto (−gastos): L ${(resumenData.efectivo - resumenData.gastos).toFixed(2)}`,
+                    icon: "💵",
+                    color: "#16a34a",
+                  },
+                  {
+                    label: "Tarjeta",
+                    raw: resumenData.tarjeta,
+                    display: `L ${resumenData.tarjeta.toFixed(2)}`,
+                    sub: null,
+                    icon: "💳",
+                    color: "#1976d2",
+                  },
+                  {
+                    label: "Transferencia",
+                    raw: resumenData.transferencia,
+                    display: `L ${resumenData.transferencia.toFixed(2)}`,
+                    sub: null,
+                    icon: "🏦",
+                    color: "#7c3aed",
+                  },
+                  {
+                    label: "Dólares",
+                    raw: resumenData.dolares_convertidos ?? resumenData.dolares,
+                    display: `L ${(resumenData.dolares_convertidos ?? resumenData.dolares).toFixed(2)}`,
+                    sub:
+                      resumenData.dolares_usd != null &&
+                      resumenData.dolares_usd > 0
+                        ? `$${resumenData.dolares_usd.toFixed(2)} USD × ${resumenData.tasa_dolar?.toFixed(2)}`
+                        : null,
+                    icon: "💱",
+                    color: "#d97706",
+                  },
+                ].map((row) => (
+                  <div
+                    key={row.label}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "clamp(7px,2vw,11px) clamp(9px,2.5vw,14px)",
+                      borderRadius: 10,
+                      marginBottom: 6,
+                      background: theme === "lite" ? "#f8fafc" : "#252a3d",
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "clamp(15px,4vw,20px)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {row.icon}
+                      </span>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 700,
+                            fontSize: "clamp(12px,3.2vw,15px)",
+                          }}
+                        >
+                          {row.label}
+                        </div>
+                        {row.sub && (
+                          <div
+                            style={{
+                              fontSize: "clamp(9px,2.2vw,11px)",
+                              color: "#94a3b8",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {row.sub}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontWeight: 800,
+                        fontSize: "clamp(13px,3.5vw,16px)",
+                        color: row.color,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {row.display}
+                    </div>
+                  </div>
+                ))}
+
+                {/* ── TOTAL GENERAL ── */}
+                {(() => {
+                  const efectivoNeto =
+                    resumenData.efectivo - resumenData.gastos;
+                  const totalGeneral =
+                    efectivoNeto +
+                    resumenData.tarjeta +
+                    resumenData.transferencia +
+                    (resumenData.dolares_convertidos ?? resumenData.dolares);
+                  return (
+                    <div
+                      style={{
+                        background: "linear-gradient(135deg,#1976d2,#0d47a1)",
+                        borderRadius: 12,
+                        padding: "clamp(11px,3vw,15px) clamp(13px,3.5vw,18px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginTop: 10,
+                        marginBottom: 8,
+                        gap: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: "clamp(13px,3.5vw,16px)",
+                        }}
+                      >
+                        💰 TOTAL GENERAL
+                      </div>
+                      <div
+                        style={{
+                          color: "#fff",
+                          fontWeight: 900,
+                          fontSize: "clamp(17px,5vw,24px)",
+                        }}
+                      >
+                        L {totalGeneral.toFixed(2)}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* ── GASTOS ── */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "clamp(7px,2vw,11px) clamp(9px,2.5vw,14px)",
+                    borderRadius: 10,
+                    background: "#fff5f5",
+                    marginBottom: 16,
+                    border: "1px solid #fecdd3",
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <span style={{ fontSize: "clamp(15px,4vw,20px)" }}>🧾</span>
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        fontSize: "clamp(12px,3.2vw,15px)",
+                        color: "#dc2626",
+                      }}
+                    >
+                      Gastos del turno
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      color: "#dc2626",
+                      fontSize: "clamp(13px,3.5vw,16px)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    − L {resumenData.gastos.toFixed(2)}
+                  </span>
+                </div>
+
+                {/* ── PRODUCTOS VENDIDOS ── */}
+                <div
+                  style={{
+                    borderTop: `1px solid ${theme === "lite" ? "#e2e8f0" : "#2d3555"}`,
+                    paddingTop: 14,
+                    fontSize: "clamp(9px,2.2vw,11px)",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                    color: "#64748b",
+                    marginBottom: 8,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Productos vendidos
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "clamp(6px,2vw,12px)",
+                    marginBottom: 16,
+                  }}
+                >
+                  {[
+                    {
+                      label: "Platillos",
+                      value: Math.round(resumenData.platillos ?? 0),
+                      icon: "🍖",
+                      color: "#dc2626",
+                      bg: "#fef2f2",
+                    },
+                    {
+                      label: "Bebidas",
+                      value: Math.round(resumenData.bebidas ?? 0),
+                      icon: "🥤",
+                      color: "#0284c7",
+                      bg: "#f0f9ff",
+                    },
+                  ].map((c) => (
+                    <div
+                      key={c.label}
+                      style={{
+                        background: theme === "lite" ? c.bg : "#2a2f45",
+                        borderRadius: 10,
+                        padding: "clamp(9px,2.5vw,14px)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "clamp(6px,2vw,12px)",
+                        border: `1px solid ${c.color}22`,
+                      }}
+                    >
+                      <span style={{ fontSize: "clamp(18px,5vw,24px)" }}>
+                        {c.icon}
+                      </span>
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 900,
+                            fontSize: "clamp(18px,5vw,24px)",
+                            color: c.color,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {c.value}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "clamp(10px,2.5vw,12px)",
+                            color: "#64748b",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {c.label}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── DONACIONES ── */}
+                {((resumenData.platillos_donados ?? 0) > 0 ||
+                  (resumenData.bebidas_donadas ?? 0) > 0) && (
+                  <>
+                    <div
+                      style={{
+                        borderTop: `1px solid ${theme === "lite" ? "#e2e8f0" : "#2d3555"}`,
+                        paddingTop: 14,
+                        fontSize: "clamp(9px,2.2vw,11px)",
+                        fontWeight: 700,
+                        letterSpacing: 1,
+                        color: "#7c3aed",
+                        marginBottom: 8,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      🎁 Platillos Regalados (Donaciones)
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "clamp(6px,2vw,12px)",
+                      }}
+                    >
+                      {[
+                        {
+                          label: "Platillos Donados",
+                          value: Math.round(resumenData.platillos_donados ?? 0),
+                          icon: "🍖",
+                          color: "#7c3aed",
+                          bg: "#f5f3ff",
+                        },
+                        {
+                          label: "Bebidas Donadas",
+                          value: Math.round(resumenData.bebidas_donadas ?? 0),
+                          icon: "🥤",
+                          color: "#7c3aed",
+                          bg: "#f5f3ff",
+                        },
+                      ].map((c) => (
+                        <div
+                          key={c.label}
+                          style={{
+                            background: theme === "lite" ? c.bg : "#2a2f45",
+                            borderRadius: 10,
+                            padding: "clamp(9px,2.5vw,14px)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "clamp(6px,2vw,12px)",
+                            border: `1px solid ${c.color}33`,
+                          }}
+                        >
+                          <span style={{ fontSize: "clamp(18px,5vw,24px)" }}>
+                            {c.icon}
+                          </span>
+                          <div>
+                            <div
+                              style={{
+                                fontWeight: 900,
+                                fontSize: "clamp(18px,5vw,24px)",
+                                color: c.color,
+                                lineHeight: 1,
+                              }}
+                            >
+                              {c.value}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "clamp(10px,2.5vw,12px)",
+                                color: "#64748b",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {c.label}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div style={{ padding: 40, textAlign: "center", color: "#888" }}>
+                No hay datos
+              </div>
+            )}
           </div>
         </div>
       )}
-
       {/* Botón de tema: muestra la acción disponible y cambia el texto al alternar */}
       <div
         style={{
@@ -2945,13 +3343,14 @@ export default function PuntoDeVentaView({
           // ── Snapshot inmutable: capturar TODOS los datos del formulario
           // en este instante exacto antes de cualquier operación async.
           // Evita que re-renders cambien valores durante el proceso.
+          const esDonacion = paymentData.esDonacion === true;
           const snap = {
             seleccionados: structuredClone(seleccionados),
             nombreCliente: nombreCliente,
             facturaActual: facturaResuelta,
             tipoOrden: tipoOrden,
-            total: total,
-            totalConDescuento: totalConDescuento,
+            total: esDonacion ? 0 : total,
+            totalConDescuento: esDonacion ? 0 : totalConDescuento,
             totalDescuento: totalDescuento,
           };
           // ID único por operación de facturación
@@ -3565,14 +3964,15 @@ export default function PuntoDeVentaView({
                     piezas: p.piezas ?? null,
                   })),
                 ),
-                sub_total: subTotal.toFixed(2),
-                isv_15: isv15.toFixed(2),
-                isv_18: isv18.toFixed(2),
+                sub_total: esDonacion ? "0.00" : subTotal.toFixed(2),
+                isv_15: esDonacion ? "0.00" : isv15.toFixed(2),
+                isv_18: esDonacion ? "0.00" : isv18.toFixed(2),
                 descuento:
                   snap.totalDescuento > 0
                     ? Number(snap.totalDescuento.toFixed(2))
                     : null,
                 total: snap.totalConDescuento.toFixed(2),
+                es_donacion: esDonacion ? true : null,
               };
 
               // LÓGICA MEJORADA: usar solo isOnline (que ya verifica conexión real)
@@ -8388,6 +8788,7 @@ export default function PuntoDeVentaView({
             dolares_lps: 0,
             dolares_usd: 0,
             delivery: 0,
+            donaciones: 0,
           };
           historialPagos.forEach((p: any) => {
             const t = (p.tipo || "").toLowerCase().trim();
@@ -8405,6 +8806,7 @@ export default function PuntoDeVentaView({
           historialVentas.forEach((v: any) => {
             if ((v.tipo_orden || "").toUpperCase() === "DELIVERY")
               hTotales.delivery += parseFloat(String(v.total || 0)) || 0;
+            if (v.es_donacion) hTotales.donaciones += 1;
           });
 
           // ── Filtrado ─────────────────────────────────────────────────────────
@@ -8416,20 +8818,22 @@ export default function PuntoDeVentaView({
                     (v: any) =>
                       (v.tipo_orden || "").toUpperCase() === "DELIVERY",
                   )
-                : historialVentas.filter((v: any) => {
-                    const tipos = hPagosPorFacturaMap.get(
-                      String(v.factura || ""),
-                    );
-                    if (!tipos) return false;
-                    if (historialFiltroTipo === "transferencia")
-                      return (
-                        tipos.has("transferencia") ||
-                        tipos.has("transferencias")
+                : historialFiltroTipo === "donaciones"
+                  ? historialVentas.filter((v: any) => v.es_donacion === true)
+                  : historialVentas.filter((v: any) => {
+                      const tipos = hPagosPorFacturaMap.get(
+                        String(v.factura || ""),
                       );
-                    if (historialFiltroTipo === "dolares")
-                      return tipos.has("dolares") || tipos.has("dólares");
-                    return tipos.has(historialFiltroTipo);
-                  });
+                      if (!tipos) return false;
+                      if (historialFiltroTipo === "transferencia")
+                        return (
+                          tipos.has("transferencia") ||
+                          tipos.has("transferencias")
+                        );
+                      if (historialFiltroTipo === "dolares")
+                        return tipos.has("dolares") || tipos.has("dólares");
+                      return tipos.has(historialFiltroTipo);
+                    });
 
           const tipoIconos: Record<string, { icon: string; color: string }> = {
             efectivo: { icon: "💵", color: "#10b981" },
@@ -8566,6 +8970,13 @@ export default function PuntoDeVentaView({
                           color: "#f43f5e",
                           totalTxt: `L ${fmt(hTotales.delivery)}`,
                         },
+                        {
+                          key: "donaciones",
+                          label: "Donaciones",
+                          icon: "🎁",
+                          color: "#7c3aed",
+                          totalTxt: `${hTotales.donaciones} fact.`,
+                        },
                       ] as const
                     ).map(({ key, label, icon, color, totalTxt }) => {
                       const isActive = historialFiltroTipo === key;
@@ -8634,6 +9045,7 @@ export default function PuntoDeVentaView({
                           <th style={{ padding: 8 }}>Factura</th>
                           <th style={{ padding: 8 }}>Cliente</th>
                           <th style={{ padding: 8 }}>Tipo Pago</th>
+                          <th style={{ padding: 8 }}>🍖/🥤</th>
                           <th style={{ padding: 8 }}>Monto</th>
                           <th style={{ padding: 8 }}>Acciones</th>
                         </tr>
@@ -8646,17 +9058,63 @@ export default function PuntoDeVentaView({
                           const esDelivery =
                             (venta.tipo_orden || "").toUpperCase() ===
                             "DELIVERY";
+                          const esDonacionRow = venta.es_donacion === true;
+
+                          // Contar platillos y bebidas de esta venta
+                          const { platillosRow, bebidasRow } = (() => {
+                            let pl = 0;
+                            let beb = 0;
+                            try {
+                              const prods =
+                                typeof venta.productos === "string"
+                                  ? JSON.parse(venta.productos)
+                                  : venta.productos;
+                              if (Array.isArray(prods))
+                                for (const p of prods) {
+                                  const q = parseFloat(p.cantidad || 1);
+                                  if (p.tipo === "comida") pl += q;
+                                  else if (p.tipo === "bebida") beb += q;
+                                }
+                            } catch (_) {}
+                            return {
+                              platillosRow: Math.round(pl),
+                              bebidasRow: Math.round(beb),
+                            };
+                          })();
+
                           return (
                             <tr
                               key={venta.id}
-                              style={{ borderBottom: "1px solid #f0f0f0" }}
+                              style={{
+                                borderBottom: "1px solid #f0f0f0",
+                                background: esDonacionRow
+                                  ? "#faf5ff"
+                                  : undefined,
+                              }}
                             >
                               <td style={{ padding: 8, whiteSpace: "nowrap" }}>
                                 {new Date(venta.fecha_hora).toLocaleTimeString(
                                   "es-HN",
                                 )}
                               </td>
-                              <td style={{ padding: 8 }}>{venta.factura}</td>
+                              <td style={{ padding: 8 }}>
+                                {venta.factura}
+                                {esDonacionRow && (
+                                  <span
+                                    style={{
+                                      marginLeft: 5,
+                                      background: "#7c3aed",
+                                      color: "#fff",
+                                      borderRadius: 6,
+                                      padding: "1px 6px",
+                                      fontSize: "0.65rem",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    🎁 DON.
+                                  </span>
+                                )}
+                              </td>
                               <td style={{ padding: 8 }}>
                                 {venta.cliente || "—"}
                               </td>
@@ -8681,6 +9139,21 @@ export default function PuntoDeVentaView({
                                       }}
                                     >
                                       🛵 Delivery
+                                    </span>
+                                  )}
+                                  {esDonacionRow && (
+                                    <span
+                                      style={{
+                                        background: "#f5f3ff",
+                                        color: "#7c3aed",
+                                        border: "1px solid #c4b5fd",
+                                        borderRadius: 10,
+                                        padding: "1px 7px",
+                                        fontSize: "0.68rem",
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      🎁 Donación
                                     </span>
                                   )}
                                   {tiposVenta &&
@@ -8714,14 +9187,55 @@ export default function PuntoDeVentaView({
                                     })}
                                 </div>
                               </td>
+                              {/* Columna platillos/bebidas */}
+                              <td style={{ padding: 8, textAlign: "center" }}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    gap: 4,
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  {platillosRow > 0 && (
+                                    <span
+                                      style={{
+                                        background: "#fef2f2",
+                                        color: "#dc2626",
+                                        borderRadius: 8,
+                                        padding: "1px 7px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      🍖{platillosRow}
+                                    </span>
+                                  )}
+                                  {bebidasRow > 0 && (
+                                    <span
+                                      style={{
+                                        background: "#f0f9ff",
+                                        color: "#0284c7",
+                                        borderRadius: 8,
+                                        padding: "1px 7px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      🥤{bebidasRow}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td
                                 style={{
                                   padding: 8,
                                   fontWeight: 600,
-                                  color: "#16a34a",
+                                  color: esDonacionRow ? "#7c3aed" : "#16a34a",
                                 }}
                               >
-                                L {Number(venta.total || 0).toFixed(2)}
+                                {esDonacionRow
+                                  ? "🎁 L 0.00"
+                                  : `L ${Number(venta.total || 0).toFixed(2)}`}
                               </td>
                               <td style={{ padding: 8 }}>
                                 <button
@@ -8843,6 +9357,7 @@ export default function PuntoDeVentaView({
                     <th style={{ padding: 8 }}>Hora</th>
                     <th style={{ padding: 8 }}>Factura</th>
                     <th style={{ padding: 8 }}>Cliente</th>
+                    <th style={{ padding: 8 }}>🍖/🥤</th>
                     <th style={{ padding: 8 }}>Monto</th>
                     <th style={{ padding: 8 }}>Saldo anterior</th>
                     <th style={{ padding: 8 }}>Nuevo saldo</th>
@@ -8851,81 +9366,145 @@ export default function PuntoDeVentaView({
                   </tr>
                 </thead>
                 <tbody>
-                  {historialCreditos.map((fc) => (
-                    <tr
-                      key={fc.id}
-                      style={{ borderBottom: "1px solid #f0f0f0" }}
-                    >
-                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>
-                        {new Date(fc.fecha_hora).toLocaleTimeString("es-HN")}
-                      </td>
-                      <td style={{ padding: 8 }}>{fc.factura_numero}</td>
-                      <td style={{ padding: 8 }}>
-                        {fc.clientes_credito?.nombre || "—"}
-                      </td>
-                      <td
-                        style={{
-                          padding: 8,
-                          fontWeight: 700,
-                          color: "#9a3412",
-                        }}
+                  {historialCreditos.map((fc) => {
+                    // Contar platillos y bebidas de esta factura crédito
+                    const { plC, bebC } = (() => {
+                      let pl = 0;
+                      let beb = 0;
+                      try {
+                        const prods =
+                          typeof fc.productos === "string"
+                            ? JSON.parse(fc.productos)
+                            : fc.productos;
+                        if (Array.isArray(prods))
+                          for (const p of prods) {
+                            const q = parseFloat(p.cantidad || 1);
+                            if (p.tipo === "comida") pl += q;
+                            else if (p.tipo === "bebida") beb += q;
+                          }
+                      } catch (_) {}
+                      return { plC: Math.round(pl), bebC: Math.round(beb) };
+                    })();
+                    return (
+                      <tr
+                        key={fc.id}
+                        style={{ borderBottom: "1px solid #f0f0f0" }}
                       >
-                        L {Number(fc.total || 0).toFixed(2)}
-                      </td>
-                      <td style={{ padding: 8, color: "#64748b" }}>
-                        L {Number(fc.saldo_anterior || 0).toFixed(2)}
-                      </td>
-                      <td style={{ padding: 8, fontWeight: 700 }}>
-                        L {Number(fc.nuevo_saldo || 0).toFixed(2)}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <span
+                        <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                          {new Date(fc.fecha_hora).toLocaleTimeString("es-HN")}
+                        </td>
+                        <td style={{ padding: 8 }}>{fc.factura_numero}</td>
+                        <td style={{ padding: 8 }}>
+                          {fc.clientes_credito?.nombre || "—"}
+                        </td>
+                        {/* Platillos/bebidas */}
+                        <td style={{ padding: 8, textAlign: "center" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 4,
+                              justifyContent: "center",
+                            }}
+                          >
+                            {plC > 0 && (
+                              <span
+                                style={{
+                                  background: "#fef2f2",
+                                  color: "#dc2626",
+                                  borderRadius: 8,
+                                  padding: "1px 7px",
+                                  fontSize: "0.72rem",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                🍖{plC}
+                              </span>
+                            )}
+                            {bebC > 0 && (
+                              <span
+                                style={{
+                                  background: "#f0f9ff",
+                                  color: "#0284c7",
+                                  borderRadius: 8,
+                                  padding: "1px 7px",
+                                  fontSize: "0.72rem",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                🥤{bebC}
+                              </span>
+                            )}
+                            {plC === 0 && bebC === 0 && (
+                              <span style={{ color: "#94a3b8", fontSize: 12 }}>
+                                —
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td
                           style={{
-                            display: "inline-block",
-                            padding: "2px 8px",
-                            borderRadius: 20,
-                            fontSize: 12,
+                            padding: 8,
                             fontWeight: 700,
-                            background:
-                              fc.estado === "pagado"
-                                ? "#dcfce7"
-                                : fc.estado === "parcial"
-                                  ? "#fef9c3"
-                                  : fc.estado === "vencido"
-                                    ? "#fee2e2"
-                                    : "#fff7ed",
-                            color:
-                              fc.estado === "pagado"
-                                ? "#166534"
-                                : fc.estado === "parcial"
-                                  ? "#713f12"
-                                  : fc.estado === "vencido"
-                                    ? "#991b1b"
-                                    : "#9a3412",
+                            color: "#9a3412",
                           }}
                         >
-                          {fc.estado || "pendiente"}
-                        </span>
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <button
-                          onClick={() => imprimirFacturaCreditoHistorial(fc)}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: 8,
-                            border: "none",
-                            background: "#9a3412",
-                            color: "#fff",
-                            cursor: "pointer",
-                            fontWeight: 600,
-                            fontSize: 13,
-                          }}
-                        >
-                          🖨️ Imprimir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                          L {Number(fc.total || 0).toFixed(2)}
+                        </td>
+                        <td style={{ padding: 8, color: "#64748b" }}>
+                          L {Number(fc.saldo_anterior || 0).toFixed(2)}
+                        </td>
+                        <td style={{ padding: 8, fontWeight: 700 }}>
+                          L {Number(fc.nuevo_saldo || 0).toFixed(2)}
+                        </td>
+                        <td style={{ padding: 8 }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              borderRadius: 20,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              background:
+                                fc.estado === "pagado"
+                                  ? "#dcfce7"
+                                  : fc.estado === "parcial"
+                                    ? "#fef9c3"
+                                    : fc.estado === "vencido"
+                                      ? "#fee2e2"
+                                      : "#fff7ed",
+                              color:
+                                fc.estado === "pagado"
+                                  ? "#166534"
+                                  : fc.estado === "parcial"
+                                    ? "#713f12"
+                                    : fc.estado === "vencido"
+                                      ? "#991b1b"
+                                      : "#9a3412",
+                            }}
+                          >
+                            {fc.estado || "pendiente"}
+                          </span>
+                        </td>
+                        <td style={{ padding: 8 }}>
+                          <button
+                            onClick={() => imprimirFacturaCreditoHistorial(fc)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: "#9a3412",
+                              color: "#fff",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: 13,
+                            }}
+                          >
+                            🖨️ Imprimir
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr
@@ -8937,6 +9516,7 @@ export default function PuntoDeVentaView({
                     <td colSpan={3} style={{ padding: 8, fontWeight: 700 }}>
                       TOTAL DEL TURNO
                     </td>
+                    <td style={{ padding: 8 }}></td>
                     <td
                       style={{
                         padding: 8,

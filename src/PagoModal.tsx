@@ -20,6 +20,7 @@ type PaymentPayload = {
   totalPaid: number;
   tipoPagoString: string;
   pagos?: PagoItem[];
+  esDonacion?: boolean;
 };
 
 export default function PaymentModal({
@@ -41,6 +42,13 @@ export default function PaymentModal({
   const [tipo, setTipo] = useState<
     "efectivo" | "tarjeta" | "transferencia" | "dolares"
   >("efectivo");
+  // Flujo de donación
+  const [isDonacion, setIsDonacion] = useState(false);
+  const [showDonacionModal, setShowDonacionModal] = useState(false);
+  const [donCodigo, setDonCodigo] = useState("");
+  const [donClave, setDonClave] = useState("");
+  const [donError, setDonError] = useState("");
+  const [donLoading, setDonLoading] = useState(false);
   const [monto, setMonto] = useState<string>("");
   const [banco, setBanco] = useState<string>("");
   const [tarjeta, setTarjeta] = useState<string>("");
@@ -71,6 +79,12 @@ export default function PaymentModal({
       setReferencia("");
       setConfirmDeleteId(null);
       setLoadingGenerating(false);
+      // Limpiar estado de donación
+      setIsDonacion(false);
+      setShowDonacionModal(false);
+      setDonCodigo("");
+      setDonClave("");
+      setDonError("");
       // Liberar guard por si el modal se cierra externamente durante una operación
       isConfirmingRef.current = false;
     } else {
@@ -145,7 +159,7 @@ export default function PaymentModal({
     (efectivoSum + tarjetaSum + transferenciaSum + dolaresSum).toFixed(2),
   );
   const remaining = Number((totalPedido - totalPaid).toFixed(2));
-  const canConfirm = totalPaid >= totalPedido && totalPaid > 0;
+  const canConfirm = isDonacion || (totalPaid >= totalPedido && totalPaid > 0);
 
   const currency = (v: number) =>
     new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL" })
@@ -163,6 +177,35 @@ export default function PaymentModal({
     isConfirmingRef.current = true;
 
     (async () => {
+      // Caso donación: total = 0, sin pagos normales
+      if (isDonacion) {
+        try {
+          setLoadingGenerating(true);
+          if (onPagoConfirmado) {
+            await onPagoConfirmado({
+              efectivo: 0,
+              tarjeta: 0,
+              transferencia: 0,
+              totalPaid: 0,
+              tipoPagoString: "donacion",
+              pagos: [],
+              esDonacion: true,
+            });
+          }
+        } catch (e) {
+          console.warn("Error en handleConfirm (donación):", e);
+        } finally {
+          isConfirmingRef.current = false;
+          try {
+            setLoadingGenerating(false);
+          } catch (_) {}
+          try {
+            onClose();
+          } catch (_) {}
+        }
+        return;
+      }
+
       const parts: string[] = [];
       if (efectivoSum > 0) parts.push(`efectivo:(${efectivoSum.toFixed(2)})`);
       if (tarjetaSum > 0) parts.push(`tarjeta:(${tarjetaSum.toFixed(2)})`);
@@ -193,6 +236,49 @@ export default function PaymentModal({
         } catch (_) {}
       }
     })();
+  };
+
+  // Verificar que el código+clave correspondan a un usuario con rol admin
+  // Usa el mismo patrón del Login: fetch REST directo para evitar restricciones RLS
+  const verificarAdmin = async () => {
+    if (!donCodigo || !donClave) {
+      setDonError("Ingresa código y contraseña del administrador.");
+      return;
+    }
+    setDonLoading(true);
+    setDonError("");
+    try {
+      const API_URL = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/usuarios?select=*`;
+      const API_KEY = import.meta.env.VITE_SUPABASE_KEY || "";
+      const res = await fetch(API_URL, {
+        headers: {
+          apikey: API_KEY,
+          Authorization: `Bearer ${API_KEY}`,
+        },
+      });
+      const users = await res.json();
+      const user = users.find(
+        (u: any) => u.codigo === donCodigo && u.clave === donClave,
+      );
+      if (user && user.rol?.toLowerCase() === "admin") {
+        setIsDonacion(true);
+        setShowDonacionModal(false);
+        setDonCodigo("");
+        setDonClave("");
+        setDonError("");
+        // Limpiar pagos ya ingresados
+        setPagos([]);
+        setMonto("");
+      } else if (user) {
+        setDonError("El usuario no tiene rol de Administrador.");
+      } else {
+        setDonError("Credenciales incorrectas.");
+      }
+    } catch (err) {
+      setDonError("Error al verificar. Intenta de nuevo.");
+    } finally {
+      setDonLoading(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -266,6 +352,33 @@ export default function PaymentModal({
               Cerrar
             </button>
           </div>
+
+          {/* Banner donación aprobada */}
+          {isDonacion && (
+            <div
+              style={{
+                marginTop: 10,
+                background: "linear-gradient(135deg,#4ade80,#22c55e)",
+                color: "#fff",
+                borderRadius: 10,
+                padding: "14px 18px",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                fontWeight: 700,
+                fontSize: 16,
+                boxShadow: "0 4px 16px #22c55e44",
+              }}
+            >
+              <span style={{ fontSize: 28 }}>🎁</span>
+              <div>
+                <div>DONACIÓN APROBADA — Platillo Regalado</div>
+                <div style={{ fontSize: 13, fontWeight: 500, opacity: 0.9 }}>
+                  Total registrado: L 0.00 &bull; Autorizado por Admin
+                </div>
+              </div>
+            </div>
+          )}
 
           <div
             style={{
@@ -994,21 +1107,197 @@ export default function PaymentModal({
             >
               Cancelar
             </button>
+            {/* Botón Realizar Donación */}
+            {!isDonacion && (
+              <button
+                onClick={() => {
+                  setDonCodigo("");
+                  setDonClave("");
+                  setDonError("");
+                  setShowDonacionModal(true);
+                }}
+                className="btn-opaque"
+                style={{
+                  background: "#7c3aed",
+                  color: "#fff",
+                  fontSize: 13,
+                  padding: "6px 12px",
+                  fontWeight: 700,
+                  border: "none",
+                }}
+              >
+                🎁 Realizar Donación
+              </button>
+            )}
             <button
               onClick={handleConfirm}
               className="btn-opaque"
               disabled={!canConfirm || loadingGenerating}
               style={{
                 background:
-                  canConfirm && !loadingGenerating ? "#16a34a" : "gray",
+                  canConfirm && !loadingGenerating
+                    ? isDonacion
+                      ? "#22c55e"
+                      : "#16a34a"
+                    : "gray",
                 color: "white",
                 fontSize: 13,
                 padding: "6px 12px",
+                fontWeight: 700,
               }}
             >
-              Registrar y guardar venta
+              {isDonacion
+                ? "🎁 Registrar Donación (L 0.00)"
+                : "Registrar y guardar venta"}
             </button>
           </div>
+          {/* Sub-modal: verificar contrase\u00f1a Admin para donaci\u00f3n */}
+          {showDonacionModal && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setShowDonacionModal(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.6)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 13000,
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: 360,
+                  background: theme === "lite" ? "white" : "#2a2a2a",
+                  borderRadius: 12,
+                  padding: 24,
+                  boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                }}
+              >
+                <div style={{ marginBottom: 12 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: 13,
+                    }}
+                  >
+                    Codigo Admin
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={donCodigo}
+                    onChange={(e) => setDonCodigo(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") verificarAdmin();
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #7c3aed",
+                      fontSize: 14,
+                      background: theme === "lite" ? "#fff" : "#1a1a1a",
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: 13,
+                    }}
+                  >
+                    Clave Admin
+                  </label>
+                  <input
+                    type="password"
+                    value={donClave}
+                    onChange={(e) => setDonClave(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") verificarAdmin();
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #7c3aed",
+                      fontSize: 14,
+                      background: theme === "lite" ? "#fff" : "#1a1a1a",
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                {donError && (
+                  <div
+                    style={{
+                      background: "#fee2e2",
+                      color: "#dc2626",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      marginBottom: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {donError}
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    justifyContent: "flex-end",
+                  }}
+                >
+                  <button
+                    onClick={() => setShowDonacionModal(false)}
+                    className="btn-opaque"
+                    style={{
+                      background: "transparent",
+                      padding: "8px 14px",
+                      border:
+                        theme === "lite" ? "1px solid #ddd" : "1px solid #555",
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      borderRadius: 8,
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={verificarAdmin}
+                    disabled={donLoading}
+                    className="btn-opaque"
+                    style={{
+                      background: donLoading ? "#a78bfa" : "#7c3aed",
+                      color: "#fff",
+                      padding: "8px 18px",
+                      border: "none",
+                      borderRadius: 8,
+                      fontWeight: 700,
+                      cursor: donLoading ? "default" : "pointer",
+                    }}
+                  >
+                    {donLoading
+                      ? "Verificando..."
+                      : "\u2705 Aprobar Donaci\u00f3n"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {confirmDeleteId && (
             <div
               role="dialog"

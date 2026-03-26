@@ -12,6 +12,7 @@ export interface Factura {
   total: string;
   productos: string;
   cliente: string;
+  es_donacion?: boolean;
 }
 
 export interface FacturasEmitidasViewProps {
@@ -28,11 +29,12 @@ export default function FacturasEmitidasView({
   const [hasta, setHasta] = useState("");
   const [loading, setLoading] = useState(false);
   const [modalFactura, setModalFactura] = useState<Factura | null>(null);
+  const [soloDonaciones, setSoloDonaciones] = useState(false);
 
   useEffect(() => {
     fetchFacturas();
     // eslint-disable-next-line
-  }, []);
+  }, [soloDonaciones]);
 
   async function fetchFacturas() {
     setLoading(true);
@@ -41,6 +43,9 @@ export default function FacturasEmitidasView({
       query = query
         .gte("fecha_hora", desde)
         .lte("fecha_hora", hasta + " 23:59:59");
+    }
+    if (soloDonaciones) {
+      query = query.eq("es_donacion", true);
     }
     const { data, error } = await query.order("fecha_hora", {
       ascending: false,
@@ -168,9 +173,38 @@ export default function FacturasEmitidasView({
             >
               Filtrar
             </button>
+            <button
+              onClick={() => setSoloDonaciones((prev) => !prev)}
+              style={{
+                background: soloDonaciones ? "#7c3aed" : "transparent",
+                color: soloDonaciones ? "#fff" : "#7c3aed",
+                borderRadius: 8,
+                border: "2px solid #7c3aed",
+                padding: "8px 18px",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              🎁 {soloDonaciones ? "Ver Todas" : "Solo Donaciones"}
+            </button>
           </div>
           <div style={{ fontWeight: 600, color: "#1976d2", fontSize: 18 }}>
             Total facturas: {facturas.length}
+            {soloDonaciones && (
+              <span
+                style={{
+                  marginLeft: 10,
+                  background: "#7c3aed",
+                  color: "#fff",
+                  borderRadius: 8,
+                  padding: "2px 10px",
+                  fontSize: 13,
+                }}
+              >
+                🎁 Solo Donaciones
+              </span>
+            )}
           </div>
         </div>
 
@@ -259,13 +293,18 @@ export default function FacturasEmitidasView({
                       fontSize: 15,
                       cursor: "pointer",
                       transition: "background 0.2s",
+                      background: f.es_donacion ? "#faf5ff" : undefined,
                     }}
                     onClick={() => setModalFactura(f)}
                     onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#e3f0ff")
+                      (e.currentTarget.style.background = f.es_donacion
+                        ? "#f0e9ff"
+                        : "#e3f0ff")
                     }
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "")
+                      (e.currentTarget.style.background = f.es_donacion
+                        ? "#faf5ff"
+                        : "")
                     }
                   >
                     <td data-label="ID" style={{ padding: 10 }}>
@@ -276,6 +315,22 @@ export default function FacturasEmitidasView({
                     </td>
                     <td data-label="Factura" style={{ padding: 10 }}>
                       {f.factura}
+                      {f.es_donacion && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            background: "#7c3aed",
+                            color: "#fff",
+                            borderRadius: 6,
+                            padding: "1px 7px",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          🎁 DON.
+                        </span>
+                      )}
                     </td>
                     <td data-label="CAI" style={{ padding: 10 }}>
                       {f.cai}
@@ -293,13 +348,19 @@ export default function FacturasEmitidasView({
                       {parseFloat(f.isv_15).toFixed(2)}
                     </td>
                     <td data-label="ISV 18%" style={{ padding: 10 }}>
-                      {parseFloat(f.isv_18).toFixed(2)}
+                      {parseFloat(f.isv_18 || "0").toFixed(2)}
                     </td>
                     <td
                       data-label="Total"
-                      style={{ padding: 10, fontWeight: 700, color: "#1976d2" }}
+                      style={{
+                        padding: 10,
+                        fontWeight: 700,
+                        color: f.es_donacion ? "#7c3aed" : "#1976d2",
+                      }}
                     >
-                      {parseFloat(f.total).toFixed(2)}
+                      {f.es_donacion
+                        ? "🎁 0.00"
+                        : parseFloat(f.total).toFixed(2)}
                     </td>
                     <td
                       data-label="Productos"

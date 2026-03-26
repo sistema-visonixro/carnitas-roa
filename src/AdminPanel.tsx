@@ -20,7 +20,8 @@ type ViewType =
   | "datosNegocio"
   | "gananciasNetas"
   | "creditosPendientes"
-  | "proveedores";
+  | "proveedores"
+  | "donacionesMensuales";
 
 const cards: {
   label: string;
@@ -106,6 +107,13 @@ const cards: {
     color: "#0f766e",
     subtitle: "Cuentas por pagar",
   },
+  {
+    label: "Donaciones Mensuales",
+    icon: "🎁",
+    view: "donacionesMensuales",
+    color: "#7c3aed",
+    subtitle: "Platillos regalados",
+  },
 ];
 
 interface AdminPanelProps {
@@ -127,6 +135,7 @@ import DatosNegocioView from "./DatosNegocioView";
 import GananciasNetasView from "./GananciasNetasView";
 import CreditosPendientesView from "./CreditosPendientesView";
 import ProveedoresCxPView from "./ProveedoresCxPView";
+import DonacionesMensualesView from "./DonacionesMensualesView";
 
 const AdminPanel: FC<AdminPanelProps> = (props) => {
   const { user } = props;
@@ -345,6 +354,24 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
         <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
         <circle cx="5.5" cy="18.5" r="2.5" />
         <circle cx="18.5" cy="18.5" r="2.5" />
+      </svg>
+    ),
+    donacionesMensuales: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M20 12v10H4V12" />
+        <path d="M22 7H2v5h20V7z" />
+        <path d="M12 22V7" />
+        <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+        <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
       </svg>
     ),
   };
@@ -1054,6 +1081,9 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
             )}
             {currentView === "proveedores" && (
               <ProveedoresCxPView onBack={() => setCurrentView("menu")} />
+            )}
+            {currentView === "donacionesMensuales" && (
+              <DonacionesMensualesView onBack={() => setCurrentView("menu")} />
             )}
           </div>
         </section>

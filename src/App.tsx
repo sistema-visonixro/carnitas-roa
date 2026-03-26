@@ -63,7 +63,8 @@ function App() {
         | "cierreadmin"
         | "datosNegocio"
         | "creditosPendientes"
-        | "proveedores";
+        | "proveedores"
+        | "donacionesMensuales";
     } catch {
       return undefined;
     }
@@ -91,6 +92,7 @@ function App() {
     | "gananciasNetas"
     | "creditosPendientes"
     | "proveedores"
+    | "donacionesMensuales"
   >(initialView || "home");
   const [cajaApertura, setCajaApertura] = useState<string | null>(null);
 
