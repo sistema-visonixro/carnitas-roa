@@ -7143,8 +7143,8 @@ export default function PuntoDeVentaView({
                                       cliente: p.cliente || null,
                                       tipo_orden: "DELIVERY",
                                       operation_id: crypto.randomUUID(),
-                                      productos: JSON.stringify(
-                                        productos.map((pp: any) => ({
+                                      productos: JSON.stringify([
+                                        ...productos.map((pp: any) => ({
                                           id: pp.id,
                                           nombre: pp.nombre,
                                           precio: pp.precio,
@@ -7153,11 +7153,24 @@ export default function PuntoDeVentaView({
                                           complementos: pp.complementos ?? [],
                                           piezas: pp.piezas ?? null,
                                         })),
-                                      ),
+                                        // Agregar línea de delivery si hay costo de envío
+                                        ...(parseFloat(p.costo_envio || "0") > 0
+                                          ? [{
+                                              id: "delivery",
+                                              nombre: "Delivery",
+                                              precio: parseFloat(p.costo_envio || "0"),
+                                              cantidad: 1,
+                                              tipo: "delivery",
+                                              complementos: [],
+                                              piezas: null,
+                                            }]
+                                          : []),
+                                      ]),
                                       sub_total: subTotal.toFixed(2),
                                       isv_15: isv15.toFixed(2),
                                       isv_18: isv18.toFixed(2),
-                                      total: Number(p.total || 0).toFixed(2),
+                                      // total incluye costo de envío
+                                      total: (Number(p.total || 0) + parseFloat(p.costo_envio || "0")).toFixed(2),
                                     };
 
                                     // Preparar fila de pagosf (1 sola fila con pago + delivery)
@@ -7171,6 +7184,9 @@ export default function PuntoDeVentaView({
 
                                     const pagoFDelivery = {
                                       factura: facturaActual,
+                                      // El método de pago almacena SOLO el monto de productos.
+                                      // El campo delivery almacena el costo de envío por separado.
+                                      // Al leer (resumen/cierre/dashboard) se suma: método + delivery.
                                       efectivo:
                                         tipoPago === "efectivo"
                                           ? montoProductos

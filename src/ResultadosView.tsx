@@ -427,13 +427,29 @@ export default function ResultadosView({
           }
         }
         // Normalizar pagosf (una fila por factura) al formato multi-tipo legado
-        // Se incluye una fila especial de CAMBIO con monto negativo para restar del efectivo
+        // Normalizar pagosf al formato multi-tipo. El campo `delivery` se suma
+        // al método de pago principal (misma lógica que fetchResumenCaja).
         const normalizado: any[] = [];
         for (const r of todosLosPagosF) {
-          if (parseFloat(r.efectivo || 0) > 0)
+          const ef  = parseFloat(r.efectivo      || 0);
+          const tk  = parseFloat(r.tarjeta       || 0);
+          const tr  = parseFloat(r.transferencia || 0);
+          const dl  = parseFloat(r.dolares       || 0);
+          const dv  = parseFloat(r.delivery      || 0);
+
+          // Asignar delivery al método activo (igual que fetchResumenCaja)
+          let dvEf = 0, dvTk = 0, dvTr = 0, dvDl = 0;
+          if (dv > 0) {
+            if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) dvEf = dv;
+            else if (tk > 0) dvTk = dv;
+            else if (tr > 0) dvTr = dv;
+            else dvDl = dv;
+          }
+
+          if (ef + dvEf > 0)
             normalizado.push({
               tipo: "efectivo",
-              monto: r.efectivo,
+              monto: ef + dvEf,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
@@ -451,30 +467,30 @@ export default function ResultadosView({
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.tarjeta || 0) > 0)
+          if (tk + dvTk > 0)
             normalizado.push({
               tipo: "tarjeta",
-              monto: r.tarjeta,
+              monto: tk + dvTk,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.transferencia || 0) > 0)
+          if (tr + dvTr > 0)
             normalizado.push({
               tipo: "transferencia",
-              monto: r.transferencia,
+              monto: tr + dvTr,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.dolares || 0) > 0)
+          if (dl + dvDl > 0)
             normalizado.push({
               tipo: "dolares",
-              monto: r.dolares,
+              monto: dl + dvDl,
               usd_monto: r.dolares_usd,
               factura: r.factura,
               factura_venta: r.factura,
@@ -671,12 +687,28 @@ export default function ResultadosView({
           }
         }
         // Normalizar pagosf al formato multi-tipo legado
+        // Normalizar pagosf al formato multi-tipo. El campo `delivery` se suma
+        // al método de pago principal (igual que fetchResumenCaja).
         const normalizado: any[] = [];
         for (const r of todosLosPagosF) {
-          if (parseFloat(r.efectivo || 0) > 0)
+          const ef  = parseFloat(r.efectivo      || 0);
+          const tk  = parseFloat(r.tarjeta       || 0);
+          const tr  = parseFloat(r.transferencia || 0);
+          const dl  = parseFloat(r.dolares       || 0);
+          const dv  = parseFloat(r.delivery      || 0);
+
+          let dvEf = 0, dvTk = 0, dvTr = 0, dvDl = 0;
+          if (dv > 0) {
+            if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) dvEf = dv;
+            else if (tk > 0) dvTk = dv;
+            else if (tr > 0) dvTr = dv;
+            else dvDl = dv;
+          }
+
+          if (ef + dvEf > 0)
             normalizado.push({
               tipo: "efectivo",
-              monto: r.efectivo,
+              monto: ef + dvEf,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
@@ -684,10 +716,10 @@ export default function ResultadosView({
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.tarjeta || 0) > 0)
+          if (tk + dvTk > 0)
             normalizado.push({
               tipo: "tarjeta",
-              monto: r.tarjeta,
+              monto: tk + dvTk,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
@@ -695,10 +727,10 @@ export default function ResultadosView({
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.transferencia || 0) > 0)
+          if (tr + dvTr > 0)
             normalizado.push({
               tipo: "transferencia",
-              monto: r.transferencia,
+              monto: tr + dvTr,
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,
@@ -706,10 +738,10 @@ export default function ResultadosView({
               cajero_id: r.cajero_id,
               fecha_hora: r.fecha_hora,
             });
-          if (parseFloat(r.dolares || 0) > 0)
+          if (dl + dvDl > 0)
             normalizado.push({
               tipo: "dolares",
-              monto: r.dolares,
+              monto: dl + dvDl,
               usd_monto: r.dolares_usd,
               factura: r.factura,
               factura_venta: r.factura,
