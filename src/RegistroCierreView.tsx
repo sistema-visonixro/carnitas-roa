@@ -100,34 +100,75 @@ export default function RegistroCierreView({
 
     console.debug("Rango de cierre - desde apertura:", desde, "hasta:", hasta);
 
-    // Construir filtro de cajero: preferir cajero_id, si no disponible usar nombre
-    const cajeroFilterIsId = !!usuarioActual?.id;
+    // ── Consulta única a pagosf (una fila por factura) ──────────────────
+    const { data: pagosfRows, error: pagosfError } = await supabase
+      .from("pagosf")
+      .select("efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio")
+      .eq("cajero_id", usuarioActual.id)
+      .gte("fecha_hora", desde)
+      .lte("fecha_hora", hasta);
 
-    // Usar el mismo filtro que el modal Resumen de caja: por cajero (id o nombre) y rango de fecha.
-    const pagosBase = () =>
-      supabase
-        .from("pagos")
-        .select("monto, fecha_hora")
-        .gte("fecha_hora", desde)
-        .lte("fecha_hora", hasta);
+    if (pagosfError) console.error("Error leyendo pagosf:", pagosfError);
 
-    const pagosEfectivoQuery = cajeroFilterIsId
-      ? pagosBase().eq("tipo", "efectivo").eq("cajero_id", usuarioActual.id)
-      : pagosBase().eq("tipo", "efectivo").eq("cajero", usuarioActual?.nombre);
+    const rows = pagosfRows || [];
 
-    const { data: pagosEfectivo } = await pagosEfectivoQuery;
+    let efectivoBruto = 0;
+    let tarjetaDia = 0;
+    let transferenciasDia = 0;
+    let dolaresDia = 0; // USD
+    let cambioTotal = 0;
+
+    for (const r of rows) {
+      const ef  = parseFloat(r.efectivo      || 0);
+      const tk  = parseFloat(r.tarjeta       || 0);
+      const tr  = parseFloat(r.transferencia || 0);
+      const dl  = parseFloat(r.dolares       || 0);
+      const dlU = parseFloat(r.dolares_usd   || 0);
+      const cb  = parseFloat(r.cambio        || 0);
+      const dv  = parseFloat(r.delivery      || 0);
+
+      dolaresDia  += dlU;
+      cambioTotal += cb;
+
+      if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
+        efectivoBruto     += ef + dv;
+        tarjetaDia        += tk;
+        transferenciasDia += tr;
+      } else if (tk > 0) {
+        efectivoBruto     += ef;
+        tarjetaDia        += tk + dv;
+        transferenciasDia += tr;
+      } else if (tr > 0) {
+        efectivoBruto     += ef;
+        tarjetaDia        += tk;
+        transferenciasDia += tr + dv;
+      } else {
+        efectivoBruto     += ef + dv;
+        tarjetaDia        += tk;
+        transferenciasDia += tr;
+      }
+    }
+
+    // Efectivo que el cajero retiene = efectivo (+ delivery en efectivo) − cambio
+    const efectivoDia = efectivoBruto - cambioTotal;
     console.debug(
-      "pagosEfectivo count:",
-      pagosEfectivo?.length,
-      "sample:",
-      pagosEfectivo?.slice(0, 3),
+      "pagosf rows:",
+      rows.length,
+      "efectivoBruto:",
+      efectivoBruto,
+      "cambio:",
+      cambioTotal,
+      "efectivoDia:",
+      efectivoDia,
+      "tarjeta:",
+      tarjetaDia,
+      "trans:",
+      transferenciasDia,
+      "dolares USD:",
+      dolaresDia,
     );
-    const efectivoDia = pagosEfectivo
-      ? pagosEfectivo.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
-      : 0;
-    console.debug("efectivoDia computed:", efectivoDia);
 
-    // Obtener gastos: ahora usa fecha_hora (timestamp) para filtrar desde apertura exacta
+    // ── Gastos del turno ─────────────────────────────────────────────────
     let gastosDia = 0;
     try {
       const { data: gastosData } = await supabase
@@ -145,81 +186,23 @@ export default function RegistroCierreView({
       }
     } catch (e) {
       console.warn("No se pudieron obtener gastos:", e);
-      gastosDia = 0;
     }
-    console.debug("gastosDia computed:", gastosDia);
+    console.debug("gastosDia:", gastosDia);
 
-    // Restar los gastos del día al efectivo
-    const efectivoDiaNet = Math.max(0, efectivoDia - gastosDia);
-    console.debug("efectivoDia neto (efectivo - gastos):", efectivoDiaNet);
-
-    const pagosTarjetaQuery = cajeroFilterIsId
-      ? pagosBase().eq("tipo", "tarjeta").eq("cajero_id", usuarioActual.id)
-      : pagosBase().eq("tipo", "tarjeta").eq("cajero", usuarioActual?.nombre);
-    const { data: pagosTarjeta } = await pagosTarjetaQuery;
-    console.debug(
-      "pagosTarjeta count:",
-      pagosTarjeta?.length,
-      "sample:",
-      pagosTarjeta?.slice(0, 3),
-    );
-    const tarjetaDia = pagosTarjeta
-      ? pagosTarjeta.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
-      : 0;
-    console.debug("tarjetaDia computed:", tarjetaDia);
-
-    const pagosTransQuery = cajeroFilterIsId
-      ? pagosBase()
-          .eq("tipo", "transferencia")
-          .eq("cajero_id", usuarioActual.id)
-      : pagosBase()
-          .eq("tipo", "transferencia")
-          .eq("cajero", usuarioActual?.nombre);
-    const { data: pagosTrans } = await pagosTransQuery;
-    console.debug(
-      "pagosTrans count:",
-      pagosTrans?.length,
-      "sample:",
-      pagosTrans?.slice(0, 3),
-    );
-    const transferenciasDia = pagosTrans
-      ? pagosTrans.reduce((sum, p) => sum + parseFloat(p.monto || 0), 0)
-      : 0;
-    console.debug("transferenciasDia computed:", transferenciasDia);
-
-    // Obtener pagos en dólares (suma de usd_monto)
-    const pagosDolaresQuery = cajeroFilterIsId
-      ? pagosBase().eq("tipo", "dolares").eq("cajero_id", usuarioActual.id)
-      : pagosBase().eq("tipo", "dolares").eq("cajero", usuarioActual?.nombre);
-    const { data: pagosDolares } = await pagosDolaresQuery.select("usd_monto");
-    console.debug(
-      "pagosDolares count:",
-      pagosDolares?.length,
-      "sample:",
-      pagosDolares?.slice(0, 3),
-    );
-    const dolaresDia = pagosDolares
-      ? pagosDolares.reduce((sum, p) => sum + parseFloat(p.usd_monto || 0), 0)
-      : 0;
-    console.debug("dolaresDia computed (suma usd_monto):", dolaresDia);
+    // Efectivo neto = efectivo − cambio − gastos (puede ser negativo)
+    const efectivoDiaNet = efectivoDia - gastosDia;
+    console.debug("efectivoDiaNet:", efectivoDiaNet);
 
     // Contar platillos (comidas) y bebidas vendidas en el turno
     let platillosDia = 0;
     let bebidasDia = 0;
     try {
-      const facturasQuery = cajeroFilterIsId
-        ? supabase
-            .from("facturas")
-            .select("productos, factura")
-            .eq("cajero_id", usuarioActual.id)
-            .gte("fecha_hora", desde)
-            .lte("fecha_hora", hasta)
-        : supabase
-            .from("facturas")
-            .select("productos, factura")
-            .eq("cajero", usuarioActual?.nombre)
-            .gte("fecha_hora", desde)
-            .lte("fecha_hora", hasta);
+      const facturasQuery = supabase
+        .from("facturas")
+        .select("productos, factura")
+        .eq("cajero_id", usuarioActual.id)
+        .gte("fecha_hora", desde)
+        .lte("fecha_hora", hasta);
       const { data: facturasData } = await facturasQuery;
       if (facturasData && Array.isArray(facturasData)) {
         const facturasVistas = new Set<string>();
@@ -1054,7 +1037,7 @@ export default function RegistroCierreView({
                 step="0.01"
                 value={dolares}
                 onChange={(e) => setDolares(e.target.value)}
-                placeholder="0.00 (opcional)"
+                placeholder="0.00 "
                 style={{
                   padding: 14,
                   fontSize: 16,

@@ -67,6 +67,12 @@ export default function ResultadosView({
     dolares_convertidos: number;
     tasa_dolar: number;
     gastos: number;
+    cambio?: number;
+    delivery?: number;
+    platillos?: number;
+    bebidas?: number;
+    platillos_donados?: number;
+    bebidas_donadas?: number;
   } | null>(null);
   // Obtener usuario actual de localStorage
   const usuarioActual = (() => {
@@ -128,38 +134,12 @@ export default function ResultadosView({
       const cajaAsignada = cierreData.caja;
       const { end: dayEnd } = getLocalDayRange();
 
-      const [
-        { data: pagosEfectivo },
-        { data: pagosTarjeta },
-        { data: pagosTrans },
-        { data: pagosDolares },
-        { data: gastosDia },
-      ] = await Promise.all([
+      const [{ data: pagosfDia }, { data: gastosDia }] = await Promise.all([
         supabase
-          .from("pagos")
-          .select("monto")
-          .eq("tipo", "efectivo")
-          .eq("cajero_id", cajeroId)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", dayEnd),
-        supabase
-          .from("pagos")
-          .select("monto")
-          .eq("tipo", "tarjeta")
-          .eq("cajero_id", cajeroId)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", dayEnd),
-        supabase
-          .from("pagos")
-          .select("monto")
-          .eq("tipo", "transferencia")
-          .eq("cajero_id", cajeroId)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", dayEnd),
-        supabase
-          .from("pagos")
-          .select("monto,usd_monto")
-          .eq("tipo", "dolares")
+          .from("pagosf")
+          .select(
+            "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
+          )
           .eq("cajero_id", cajeroId)
           .gte("fecha_hora", start)
           .lte("fecha_hora", dayEnd),
@@ -172,26 +152,53 @@ export default function ResultadosView({
           .lte("fecha_hora", dayEnd),
       ]);
 
-      const efectivoSum = (pagosEfectivo || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const tarjetaSum = (pagosTarjeta || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const transSum = (pagosTrans || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const dolaresSum = (pagosDolares || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const dolaresSumUsd = (pagosDolares || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.usd_monto || 0),
-        0,
-      );
+      const pagosfRows = pagosfDia || [];
+
+      // Acumuladores por método de pago
+      let efectivoSumBruto = 0;
+      let tarjetaSum = 0;
+      let transSum = 0;
+      let dolaresSum = 0;
+      let dolaresSumUsd = 0;
+      let cambioSum = 0;
+      let deliverySum = 0;
+
+      // Distribuir delivery al método de pago principal de cada factura.
+      for (const r of pagosfRows) {
+        const ef  = parseFloat(r.efectivo      || 0);
+        const tk  = parseFloat(r.tarjeta       || 0);
+        const tr  = parseFloat(r.transferencia || 0);
+        const dl  = parseFloat(r.dolares       || 0);
+        const dlU = parseFloat(r.dolares_usd   || 0);
+        const cb  = parseFloat(r.cambio        || 0);
+        const dv  = parseFloat(r.delivery      || 0);
+
+        dolaresSum    += dl;
+        dolaresSumUsd += dlU;
+        cambioSum     += cb;
+        deliverySum   += dv;
+
+        if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
+          efectivoSumBruto += ef + dv;
+          tarjetaSum       += tk;
+          transSum         += tr;
+        } else if (tk > 0) {
+          efectivoSumBruto += ef;
+          tarjetaSum       += tk + dv;
+          transSum         += tr;
+        } else if (tr > 0) {
+          efectivoSumBruto += ef;
+          tarjetaSum       += tk;
+          transSum         += tr + dv;
+        } else {
+          efectivoSumBruto += ef + dv;
+          tarjetaSum       += tk;
+          transSum         += tr;
+        }
+      }
+
+      // Efectivo neto = bruto (delivery incluido) − cambio
+      const efectivoSum = Number((efectivoSumBruto - cambioSum).toFixed(2));
 
       let tasa = 0;
       try {
@@ -210,6 +217,42 @@ export default function ResultadosView({
         0,
       );
 
+      // Contar platillos y bebidas del turno (excluyendo donaciones)
+      let platillosSum = 0;
+      let bebidasSum = 0;
+      let platillosDonados = 0;
+      let bebidasDonadas = 0;
+      try {
+        const { data: facturasResumen } = await supabase
+          .from("facturas")
+          .select("productos, es_donacion")
+          .eq("cajero_id", cajeroId)
+          .gte("fecha_hora", start)
+          .lte("fecha_hora", dayEnd);
+        if (facturasResumen) {
+          for (const fac of facturasResumen) {
+            try {
+              const items =
+                typeof fac.productos === "string"
+                  ? JSON.parse(fac.productos)
+                  : fac.productos;
+              if (Array.isArray(items)) {
+                for (const item of items) {
+                  const qty = parseFloat(item.cantidad || 1);
+                  if (fac.es_donacion) {
+                    if (item.tipo === "comida") platillosDonados += qty;
+                    else if (item.tipo === "bebida") bebidasDonadas += qty;
+                  } else {
+                    if (item.tipo === "comida") platillosSum += qty;
+                    else if (item.tipo === "bebida") bebidasSum += qty;
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+
       setResumenAdminData({
         efectivo: efectivoSum,
         tarjeta: tarjetaSum,
@@ -219,6 +262,12 @@ export default function ResultadosView({
         dolares_convertidos: dolaresConvertidos,
         tasa_dolar: tasa,
         gastos: gastosSum,
+        cambio: cambioSum,
+        delivery: deliverySum,
+        platillos: Math.round(platillosSum),
+        bebidas: Math.round(bebidasSum),
+        platillos_donados: Math.round(platillosDonados),
+        bebidas_donadas: Math.round(bebidasDonadas),
       });
     } catch (err) {
       console.error("Error al obtener resumen admin:", err);
@@ -231,6 +280,8 @@ export default function ResultadosView({
         dolares_convertidos: 0,
         tasa_dolar: 0,
         gastos: 0,
+        cambio: 0,
+        delivery: 0,
       });
     } finally {
       setResumenAdminLoading(false);
@@ -340,13 +391,17 @@ export default function ResultadosView({
       }
 
       async function obtenerTodosLosPagos() {
-        let todosLosPagos: any[] = [];
+        let todosLosPagosF: any[] = [];
         let desde_pag = 0;
         const limite = 1000;
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("pagos").select("*");
+          let query = supabase
+            .from("pagosf")
+            .select(
+              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
+            );
 
           if (desdeInicio && hastaFin) {
             query = query
@@ -364,14 +419,70 @@ export default function ResultadosView({
 
           if (error) throw error;
           if (data) {
-            todosLosPagos = [...todosLosPagos, ...data];
+            todosLosPagosF = [...todosLosPagosF, ...data];
             desde_pag += limite;
             hayMasRegistros = data.length === limite;
           } else {
             hayMasRegistros = false;
           }
         }
-        return todosLosPagos;
+        // Normalizar pagosf (una fila por factura) al formato multi-tipo legado
+        // Se incluye una fila especial de CAMBIO con monto negativo para restar del efectivo
+        const normalizado: any[] = [];
+        for (const r of todosLosPagosF) {
+          if (parseFloat(r.efectivo || 0) > 0)
+            normalizado.push({
+              tipo: "efectivo",
+              monto: r.efectivo,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.cambio || 0) > 0)
+            // El cambio devuelto se contabiliza como efectivo negativo
+            normalizado.push({
+              tipo: "efectivo",
+              monto: -parseFloat(r.cambio),
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.tarjeta || 0) > 0)
+            normalizado.push({
+              tipo: "tarjeta",
+              monto: r.tarjeta,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.transferencia || 0) > 0)
+            normalizado.push({
+              tipo: "transferencia",
+              monto: r.transferencia,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.dolares || 0) > 0)
+            normalizado.push({
+              tipo: "dolares",
+              monto: r.dolares,
+              usd_monto: r.dolares_usd,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+        }
+        return normalizado;
       }
 
       const [factData, gastData, pagosData] = await Promise.all([
@@ -526,13 +637,17 @@ export default function ResultadosView({
       }
 
       async function obtenerTodosLosPagosReporte() {
-        let todosLosPagos: any[] = [];
+        let todosLosPagosF: any[] = [];
         let desde_pag = 0;
         const limite = 1000;
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("pagos").select("*");
+          let query = supabase
+            .from("pagosf")
+            .select(
+              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cajero_id, cajero, fecha_hora",
+            );
 
           query = query
             .gte("fecha_hora", desdeInicio)
@@ -548,14 +663,62 @@ export default function ResultadosView({
 
           if (error) throw error;
           if (data) {
-            todosLosPagos = [...todosLosPagos, ...data];
+            todosLosPagosF = [...todosLosPagosF, ...data];
             desde_pag += limite;
             hayMasRegistros = data.length === limite;
           } else {
             hayMasRegistros = false;
           }
         }
-        return todosLosPagos;
+        // Normalizar pagosf al formato multi-tipo legado
+        const normalizado: any[] = [];
+        for (const r of todosLosPagosF) {
+          if (parseFloat(r.efectivo || 0) > 0)
+            normalizado.push({
+              tipo: "efectivo",
+              monto: r.efectivo,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero: r.cajero,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.tarjeta || 0) > 0)
+            normalizado.push({
+              tipo: "tarjeta",
+              monto: r.tarjeta,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero: r.cajero,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.transferencia || 0) > 0)
+            normalizado.push({
+              tipo: "transferencia",
+              monto: r.transferencia,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero: r.cajero,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.dolares || 0) > 0)
+            normalizado.push({
+              tipo: "dolares",
+              monto: r.dolares,
+              usd_monto: r.dolares_usd,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero: r.cajero,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+        }
+        return normalizado;
       }
 
       async function obtenerTodosLosCierresReporte() {
@@ -1856,10 +2019,11 @@ export default function ResultadosView({
     win.document.close();
 
     try {
-      const desdeInicio = desde.replace("T", " ") + ":00";
-      const hastaFin = hasta.replace("T", " ") + ":59";
+      // Misma normalización que usa fetchDatos (Dashboard)
+      const desdeInicio = desde ? desde.replace("T", " ") + ":00" : null;
+      const hastaFin = hasta ? hasta.replace("T", " ") + ":59" : null;
 
-      // Obtener todas las facturas con paginación
+      // Obtener todas las facturas — lógica idéntica a obtenerTodasLasFacturas() en fetchDatos
       async function obtenerTodasLasFacturasReporte() {
         let todasLasFacturas: any[] = [];
         let desde_pag = 0;
@@ -1867,33 +2031,29 @@ export default function ResultadosView({
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("facturas").select("*");
+          let query = supabase.from("facturas").select("*", { count: "exact" });
 
-          query = query
-            .gte("fecha_hora", desdeInicio)
-            .lte("fecha_hora", hastaFin);
+          if (desdeInicio && hastaFin) {
+            query = query
+              .gte("fecha_hora", desdeInicio)
+              .lte("fecha_hora", hastaFin);
+          }
 
           if (cajeroFiltro) {
             query = query.eq("cajero_id", cajeroFiltro);
           }
 
           const { data, error } = await query
-            .order("fecha_hora", { ascending: true })
+            .order("fecha_hora", { ascending: false })
             .range(desde_pag, desde_pag + limite - 1);
 
-          if (error) {
-            console.error("Error obteniendo facturas:", error);
-            break;
-          }
-
-          if (!data || data.length === 0) {
-            hayMasRegistros = false;
-          } else {
-            todasLasFacturas = todasLasFacturas.concat(data);
+          if (error) throw error; // propaga el error, no silencia datos parciales
+          if (data) {
+            todasLasFacturas = [...todasLasFacturas, ...data];
             desde_pag += limite;
-            if (data.length < limite) {
-              hayMasRegistros = false;
-            }
+            hayMasRegistros = data.length === limite;
+          } else {
+            hayMasRegistros = false;
           }
         }
 
@@ -1905,28 +2065,122 @@ export default function ResultadosView({
         ? cajeros.find((c) => c.id === cajeroFiltro)?.nombre || "Sin nombre"
         : "";
 
-      let html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte de Facturas</title></head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;font-size:12px;background:#fff;">`;
+      // Obtener tipos de pago por factura desde pagosf (una fila por factura)
+      const numeros = facturas_reporte
+        .map((f: any) => f.factura)
+        .filter(Boolean);
+      // Map: factura -> array de tipos (derivados de columnas no-cero)
+      const pagosTiposMap = new Map<string, string[]>();
+      if (numeros.length > 0) {
+        const chunkSize = 500;
+        for (let i = 0; i < numeros.length; i += chunkSize) {
+          const chunk = numeros.slice(i, i + chunkSize);
+          const { data: pagosfChunk } = await supabase
+            .from("pagosf")
+            .select("factura, efectivo, tarjeta, transferencia, dolares")
+            .in("factura", chunk);
+          for (const r of pagosfChunk || []) {
+            if (!r.factura) continue;
+            const tipos: string[] = [];
+            if (parseFloat(r.efectivo || 0) > 0) tipos.push("efectivo");
+            if (parseFloat(r.tarjeta || 0) > 0) tipos.push("tarjeta");
+            if (parseFloat(r.transferencia || 0) > 0)
+              tipos.push("transferencia");
+            if (parseFloat(r.dolares || 0) > 0) tipos.push("dolares");
+            if (tipos.length > 0) pagosTiposMap.set(r.factura, tipos);
+          }
+        }
+      }
+
+      // Helper: etiqueta legible del tipo de pago
+      const labelTipo = (t: string) => {
+        if (t.includes("tarjeta")) return "💳 Tarjeta";
+        if (t.includes("transfer")) return "🏦 Transf.";
+        if (t.includes("dolar")) return "💱 Dólares";
+        if (t.includes("donacion") || t.includes("donación"))
+          return "🎁 Donación";
+        return "💵 Efectivo";
+      };
+
+      const getTipoPagoLabel = (f: any): string => {
+        if (f.es_donacion) return "🎁 Donación";
+        const tipos = pagosTiposMap.get(f.factura);
+        if (!tipos || tipos.length === 0) return "💵 Efectivo";
+        return tipos.map(labelTipo).join(" + ");
+      };
+
+      const thBase = `border:1px solid #ddd;padding:9px 11px;text-align:left;font-size:12px;font-weight:700;background:#1565c0;color:#fff;`;
+      const tdBase = `border:1px solid #eee;padding:7px 10px;font-size:12px;`;
+
+      const totalGeneral = facturas_reporte.reduce(
+        (s: number, f: any) =>
+          s + parseFloat(String(f.total || 0).replace(/,/g, "")),
+        0,
+      );
+
+      let html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte de Facturas</title>
+      <style>
+        @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+        tr:nth-child(even){background:#f5f9ff;}
+        tr:hover{background:#e3f0ff;}
+      </style>
+      </head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;font-size:12px;background:#fff;">`;
       html += `<div style="max-width:1200px;margin:0 auto;">`;
-      html += `<h1 style="text-align:center;color:#333;">📋 Reporte de Facturas</h1>`;
-      html += `<p style="text-align:center;color:#666;margin-bottom:20px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` - Cajero: ${nombreCajero}` : ""}</p>`;
+      html += `<h1 style="text-align:center;color:#1565c0;margin-bottom:4px;">📋 Reporte de Facturas</h1>`;
+      html += `<p style="text-align:center;color:#666;margin-bottom:20px;font-size:13px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` · Cajero: ${nombreCajero}` : ""} · <strong>${facturas_reporte.length} facturas</strong></p>`;
 
-      html += `<h2 style="color:#333;border-bottom:2px solid #ddd;padding-bottom:5px;margin-top:30px;">Tabla de Ventas Realizadas</h2>`;
-      html += `<table style="width:100%;border-collapse:collapse;margin-top:10px;"><thead><tr style="background:#f0f0f0;"><th style="border:1px solid #ccc;padding:8px;text-align:left;">#</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Factura</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Cliente</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Fecha/Hora</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">Total (L)</th></tr></thead><tbody>`;
+      html += `<table style="width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px #0001;">
+        <thead>
+          <tr>
+            <th style="${thBase}">#</th>
+            <th style="${thBase}">Fecha/Hora</th>
+            <th style="${thBase}">Factura</th>
+            <th style="${thBase}">CAI</th>
+            <th style="${thBase}">Cajero</th>
+            <th style="${thBase}">Caja</th>
+            <th style="${thBase}">Tipo de Pago</th>
+            <th style="${thBase};text-align:right;">Total (L)</th>
+            <th style="${thBase}">Productos</th>
+            <th style="${thBase}">Cliente</th>
+          </tr>
+        </thead>
+        <tbody>`;
 
-      facturas_reporte.forEach((f, i) => {
+      facturas_reporte.forEach((f: any, idx: number) => {
         const total = parseFloat(String(f.total || 0).replace(/,/g, ""));
-        const formattedTotal = total.toLocaleString("de-DE", {
-          minimumFractionDigits: 2,
-        });
-        html += `<tr><td style="border:1px solid #ccc;padding:8px;">${i + 1}</td><td style="border:1px solid #ccc;padding:8px;">${f.numero_factura || f.id}</td><td style="border:1px solid #ccc;padding:8px;">${f.cliente || "—"}</td><td style="border:1px solid #ccc;padding:8px;">${f.fecha_hora?.slice(0, 16).replace("T", " ") || "—"}</td><td style="border:1px solid #ccc;padding:8px;text-align:right;">${formattedTotal}</td></tr>`;
+        const totalStr = f.es_donacion ? "🎁 0.00" : total.toFixed(2);
+        let prods = "";
+        try {
+          const arr = JSON.parse(f.productos);
+          if (Array.isArray(arr))
+            prods = arr
+              .map((p: any) => `${p.nombre}(${p.cantidad})`)
+              .join(", ");
+        } catch (__) {
+          prods = "";
+        }
+        const tipoPagoLabel = getTipoPagoLabel(f);
+        const rowBg = idx % 2 === 0 ? "#fff" : "#f5f9ff";
+        html += `<tr style="background:${rowBg};">
+          <td style="${tdBase};color:#999;">${idx + 1}</td>
+          <td style="${tdBase}">${f.fecha_hora?.replace("T", " ").slice(0, 19) || "—"}</td>
+          <td style="${tdBase};font-weight:600;">${f.factura || "—"}${f.es_donacion ? " 🎁" : ""}</td>
+          <td style="${tdBase};font-size:10px;color:#888;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.cai || ""}</td>
+          <td style="${tdBase}">${f.cajero || ""}</td>
+          <td style="${tdBase}">${f.caja || ""}</td>
+          <td style="${tdBase};white-space:nowrap;">${tipoPagoLabel}</td>
+          <td style="${tdBase};text-align:right;font-weight:700;color:${f.es_donacion ? "#7c3aed" : "#1565c0"};">${totalStr}</td>
+          <td style="${tdBase};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555;">${prods}</td>
+          <td style="${tdBase}">${f.cliente || ""}</td>
+        </tr>`;
       });
 
-      const totalFacturas = facturas_reporte.reduce((sum, f) => {
-        const total = parseFloat(String(f.total || 0).replace(/,/g, ""));
-        return sum + (isNaN(total) ? 0 : total);
-      }, 0);
-      html += `<tr style="background:#ffffcc;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:8px;text-align:right;">TOTAL:</td><td style="border:1px solid #ccc;padding:8px;text-align:right;">L ${totalFacturas.toLocaleString("de-DE", { minimumFractionDigits: 2 })}</td></tr>`;
-      html += `</tbody></table>`;
+      html += `<tr style="background:#1565c0;color:#fff;font-weight:800;">
+          <td colspan="7" style="padding:10px 12px;text-align:right;font-size:13px;">TOTAL GENERAL (${facturas_reporte.length} facturas):</td>
+          <td style="padding:10px 12px;text-align:right;font-size:15px;">L ${totalGeneral.toLocaleString("de-DE", { minimumFractionDigits: 2 })}</td>
+          <td colspan="2"></td>
+        </tr>
+        </tbody></table>`;
 
       html += `</div></body></html>`;
 
@@ -2087,76 +2341,135 @@ export default function ResultadosView({
       const desdeInicio = desde.replace("T", " ") + ":00";
       const hastaFin = hasta.replace("T", " ") + ":59";
 
-      // Obtener todos los pagos con paginación
-      async function obtenerTodosLosPagosReporte() {
-        let todosLosPagos: any[] = [];
-        let desde_pag = 0;
-        const limite = 1000;
-        let hayMasRegistros = true;
-
-        while (hayMasRegistros) {
-          let query = supabase.from("pagos").select("*");
-
-          query = query
-            .gte("fecha_hora", desdeInicio)
-            .lte("fecha_hora", hastaFin);
-
-          if (cajeroFiltro) {
-            query = query.eq("cajero_id", cajeroFiltro);
-          }
-
-          const { data, error } = await query
-            .order("fecha_hora", { ascending: true })
-            .range(desde_pag, desde_pag + limite - 1);
-
-          if (error) {
-            console.error("Error obteniendo pagos:", error);
-            break;
-          }
-
-          if (!data || data.length === 0) {
-            hayMasRegistros = false;
-          } else {
-            todosLosPagos = todosLosPagos.concat(data);
-            desde_pag += limite;
-            if (data.length < limite) {
-              hayMasRegistros = false;
-            }
-          }
+      // Obtener filas de pagosf directamente (1 fila por factura)
+      const todasLasFilas: any[] = [];
+      let offset = 0;
+      const limite = 1000;
+      while (true) {
+        let q = supabase
+          .from("pagosf")
+          .select(
+            "factura, cliente, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero, cajero_id, fecha_hora",
+          )
+          .gte("fecha_hora", desdeInicio)
+          .lte("fecha_hora", hastaFin);
+        if (cajeroFiltro) q = q.eq("cajero_id", cajeroFiltro);
+        const { data, error } = await q
+          .order("fecha_hora", { ascending: true })
+          .range(offset, offset + limite - 1);
+        if (error) {
+          console.error("Error obteniendo pagosf:", error);
+          break;
         }
-
-        return todosLosPagos;
+        if (!data || data.length === 0) break;
+        todasLasFilas.push(...data);
+        if (data.length < limite) break;
+        offset += limite;
       }
 
-      const pagos_reporte = await obtenerTodosLosPagosReporte();
       const nombreCajero = cajeroFiltro
         ? cajeros.find((c) => c.id === cajeroFiltro)?.nombre || "Sin nombre"
         : "";
 
-      let html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte de Pagos</title></head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;font-size:12px;background:#fff;">`;
-      html += `<div style="max-width:1200px;margin:0 auto;">`;
-      html += `<h1 style="text-align:center;color:#333;">💳 Reporte de Pagos (Detalle)</h1>`;
-      html += `<p style="text-align:center;color:#666;margin-bottom:20px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` - Cajero: ${nombreCajero}` : ""}</p>`;
+      // Acumuladores de totales
+      let totEfectivo = 0,
+        totTarjeta = 0,
+        totTransfer = 0;
+      let totDolares = 0,
+        totDolaresUsd = 0,
+        totDelivery = 0;
+      let totCambio = 0,
+        totNeto = 0;
 
-      html += `<h2 style="color:#333;border-bottom:2px solid #ddd;padding-bottom:5px;margin-top:30px;">Tabla de Pagos (Detalle)</h2>`;
-      html += `<table style="width:100%;border-collapse:collapse;margin-top:10px;"><thead><tr style="background:#f0f0f0;"><th style="border:1px solid #ccc;padding:8px;text-align:left;">#</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Factura</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Tipo</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Fecha/Hora</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">Monto (L)</th></tr></thead><tbody>`;
+      const td = (v: string, right = false, bold = false) =>
+        `<td style="border:1px solid #ccc;padding:6px 8px;${right ? "text-align:right;" : ""}${bold ? "font-weight:bold;" : ""}">${v}</td>`;
+      const th = (v: string, right = false) =>
+        `<th style="border:1px solid #ccc;padding:8px;background:#f0f0f0;${right ? "text-align:right;" : "text-align:left;"}">${v}</th>`;
+      const fmt = (n: number) =>
+        n === 0
+          ? "—"
+          : `L ${n.toLocaleString("de-DE", { minimumFractionDigits: 2 })}`;
+      const fmtUsd = (n: number) =>
+        n === 0
+          ? ""
+          : ` ($${n.toLocaleString("de-DE", { minimumFractionDigits: 2 })})`;
 
-      pagos_reporte.forEach((p, i) => {
-        const monto = parseFloat(String(p.monto || 0).replace(/,/g, ""));
-        const formattedMonto = monto.toLocaleString("de-DE", {
-          minimumFractionDigits: 2,
-        });
-        html += `<tr><td style="border:1px solid #ccc;padding:8px;">${i + 1}</td><td style="border:1px solid #ccc;padding:8px;">${p.factura_venta || p.factura || "—"}</td><td style="border:1px solid #ccc;padding:8px;">${p.metodo_pago || "—"}</td><td style="border:1px solid #ccc;padding:8px;">${p.fecha_hora?.slice(0, 16).replace("T", " ") || "—"}</td><td style="border:1px solid #ccc;padding:8px;text-align:right;">${formattedMonto}</td></tr>`;
+      let filas = "";
+      todasLasFilas.forEach((r, i) => {
+        const ef = parseFloat(r.efectivo || 0);
+        const tk = parseFloat(r.tarjeta || 0);
+        const tr = parseFloat(r.transferencia || 0);
+        const dl = parseFloat(r.dolares || 0);
+        const dlUsd = parseFloat(r.dolares_usd || 0);
+        const dv = parseFloat(r.delivery || 0);
+        const cb = parseFloat(r.cambio || 0);
+        const neto = ef + tk + tr + dl + dv - cb;
+        totEfectivo += ef;
+        totTarjeta += tk;
+        totTransfer += tr;
+        totDolares += dl;
+        totDolaresUsd += dlUsd;
+        totDelivery += dv;
+        totCambio += cb;
+        totNeto += neto;
+        filas += `<tr>
+          ${td(String(i + 1))}
+          ${td(r.factura || "—")}
+          ${td(r.cliente || "—")}
+          ${td(ef > 0 ? fmt(ef) : "—", true)}
+          ${td(tk > 0 ? fmt(tk) : "—", true)}
+          ${td(tr > 0 ? fmt(tr) : "—", true)}
+          ${td(dl > 0 ? `${fmt(dl)}${fmtUsd(dlUsd)}` : "—", true)}
+          ${td(dv > 0 ? fmt(dv) : "—", true)}
+          ${td(cb > 0 ? `−L ${cb.toLocaleString("de-DE", { minimumFractionDigits: 2 })}` : "—", true)}
+          ${td(fmt(neto), true, true)}
+          ${td(r.fecha_hora?.slice(0, 16).replace("T", " ") || "—")}
+        </tr>`;
       });
 
-      const totalPagos = pagos_reporte.reduce((sum, p) => {
-        const monto = parseFloat(String(p.monto || 0).replace(/,/g, ""));
-        return sum + (isNaN(monto) ? 0 : monto);
-      }, 0);
-      html += `<tr style="background:#ffffcc;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:8px;text-align:right;">TOTAL:</td><td style="border:1px solid #ccc;padding:8px;text-align:right;">L ${totalPagos.toLocaleString("de-DE", { minimumFractionDigits: 2 })}</td></tr>`;
-      html += `</tbody></table>`;
+      const totRow = `<tr style="background:#ffffcc;font-weight:bold;">
+        ${td("TOTAL", false, true)}
+        ${td("")}
+        ${td("")}
+        ${td(fmt(totEfectivo), true, true)}
+        ${td(fmt(totTarjeta), true, true)}
+        ${td(fmt(totTransfer), true, true)}
+        ${td(totDolares > 0 ? `${fmt(totDolares)}${fmtUsd(totDolaresUsd)}` : "—", true, true)}
+        ${td(fmt(totDelivery), true, true)}
+        ${td(totCambio > 0 ? `−L ${totCambio.toLocaleString("de-DE", { minimumFractionDigits: 2 })}` : "—", true, true)}
+        ${td(`L ${totNeto.toLocaleString("de-DE", { minimumFractionDigits: 2 })}`, true, true)}
+        ${td("")}
+      </tr>`;
 
-      html += `</div></body></html>`;
+      const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<title>Reporte de Pagos</title>
+<style>
+  body{margin:0;padding:20px;font-family:Arial,sans-serif;font-size:11px;background:#fff;}
+  table{width:100%;border-collapse:collapse;margin-top:10px;}
+  @media print{body{padding:10px;}}
+</style>
+</head><body>
+<div style="max-width:1400px;margin:0 auto;">
+  <h1 style="text-align:center;color:#333;margin-bottom:4px;">💳 Reporte de Pagos (Detalle)</h1>
+  <p style="text-align:center;color:#666;margin-bottom:20px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` — Cajero: ${nombreCajero}` : ""} &nbsp;|&nbsp; ${todasLasFilas.length} facturas</p>
+  <table>
+    <thead><tr>
+      ${th("#")}
+      ${th("Factura")}
+      ${th("Cliente")}
+      ${th("Efectivo", true)}
+      ${th("Tarjeta", true)}
+      ${th("Transfer.", true)}
+      ${th("Dólares (L/USD)", true)}
+      ${th("Delivery", true)}
+      ${th("−Cambio", true)}
+      ${th("Total Neto", true)}
+      ${th("Fecha/Hora")}
+    </tr></thead>
+    <tbody>${filas}${totRow}</tbody>
+  </table>
+</div>
+</body></html>`;
 
       win.document.open();
       win.document.write(html);
@@ -3273,64 +3586,114 @@ export default function ResultadosView({
                         gap: 10,
                       }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          padding: "8px 12px",
-                          background: "#f0fdf4",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <strong>EFECTIVO (LPS):</strong>
-                        <span>
-                          L{" "}
-                          {(
-                            resumenAdminData.efectivo - resumenAdminData.gastos
-                          ).toFixed(2)}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          padding: "8px 12px",
-                          background: "#eff6ff",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <strong>TARJETA:</strong>
-                        <span>L {resumenAdminData.tarjeta.toFixed(2)}</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          padding: "8px 12px",
-                          background: "#eff6ff",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <strong>TRANSFERENCIA:</strong>
-                        <span>
-                          L {resumenAdminData.transferencia.toFixed(2)}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          padding: "8px 12px",
-                          background: "#fdf4ff",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <strong>DÓLARES:</strong>
-                        <span>
-                          ({resumenAdminData.dolares_usd.toFixed(2)} $) : Lps{" "}
-                          {resumenAdminData.dolares_convertidos.toFixed(2)}
-                        </span>
-                      </div>
+                      {/* Ingresos */}
+                      {[
+                        {
+                          label: "💵 EFECTIVO (neto)",
+                          value: `L ${(resumenAdminData.efectivo - resumenAdminData.gastos).toFixed(2)}`,
+                          sub: (() => {
+                            const partes: string[] = [];
+                            if ((resumenAdminData.cambio ?? 0) > 0)
+                              partes.push(
+                                `−Cambio: L ${(resumenAdminData.cambio ?? 0).toFixed(2)}`,
+                              );
+                            if (resumenAdminData.gastos > 0)
+                              partes.push(
+                                `−Gastos: L ${resumenAdminData.gastos.toFixed(2)}`,
+                              );
+                            return partes.join("  ·  ") || null;
+                          })(),
+                          bg: "#f0fdf4",
+                          color: "#16a34a",
+                        },
+                        {
+                          label: "💳 TARJETA",
+                          value: `L ${resumenAdminData.tarjeta.toFixed(2)}`,
+                          sub: null,
+                          bg: "#eff6ff",
+                          color: "#1976d2",
+                        },
+                        {
+                          label: "🏦 TRANSFERENCIA",
+                          value: `L ${resumenAdminData.transferencia.toFixed(2)}`,
+                          sub: null,
+                          bg: "#f3e8ff",
+                          color: "#7c3aed",
+                        },
+                        {
+                          label: "💱 DÓLARES",
+                          value: `(${resumenAdminData.dolares_usd.toFixed(2)} $) ≈ L ${resumenAdminData.dolares_convertidos.toFixed(2)}`,
+                          sub: null,
+                          bg: "#fef9c3",
+                          color: "#d97706",
+                        },
+                      ].map((row) => (
+                        <div
+                          key={row.label}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            padding: "8px 12px",
+                            background: row.bg,
+                            borderRadius: 8,
+                          }}
+                        >
+                          <div>
+                            <strong style={{ color: row.color }}>
+                              {row.label}
+                            </strong>
+                            {row.sub && (
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "#888",
+                                  marginTop: 2,
+                                }}
+                              >
+                                {row.sub}
+                              </div>
+                            )}
+                          </div>
+                          <span style={{ fontWeight: 700, color: row.color }}>
+                            {row.value}
+                          </span>
+                        </div>
+                      ))}
+                      {/* Total general */}
+                      {(() => {
+                        const total =
+                          resumenAdminData.efectivo -
+                          resumenAdminData.gastos +
+                          resumenAdminData.tarjeta +
+                          resumenAdminData.transferencia +
+                          resumenAdminData.dolares_convertidos;
+                        return (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              padding: "10px 14px",
+                              background:
+                                "linear-gradient(135deg,#1976d2,#0d47a1)",
+                              borderRadius: 10,
+                            }}
+                          >
+                            <strong style={{ color: "#fff", fontSize: 15 }}>
+                              💰 TOTAL GENERAL
+                            </strong>
+                            <span
+                              style={{
+                                fontWeight: 900,
+                                color: "#fff",
+                                fontSize: 18,
+                              }}
+                            >
+                              L {total.toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                      {/* Gastos */}
                       <div
                         style={{
                           display: "flex",
@@ -3338,11 +3701,180 @@ export default function ResultadosView({
                           padding: "8px 12px",
                           background: "#fef2f2",
                           borderRadius: 8,
+                          border: "1px solid #fecdd3",
                         }}
                       >
-                        <strong>GASTOS:</strong>
-                        <span>L {resumenAdminData.gastos.toFixed(2)}</span>
+                        <strong style={{ color: "#dc2626" }}>🧾 GASTOS</strong>
+                        <span style={{ fontWeight: 700, color: "#dc2626" }}>
+                          − L {resumenAdminData.gastos.toFixed(2)}
+                        </span>
                       </div>
+                      {/* Productos vendidos */}
+                      {(resumenAdminData.platillos !== undefined ||
+                        resumenAdminData.bebidas !== undefined) && (
+                        <>
+                          <div
+                            style={{
+                              paddingTop: 8,
+                              borderTop: "1px solid #e5e7eb",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#6b7280",
+                              letterSpacing: 1,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Productos vendidos
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                background: "#fef2f2",
+                                borderRadius: 8,
+                                padding: "8px 12px",
+                                textAlign: "center",
+                                border: "1px solid #fca5a5",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 22,
+                                  fontWeight: 900,
+                                  color: "#dc2626",
+                                }}
+                              >
+                                {resumenAdminData.platillos ?? 0}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "#6b7280",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                🍖 Platillos
+                              </div>
+                            </div>
+                            <div
+                              style={{
+                                background: "#eff6ff",
+                                borderRadius: 8,
+                                padding: "8px 12px",
+                                textAlign: "center",
+                                border: "1px solid #93c5fd",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 22,
+                                  fontWeight: 900,
+                                  color: "#1976d2",
+                                }}
+                              >
+                                {resumenAdminData.bebidas ?? 0}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "#6b7280",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                🥤 Bebidas
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {/* Donaciones */}
+                      {((resumenAdminData.platillos_donados ?? 0) > 0 ||
+                        (resumenAdminData.bebidas_donadas ?? 0) > 0) && (
+                        <>
+                          <div
+                            style={{
+                              paddingTop: 8,
+                              borderTop: "1px solid #e5e7eb",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#7c3aed",
+                              letterSpacing: 1,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            🎁 Donaciones
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                background: "#f5f3ff",
+                                borderRadius: 8,
+                                padding: "8px 12px",
+                                textAlign: "center",
+                                border: "1px solid #c4b5fd",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 22,
+                                  fontWeight: 900,
+                                  color: "#7c3aed",
+                                }}
+                              >
+                                {resumenAdminData.platillos_donados ?? 0}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "#6b7280",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                🍖 Donados
+                              </div>
+                            </div>
+                            <div
+                              style={{
+                                background: "#f5f3ff",
+                                borderRadius: 8,
+                                padding: "8px 12px",
+                                textAlign: "center",
+                                border: "1px solid #c4b5fd",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 22,
+                                  fontWeight: 900,
+                                  color: "#7c3aed",
+                                }}
+                              >
+                                {resumenAdminData.bebidas_donadas ?? 0}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "#6b7280",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                🥤 Donadas
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </>
                 ) : (

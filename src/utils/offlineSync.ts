@@ -7,11 +7,12 @@ import { supabase } from "../supabaseClient";
 
 // Nombre de la base de datos
 const DB_NAME = "PuntoVentaOfflineDB";
-const DB_VERSION = 4; // Incrementado para nuevas stores
+const DB_VERSION = 5; // v5: agrega store pagosf_pendientes
 
 // Nombres de las tablas (stores)
 const FACTURAS_STORE = "facturas_pendientes";
 const PAGOS_STORE = "pagos_pendientes";
+const PAGOSF_STORE = "pagosf_pendientes"; // ← nueva tabla plana (1 fila/factura)
 const GASTOS_STORE = "gastos_pendientes";
 const ENVIOS_STORE = "envios_pendientes";
 const PRODUCTOS_STORE = "productos_cache"; // Cache de productos
@@ -63,6 +64,32 @@ export interface PagoPendiente {
   factura_venta: string;
   recibido: number;
   cambio: number;
+  timestamp: number;
+  intentos: number;
+}
+
+/** Fila plana de pagos — una sola fila por número de factura.
+ * Reemplaza a PagoPendiente para escribir en la tabla pagosf. */
+export interface PagoFPendiente {
+  id?: number;
+  factura: string; // UNIQUE — número de factura de la venta
+  efectivo: number;
+  tarjeta: number;
+  transferencia: number;
+  dolares: number; // en Lempiras
+  dolares_usd: number; // en USD
+  delivery: number; // costo de envío
+  total_recibido: number;
+  cambio: number;
+  banco?: string | null;
+  tarjeta_num?: string | null;
+  autorizacion?: string | null;
+  ref_transferencia?: string | null;
+  cajero?: string | null;
+  cajero_id?: string | null; // UUID del cajero como texto
+  cliente?: string | null;
+  facturas_id?: number | null; // ID de la fila en tabla facturas
+  fecha_hora: string;
   timestamp: number;
   intentos: number;
 }
@@ -248,6 +275,17 @@ export async function initIndexedDB(): Promise<IDBDatabase> {
           keyPath: "id",
         });
         console.log("Store de datos del negocio cache creado");
+      }
+
+      // Crear store para pagosf pendientes (una fila por factura)
+      if (!database.objectStoreNames.contains(PAGOSF_STORE)) {
+        const pagosfStore = database.createObjectStore(PAGOSF_STORE, {
+          keyPath: "id",
+          autoIncrement: true,
+        });
+        pagosfStore.createIndex("timestamp", "timestamp", { unique: false });
+        pagosfStore.createIndex("factura", "factura", { unique: false });
+        console.log("Store pagosf_pendientes creado");
       }
     };
   });
@@ -1149,12 +1187,13 @@ export async function sincronizarTodo(): Promise<{
   try {
     const facturas = await sincronizarFacturas();
     const pagos = await sincronizarPagos();
+    const pagosFResult = await sincronizarPagosF();
     const gastos = await sincronizarGastos();
     const envios = await sincronizarEnvios();
 
     console.log(
-      `[sync] Completa: ${facturas.exitosas} facturas, ${pagos.exitosos} pagos, ` +
-        `${gastos.exitosos} gastos y ${envios.exitosos} envíos sincronizados.`,
+      `[sync] Completa: ${facturas.exitosas} facturas, ${pagos.exitosos} pagos (old), ` +
+        `${pagosFResult.exitosos} pagosf, ${gastos.exitosos} gastos y ${envios.exitosos} envíos sincronizados.`,
     );
 
     return { facturas, pagos, gastos, envios };
@@ -1731,4 +1770,127 @@ export async function inicializarSistemaOffline(): Promise<void> {
   } catch (error) {
     console.error("Error inicializando sistema offline:", error);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  PAGOSF  — Una sola fila por factura. Reemplaza pagos para escritura.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Guarda UN registro plano de pagosf en IndexedDB (modo offline o respaldo).
+ * Si ya existe una entrada para la misma factura la reemplaza (put en lugar de add).
+ */
+export async function guardarPagoFLocal(
+  pago: Omit<PagoFPendiente, "id" | "timestamp" | "intentos">,
+): Promise<number> {
+  const database = await initIndexedDB();
+
+  return new Promise(async (resolve, reject) => {
+    const transaction = database.transaction([PAGOSF_STORE], "readwrite");
+    const store = transaction.objectStore(PAGOSF_STORE);
+
+    // Verificar si ya existe una entrada para este número de factura
+    const facturaIndex = store.index("factura");
+    const getReq = facturaIndex.getKey(pago.factura);
+
+    getReq.onsuccess = () => {
+      const existingId = getReq.result as number | undefined;
+      const pagoConMeta: PagoFPendiente = {
+        ...(existingId !== undefined ? { id: existingId } : {}),
+        ...pago,
+        timestamp: Date.now(),
+        intentos: 0,
+      };
+
+      // put reemplaza si id existe, add crea si no
+      const writeReq =
+        existingId !== undefined
+          ? store.put(pagoConMeta)
+          : store.add(pagoConMeta);
+
+      writeReq.onsuccess = () => {
+        resolve(writeReq.result as number);
+      };
+      writeReq.onerror = () => reject(writeReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+}
+
+/**
+ * Obtiene todos los pagosf pendientes de sincronización.
+ */
+export async function obtenerPagosFPendientes(): Promise<PagoFPendiente[]> {
+  const database = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction([PAGOSF_STORE], "readonly");
+    const req = tx.objectStore(PAGOSF_STORE).getAll();
+    req.onsuccess = () => resolve(req.result as PagoFPendiente[]);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Elimina un pagoF de IndexedDB después de sincronizarlo.
+ */
+export async function eliminarPagoFLocal(id: number): Promise<void> {
+  const database = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction([PAGOSF_STORE], "readwrite");
+    const req = tx.objectStore(PAGOSF_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Sincroniza los pagosf pendientes con Supabase usando UPSERT.
+ * Gracias al UNIQUE en columna factura, nunca genera duplicados.
+ */
+export async function sincronizarPagosF(): Promise<{
+  exitosos: number;
+  fallidos: number;
+}> {
+  const pendientes = await obtenerPagosFPendientes();
+  if (pendientes.length === 0) return { exitosos: 0, fallidos: 0 };
+
+  console.log(`[pagosf] Sincronizando ${pendientes.length} registros...`);
+  let exitosos = 0;
+  let fallidos = 0;
+
+  for (const pago of pendientes) {
+    try {
+      const { id, timestamp, intentos, ...pagoData } = pago;
+
+      const { error } = await supabase
+        .from("pagosf")
+        .upsert([pagoData], { onConflict: "factura", ignoreDuplicates: false });
+
+      if (error) {
+        console.error(
+          `[pagosf] Error sincronizando factura ${pago.factura}:`,
+          error,
+        );
+        // Incrementar intentos
+        const database = await initIndexedDB();
+        const tx = database.transaction([PAGOSF_STORE], "readwrite");
+        const store = tx.objectStore(PAGOSF_STORE);
+        const getReq = store.get(pago.id!);
+        getReq.onsuccess = () => {
+          const row = getReq.result as PagoFPendiente;
+          if (row) store.put({ ...row, intentos: (row.intentos || 0) + 1 });
+        };
+        fallidos++;
+      } else {
+        await eliminarPagoFLocal(pago.id!);
+        console.log(`[pagosf] ✓ factura ${pago.factura} sincronizada`);
+        exitosos++;
+      }
+    } catch (err) {
+      console.error(`[pagosf] Error crítico:`, err);
+      fallidos++;
+    }
+  }
+
+  return { exitosos, fallidos };
 }

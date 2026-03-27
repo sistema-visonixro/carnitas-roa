@@ -8,14 +8,12 @@ import { useDatosNegocio } from "./useDatosNegocio";
 import {
   inicializarSistemaOffline,
   guardarFacturaLocal,
-  guardarPagosLocal,
   guardarGastoLocal,
   guardarEnvioLocal,
 
   // obtenerContadorPendientes,
   sincronizarTodo,
   eliminarFacturaLocal,
-  eliminarPagoLocal,
   eliminarGastoLocal,
   eliminarEnvioLocal,
   obtenerEnviosPendientes,
@@ -30,6 +28,7 @@ import {
   guardarCaiCache,
   obtenerCaiCache,
   actualizarFacturaVentaEnPagosLocales,
+  guardarPagoFLocal,
 } from "./utils/offlineSync";
 import { migrarPagosDesdeLocalStorage } from "./utils/migrarLocalStorage";
 import { useConexion } from "./utils/useConexion";
@@ -109,6 +108,8 @@ export default function PuntoDeVentaView({
     dolares_convertidos?: number;
     tasa_dolar?: number;
     gastos: number;
+    cambio?: number;
+    delivery?: number;
     platillos?: number;
     bebidas?: number;
     platillos_donados?: number;
@@ -423,38 +424,12 @@ export default function PuntoDeVentaView({
         fechaApertura: aperturaActual?.fecha,
       });
 
-      const [
-        { data: pagosEfectivo, error: errorEfectivo },
-        { data: pagosTarjeta, error: errorTarjeta },
-        { data: pagosTrans, error: errorTrans },
-        { data: pagosDolares, error: errorDolares },
-        { data: gastosDia },
-      ] = await Promise.all([
+      const [{ data: pagosfDia }, { data: gastosDia }] = await Promise.all([
         supabase
-          .from("pagos")
-          .select("monto, tipo, cajero_id, fecha_hora")
-          .eq("tipo", "efectivo")
-          .eq("cajero_id", usuarioActual?.id)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", end),
-        supabase
-          .from("pagos")
-          .select("monto, tipo, cajero_id, fecha_hora")
-          .eq("tipo", "tarjeta")
-          .eq("cajero_id", usuarioActual?.id)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", end),
-        supabase
-          .from("pagos")
-          .select("monto, tipo, cajero_id, fecha_hora")
-          .eq("tipo", "transferencia")
-          .eq("cajero_id", usuarioActual?.id)
-          .gte("fecha_hora", start)
-          .lte("fecha_hora", end),
-        supabase
-          .from("pagos")
-          .select("monto, tipo, cajero_id, fecha_hora, usd_monto")
-          .eq("tipo", "dolares")
+          .from("pagosf")
+          .select(
+            "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
+          )
           .eq("cajero_id", usuarioActual?.id)
           .gte("fecha_hora", start)
           .lte("fecha_hora", end),
@@ -516,50 +491,64 @@ export default function PuntoDeVentaView({
         console.warn("No se pudieron contar platillos/bebidas:", e);
       }
 
-      console.log("Resultados consultas:", {
-        efectivo: {
-          data: pagosEfectivo,
-          error: errorEfectivo,
-          count: pagosEfectivo?.length,
-        },
-        tarjeta: {
-          data: pagosTarjeta,
-          error: errorTarjeta,
-          count: pagosTarjeta?.length,
-        },
-        transferencia: {
-          data: pagosTrans,
-          error: errorTrans,
-          count: pagosTrans?.length,
-        },
-        dolares: {
-          data: pagosDolares,
-          error: errorDolares,
-          count: pagosDolares?.length,
-        },
+      console.log("Resultados consultas pagosf:", {
+        rows: pagosfDia?.length,
+        data: pagosfDia,
       });
 
-      const efectivoSum = (pagosEfectivo || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const tarjetaSum = (pagosTarjeta || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const transSum = (pagosTrans || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
-      const dolaresSum = (pagosDolares || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.monto || 0),
-        0,
-      );
+      const pagosfRows = pagosfDia || [];
 
-      const dolaresSumUsd = (pagosDolares || []).reduce(
-        (s: number, p: any) => s + parseFloat(p.usd_monto || 0),
-        0,
-      );
+      // Acumuladores por método de pago
+      let efectivoSumBruto = 0;
+      let tarjetaSum = 0;
+      let transSum = 0;
+      let dolaresSum = 0;
+      let dolaresSumUsd = 0;
+      let cambioSum = 0;
+      let deliverySum = 0;
+
+      // Distribuir delivery al método de pago principal de cada factura.
+      // Si la factura tiene efectivo, el delivery entra a efectivo (cobrado en mano).
+      // Si solo tiene tarjeta/transferencia/dólares, el delivery entra en ese método.
+      for (const r of pagosfRows) {
+        const ef  = parseFloat(r.efectivo      || 0);
+        const tk  = parseFloat(r.tarjeta       || 0);
+        const tr  = parseFloat(r.transferencia || 0);
+        const dl  = parseFloat(r.dolares       || 0);
+        const dlU = parseFloat(r.dolares_usd   || 0);
+        const cb  = parseFloat(r.cambio        || 0);
+        const dv  = parseFloat(r.delivery      || 0);
+
+        dolaresSum    += dl;
+        dolaresSumUsd += dlU;
+        cambioSum     += cb;  // el cambio siempre sale del cajón de efectivo
+        deliverySum   += dv;
+
+        if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
+          // Pagó en efectivo (o no hay otro método) → delivery va a efectivo
+          efectivoSumBruto += ef + dv;
+          tarjetaSum       += tk;
+          transSum         += tr;
+        } else if (tk > 0) {
+          // Pagó solo con tarjeta → delivery va a tarjeta
+          efectivoSumBruto += ef;
+          tarjetaSum       += tk + dv;
+          transSum         += tr;
+        } else if (tr > 0) {
+          // Pagó solo con transferencia → delivery va a transferencia
+          efectivoSumBruto += ef;
+          tarjetaSum       += tk;
+          transSum         += tr + dv;
+        } else {
+          // Pagó en dólares (u otro) → delivery va a efectivo por defecto
+          efectivoSumBruto += ef + dv;
+          tarjetaSum       += tk;
+          transSum         += tr;
+        }
+      }
+
+      // Efectivo neto = bruto (+ delivery efectivo ya incluido) − cambio
+      const efectivoSum = Number((efectivoSumBruto - cambioSum).toFixed(2));
 
       // obtener tasa del dolar (singleton)
       let tasa = 0;
@@ -617,10 +606,13 @@ export default function PuntoDeVentaView({
       }
 
       console.log("Sumas calculadas:", {
-        efectivo: efectivoSum,
+        efectivo_bruto: efectivoSumBruto,
+        cambio: cambioSum,
+        efectivo_neto: efectivoSum,
         tarjeta: tarjetaSum,
         transferencia: transSum,
         dolares: dolaresSum,
+        delivery: deliverySum,
         gastos: gastosSum,
       });
 
@@ -633,6 +625,8 @@ export default function PuntoDeVentaView({
         dolares_convertidos: dolaresConvertidos,
         tasa_dolar: tasa,
         gastos: gastosSum,
+        cambio: cambioSum,
+        delivery: deliverySum,
         platillos: platillosSum,
         bebidas: bebidasSum,
         platillos_donados: platillosDonados,
@@ -682,25 +676,65 @@ export default function PuntoDeVentaView({
         setShowHistorialVentas(false);
         return;
       }
-      const [{ data: ventas, error }, { data: pagosData }] = await Promise.all([
-        supabase
-          .from("facturas")
-          .select("*")
-          .eq("cajero_id", usuarioActual?.id)
-          .or("tipo_venta.eq.contado,tipo_venta.is.null")
-          .gte("fecha_hora", aperturaActual.fecha)
-          .lte("fecha_hora", dayEnd)
-          .order("fecha_hora", { ascending: false }),
-        supabase
-          .from("pagos")
-          .select("tipo, monto, usd_monto, factura_venta, factura")
-          .eq("cajero_id", usuarioActual?.id)
-          .gte("fecha_hora", aperturaActual.fecha)
-          .lte("fecha_hora", dayEnd),
-      ]);
+      const [{ data: ventas, error }, { data: pagosfData }] = await Promise.all(
+        [
+          supabase
+            .from("facturas")
+            .select("*")
+            .eq("cajero_id", usuarioActual?.id)
+            .or("tipo_venta.eq.contado,tipo_venta.is.null")
+            .gte("fecha_hora", aperturaActual.fecha)
+            .lte("fecha_hora", dayEnd)
+            .order("fecha_hora", { ascending: false }),
+          supabase
+            .from("pagosf")
+            .select(
+              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, cajero_id, fecha_hora",
+            )
+            .eq("cajero_id", usuarioActual?.id)
+            .gte("fecha_hora", aperturaActual.fecha)
+            .lte("fecha_hora", dayEnd),
+        ],
+      );
       if (error) throw error;
       setHistorialVentas(ventas || []);
-      setHistorialPagos(pagosData || []);
+      // Normalizar pagosf (una fila por factura) al formato multi-tipo que usa la UI
+      const pagosNorm: any[] = [];
+      for (const r of pagosfData || []) {
+        if (parseFloat(r.efectivo || 0) > 0)
+          pagosNorm.push({
+            tipo: "efectivo",
+            monto: r.efectivo,
+            usd_monto: 0,
+            factura: r.factura,
+            factura_venta: r.factura,
+          });
+        if (parseFloat(r.tarjeta || 0) > 0)
+          pagosNorm.push({
+            tipo: "tarjeta",
+            monto: r.tarjeta,
+            usd_monto: 0,
+            factura: r.factura,
+            factura_venta: r.factura,
+          });
+        if (parseFloat(r.transferencia || 0) > 0)
+          pagosNorm.push({
+            tipo: "transferencia",
+            monto: r.transferencia,
+            usd_monto: 0,
+            factura: r.factura,
+            factura_venta: r.factura,
+          });
+        if (parseFloat(r.dolares || 0) > 0)
+          pagosNorm.push({
+            tipo: "dolares",
+            monto: r.dolares,
+            usd_monto: r.dolares_usd,
+            factura: r.factura,
+            factura_venta: r.factura,
+          });
+      }
+      setHistorialPagos(pagosNorm);
       setHistorialFiltroTipo(null);
     } catch (err) {
       console.error("Error cargando historial:", err);
@@ -867,11 +901,7 @@ export default function PuntoDeVentaView({
           .select("*")
           .eq("nombre", "default")
           .single(),
-        supabase
-          .from("pagos")
-          .select("*")
-          .eq("factura_venta", venta.factura)
-          .eq("cajero_id", usuarioActual?.id),
+        supabase.from("pagosf").select("*").eq("factura", venta.factura),
       ]);
       const prods: Array<{
         nombre: string;
@@ -886,26 +916,15 @@ export default function PuntoDeVentaView({
         }
       })();
       const totalVenta = parseFloat(venta.total || "0");
-      const efectivoTotal = (pagosVenta || [])
-        .filter((p: any) => p.tipo === "efectivo" && p.referencia !== "CAMBIO")
-        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
-      const tarjetaTotal = (pagosVenta || [])
-        .filter((p: any) => p.tipo === "tarjeta")
-        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
-      const dolaresTotal = (pagosVenta || [])
-        .filter((p: any) => p.tipo === "dolares")
-        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
-      const dolaresUSD = (pagosVenta || [])
-        .filter((p: any) => p.tipo === "dolares")
-        .reduce((s: number, p: any) => s + parseFloat(p.usd_monto || 0), 0);
-      const transferenciaTotal = (pagosVenta || [])
-        .filter((p: any) => p.tipo === "transferencia")
-        .reduce((s: number, p: any) => s + parseFloat(p.monto || 0), 0);
-      const primerPago = (pagosVenta || []).find(
-        (p: any) => p.recibido != null,
-      );
-      const recibidoTotal = primerPago ? parseFloat(primerPago.recibido) : 0;
-      const cambioTotal = recibidoTotal - totalVenta;
+      const pf = pagosVenta?.[0] || null;
+      const efectivoTotal = pf ? parseFloat(String(pf.efectivo || 0)) : 0;
+      const tarjetaTotal = pf ? parseFloat(String(pf.tarjeta || 0)) : 0;
+      const dolaresTotal = pf ? parseFloat(String(pf.dolares || 0)) : 0;
+      const dolaresUSD = pf ? parseFloat(String(pf.dolares_usd || 0)) : 0;
+      const transferenciaTotal = pf
+        ? parseFloat(String(pf.transferencia || 0))
+        : 0;
+      const cambioTotal = pf ? parseFloat(String(pf.cambio || 0)) : 0;
       let pagosHtml = "";
       if (
         efectivoTotal > 0 ||
@@ -1187,6 +1206,8 @@ export default function PuntoDeVentaView({
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
+  const [editPagoRowId, setEditPagoRowId] = useState<string | null>(null);
+  const [editPagoTipo, setEditPagoTipo] = useState<string>("efectivo");
   const [gastoMonto, setGastoMonto] = useState<string>("");
   const [gastoMotivo, setGastoMotivo] = useState<string>("");
   const [gastoFactura, setGastoFactura] = useState<string>("");
@@ -2186,18 +2207,42 @@ export default function PuntoDeVentaView({
         return;
       }
 
-      // Buscar los pagos asociados a esta factura
-      const { data: pagos, error: pagosError } = await supabase
-        .from("pagos")
+      // Buscar el registro de pago de esta factura en pagosf
+      const { data: pagosfDev, error: pagosError } = await supabase
+        .from("pagosf")
         .select("*")
-        .eq("factura_venta", devolucionFactura.trim())
-        .eq("cajero_id", usuarioActual?.id);
+        .eq("factura", devolucionFactura.trim())
+        .maybeSingle();
 
       if (pagosError) {
         console.error("Error buscando pagos:", pagosError);
       }
 
-      setDevolucionData({ factura, pagos: pagos || [] });
+      // Normalizar pagosf a formato multi-tipo para la UI de devolución
+      const pagosNorm: any[] = [];
+      if (pagosfDev) {
+        if (parseFloat(pagosfDev.efectivo || 0) > 0)
+          pagosNorm.push({ tipo: "efectivo", monto: pagosfDev.efectivo });
+        if (parseFloat(pagosfDev.tarjeta || 0) > 0)
+          pagosNorm.push({ tipo: "tarjeta", monto: pagosfDev.tarjeta });
+        if (parseFloat(pagosfDev.transferencia || 0) > 0)
+          pagosNorm.push({
+            tipo: "transferencia",
+            monto: pagosfDev.transferencia,
+          });
+        if (parseFloat(pagosfDev.dolares || 0) > 0)
+          pagosNorm.push({
+            tipo: "dolares",
+            monto: pagosfDev.dolares,
+            usd_monto: pagosfDev.dolares_usd,
+          });
+      }
+
+      setDevolucionData({
+        factura,
+        pagos: pagosNorm,
+        pagosfRow: pagosfDev || null,
+      });
     } catch (err) {
       console.error("Error buscando factura:", err);
       alert("Error al buscar factura");
@@ -2213,7 +2258,7 @@ export default function PuntoDeVentaView({
 
     setDevolucionProcesando(true);
     try {
-      const { factura, pagos } = devolucionData;
+      const { factura, pagosfRow } = devolucionData;
       const fechaHoraActual = formatToHondurasLocal();
 
       // 1. Insertar factura con montos negativos
@@ -2245,44 +2290,39 @@ export default function PuntoDeVentaView({
         return;
       }
 
-      // 2. Insertar pagos con montos invertidos
-      const pagosDevolucion = pagos.map((pago: any) => {
-        // Si el pago es CAMBIO (tiene referencia "CAMBIO"), invertir el signo
-        const esCambio = pago.referencia === "CAMBIO";
-        const montoOriginal = parseFloat(pago.monto || 0);
-        const montoDevolucion = esCambio
-          ? Math.abs(montoOriginal)
-          : -Math.abs(montoOriginal);
-
-        return {
-          tipo: pago.tipo,
-          monto: montoDevolucion,
-          banco: pago.banco || null,
-          tarjeta: pago.tarjeta || null,
-          factura: pago.factura || null,
-          autorizador: pago.autorizador || null,
-          referencia: esCambio ? "RECUPERACIÓN CAMBIO" : "DEVOLUCIÓN",
-          usd_monto: pago.usd_monto ? -parseFloat(pago.usd_monto) : null,
-          fecha_hora: fechaHoraActual,
+      // 2. Insertar registro de pago en pagosf con montos negativos
+      if (pagosfRow) {
+        const pagoFDevolucion = {
+          factura: "DEV-" + factura.factura,
+          efectivo: -parseFloat(pagosfRow.efectivo || 0),
+          tarjeta: -parseFloat(pagosfRow.tarjeta || 0),
+          transferencia: -parseFloat(pagosfRow.transferencia || 0),
+          dolares: -parseFloat(pagosfRow.dolares || 0),
+          dolares_usd: -parseFloat(pagosfRow.dolares_usd || 0),
+          delivery: -parseFloat(pagosfRow.delivery || 0),
+          total_recibido: -parseFloat(pagosfRow.total_recibido || 0),
+          cambio: parseFloat(pagosfRow.cambio || 0), // cambio se recupera del cliente
+          banco: pagosfRow.banco || null,
+          tarjeta_num: pagosfRow.tarjeta_num || null,
+          autorizacion: pagosfRow.autorizacion || null,
+          ref_transferencia: pagosfRow.ref_transferencia || null,
           cajero: usuarioActual?.nombre || "",
           cajero_id: usuarioActual?.id || null,
           cliente: factura.cliente + " (DEVOLUCIÓN)",
-          factura_venta: factura.factura,
-          recibido: pago.recibido ? -parseFloat(pago.recibido) : null,
-          cambio: pago.cambio ? -parseFloat(pago.cambio) : null,
+          fecha_hora: fechaHoraActual,
         };
-      });
 
-      const { error: pagosError } = await supabase
-        .from("pagos")
-        .insert(pagosDevolucion);
+        const { error: pagosError } = await supabase
+          .from("pagosf")
+          .upsert([pagoFDevolucion], { onConflict: "factura" });
 
-      if (pagosError) {
-        console.error("Error insertando pagos de devolución:", pagosError);
-        alert(
-          "Error al registrar los pagos de devolución: " + pagosError.message,
-        );
-        return;
+        if (pagosError) {
+          console.error("Error insertando pagos de devolución:", pagosError);
+          alert(
+            "Error al registrar los pagos de devolución: " + pagosError.message,
+          );
+          return;
+        }
       }
 
       // Éxito
@@ -2780,9 +2820,20 @@ export default function PuntoDeVentaView({
                 {[
                   {
                     label: "Efectivo",
-                    raw: resumenData.efectivo,
-                    display: `L ${resumenData.efectivo.toFixed(2)}`,
-                    sub: `Neto (−gastos): L ${(resumenData.efectivo - resumenData.gastos).toFixed(2)}`,
+                    raw: resumenData.efectivo - resumenData.gastos,
+                    display: `L ${(resumenData.efectivo - resumenData.gastos).toFixed(2)}`,
+                    sub: (() => {
+                      const partes: string[] = [];
+                      if ((resumenData.cambio ?? 0) > 0)
+                        partes.push(
+                          `−Cambio: L ${(resumenData.cambio ?? 0).toFixed(2)}`,
+                        );
+                      if (resumenData.gastos > 0)
+                        partes.push(
+                          `−Gastos: L ${resumenData.gastos.toFixed(2)}`,
+                        );
+                      return partes.length > 0 ? partes.join("  ·  ") : null;
+                    })(),
                     icon: "💵",
                     color: "#16a34a",
                   },
@@ -3355,153 +3406,154 @@ export default function PuntoDeVentaView({
           };
           // ID único por operación de facturación
           const operationId = crypto.randomUUID();
-          // Captura los operation_ids de los pagos para poder corregir
-          // factura_venta si el número de factura se auto-corrige por conflicto.
-          let _pagosOpIds: string[] = [];
           console.log(
             `[facturar] Inicio op=${operationId} | factura=${snap.facturaActual} | cliente=${snap.nombreCliente} | ts=${new Date().toISOString()}`,
           );
 
-          // Guardar los pagos en la base de datos
+          // Guardar los pagos en la base de datos (tabla pagosf — 1 fila por factura)
           try {
             if (paymentData.pagos && paymentData.pagos.length > 0) {
-              const cambioValue = paymentData.totalPaid - totalConDescuento;
+              const cambioValue = Math.max(
+                0,
+                paymentData.totalPaid - totalConDescuento,
+              );
 
-              const pagosToInsert = paymentData.pagos.map((pago) => ({
-                tipo: pago.tipo,
-                monto: pago.monto,
-                banco: pago.banco || null,
-                tarjeta: pago.tarjeta || null,
-                factura: pago.factura || null,
-                autorizador: pago.autorizador || null,
-                referencia: pago.referencia || null,
-                usd_monto: pago.usd_monto || null,
-                fecha_hora: formatToHondurasLocal(),
+              // ── Consolidar todos los métodos de pago en UNA sola fila ──
+              const efectivoMonto = paymentData.pagos
+                .filter((p) => p.tipo === "efectivo")
+                .reduce((s, p) => s + p.monto, 0);
+              const tarjetaMonto = paymentData.pagos
+                .filter((p) => p.tipo === "tarjeta")
+                .reduce((s, p) => s + p.monto, 0);
+              const transferenciaMonto = paymentData.pagos
+                .filter((p) => p.tipo === "transferencia")
+                .reduce((s, p) => s + p.monto, 0);
+              const dolaresMonto = paymentData.pagos
+                .filter((p) => p.tipo === "dolares")
+                .reduce((s, p) => s + p.monto, 0);
+              const dolaresUsd = paymentData.pagos
+                .filter((p) => p.tipo === "dolares")
+                .reduce((s, p) => s + (p.usd_monto || 0), 0);
+
+              const pagoTarjeta = paymentData.pagos.find(
+                (p) => p.tipo === "tarjeta",
+              );
+              const pagoTransf = paymentData.pagos.find(
+                (p) => p.tipo === "transferencia",
+              );
+
+              const pagoFila = {
+                factura: snap.facturaActual,
+                efectivo: efectivoMonto,
+                tarjeta: tarjetaMonto,
+                transferencia: transferenciaMonto,
+                dolares: dolaresMonto,
+                dolares_usd: dolaresUsd,
+                delivery: 0,
+                total_recibido: paymentData.totalPaid,
+                cambio: cambioValue,
+                banco: pagoTarjeta?.banco || null,
+                tarjeta_num: pagoTarjeta?.tarjeta || null,
+                autorizacion: pagoTarjeta?.autorizador || null,
+                ref_transferencia: pagoTransf?.referencia || null,
                 cajero: usuarioActual?.nombre || "",
                 cajero_id: usuarioActual?.id || null,
                 cliente: snap.nombreCliente,
-                factura_venta: snap.facturaActual,
-                recibido: paymentData.totalPaid,
-                cambio: cambioValue,
-                operation_id: crypto.randomUUID(),
-              }));
+                fecha_hora: formatToHondurasLocal(),
+              };
 
-              // Si hay cambio positivo, registrar salida de efectivo
-              if (cambioValue > 0) {
-                pagosToInsert.push({
-                  tipo: "efectivo",
-                  monto: -cambioValue, // Monto negativo indica salida
-                  banco: null,
-                  tarjeta: null,
-                  factura: null,
-                  autorizador: null,
-                  referencia: "CAMBIO",
-                  usd_monto: null,
-                  fecha_hora: formatToHondurasLocal(),
-                  cajero: usuarioActual?.nombre || "",
-                  cajero_id: usuarioActual?.id || null,
-                  cliente: snap.nombreCliente,
-                  factura_venta: snap.facturaActual,
-                  recibido: paymentData.totalPaid,
-                  cambio: cambioValue,
-                  operation_id: crypto.randomUUID(),
-                });
-              }
+              console.log("[pagosf] Guardando pago:", pagoFila);
 
-              // Guardar todos los operation_ids de pagos para la posible
-              // corrección de factura_venta si el número se auto-corrige.
-              _pagosOpIds = pagosToInsert
-                .map((p) => p.operation_id as string)
-                .filter(Boolean);
-
-              console.log("Insertando pagos:", pagosToInsert);
-
-              // LÓGICA MEJORADA: usar solo isOnline (que ya verifica conexión real)
               if (isOnline) {
-                // CON INTERNET: Intentar guardar en Supabase con timeout
                 let guardadoEnSupabase = false;
-
                 try {
-                  // Timeout de 5 segundos para evitar esperas largas
                   const controller = new AbortController();
                   const timeoutId = setTimeout(() => controller.abort(), 5000);
 
                   const { error: pagoError } = await supabase
-                    .from("pagos")
-                    .insert(pagosToInsert)
+                    .from("pagosf")
+                    .upsert([pagoFila], { onConflict: "factura" })
                     .abortSignal(controller.signal);
 
                   clearTimeout(timeoutId);
 
                   if (pagoError) {
                     console.error(
-                      "Error al guardar pagos en Supabase:",
+                      "[pagosf] Error al guardar en Supabase:",
                       pagoError,
                     );
                   } else {
-                    console.log(
-                      `✓ ${pagosToInsert.length} pagos guardados en Supabase exitosamente`,
-                    );
+                    console.log("[pagosf] ✓ Pago guardado en Supabase");
                     guardadoEnSupabase = true;
                   }
                 } catch (fetchError) {
                   console.error(
-                    "Error de conexión/timeout al guardar pagos:",
+                    "[pagosf] Error de conexión/timeout:",
                     fetchError,
                   );
                 }
 
-                // Si falló Supabase, guardar en IndexedDB como respaldo
                 if (!guardadoEnSupabase) {
-                  await guardarPagosLocal(pagosToInsert);
+                  await guardarPagoFLocal(pagoFila);
                   console.log(
-                    "⚠ Fallo en Supabase. Pagos guardados en IndexedDB para sincronización",
+                    "[pagosf] ⚠ Pago guardado en IndexedDB (fallo Supabase)",
                   );
                 }
               } else {
-                // SIN INTERNET: Guardar solo en IndexedDB para sincronización posterior
-                await guardarPagosLocal(pagosToInsert);
+                await guardarPagoFLocal(pagoFila);
                 console.log(
-                  `✓ ${pagosToInsert.length} pagos guardados en IndexedDB (sin conexión)`,
+                  "[pagosf] ✓ Pago guardado en IndexedDB (sin conexión)",
                 );
               }
             }
           } catch (err) {
-            console.error("Error al procesar pagos:", err);
-            // En caso de error crítico, intentar guardar en IndexedDB
+            console.error("[pagosf] Error al procesar pagos:", err);
+            // Emergencia: guardar en IndexedDB
             if (paymentData.pagos && paymentData.pagos.length > 0) {
               try {
-                const cambioValue = paymentData.totalPaid - snap.total;
-                const pagosEmergencia = paymentData.pagos.map((pago) => ({
-                  tipo: pago.tipo,
-                  monto: pago.monto,
-                  banco: pago.banco || null,
-                  tarjeta: pago.tarjeta || null,
-                  factura: pago.factura || null,
-                  autorizador: pago.autorizador || null,
-                  referencia: pago.referencia || null,
-                  usd_monto: pago.usd_monto || null,
-                  fecha_hora: formatToHondurasLocal(),
+                const pagoEmergencia = {
+                  factura: snap.facturaActual,
+                  efectivo: paymentData.pagos
+                    .filter((p) => p.tipo === "efectivo")
+                    .reduce((s, p) => s + p.monto, 0),
+                  tarjeta: paymentData.pagos
+                    .filter((p) => p.tipo === "tarjeta")
+                    .reduce((s, p) => s + p.monto, 0),
+                  transferencia: paymentData.pagos
+                    .filter((p) => p.tipo === "transferencia")
+                    .reduce((s, p) => s + p.monto, 0),
+                  dolares: paymentData.pagos
+                    .filter((p) => p.tipo === "dolares")
+                    .reduce((s, p) => s + p.monto, 0),
+                  dolares_usd: paymentData.pagos
+                    .filter((p) => p.tipo === "dolares")
+                    .reduce((s, p) => s + (p.usd_monto || 0), 0),
+                  delivery: 0,
+                  total_recibido: paymentData.totalPaid,
+                  cambio: Math.max(0, paymentData.totalPaid - snap.total),
+                  banco: null,
+                  tarjeta_num: null,
+                  autorizacion: null,
+                  ref_transferencia: null,
                   cajero: usuarioActual?.nombre || "",
                   cajero_id: usuarioActual?.id || null,
                   cliente: snap.nombreCliente,
-                  factura_venta: snap.facturaActual,
-                  recibido: paymentData.totalPaid,
-                  cambio: cambioValue,
-                  operation_id: crypto.randomUUID(),
-                }));
-                await guardarPagosLocal(pagosEmergencia);
+                  fecha_hora: formatToHondurasLocal(),
+                };
+                await guardarPagoFLocal(pagoEmergencia);
                 console.log(
-                  "💾 Pagos guardados en IndexedDB (modo emergencia)",
+                  "[pagosf] 💾 Emergencia: pago guardado en IndexedDB",
                 );
               } catch (emergErr) {
-                console.error("Error crítico al guardar pagos:", emergErr);
+                console.error(
+                  "[pagosf] Error crítico al guardar pagos:",
+                  emergErr,
+                );
                 alert(
                   "Error crítico al procesar los pagos. Contacte al administrador.",
                 );
               }
             }
-            // Liberar el guard si terminamos aquí por error en pagos
             isSubmittingRef.current = false;
             return;
           }
@@ -4041,18 +4093,7 @@ export default function PuntoDeVentaView({
                             .insert([ventaCorregida]);
                           if (!retryError) {
                             guardadoEnSupabase = true;
-                            // 1. Corregir factura_venta en pagos ya en Supabase
-                            //    (insertados en el paso anterior con número viejo)
-                            if (_pagosOpIds.length > 0) {
-                              await supabase
-                                .from("pagos")
-                                .update({ factura_venta: nuevoNumero })
-                                .in("operation_id", _pagosOpIds);
-                              console.log(
-                                `✓ [facturar] ${_pagosOpIds.length} pagos en Supabase: factura_venta → ${nuevoNumero}`,
-                              );
-                            }
-                            // 2. Corregir pagos que hayan caído en IndexedDB
+                            // Corregir pagos que hayan caído en IndexedDB
                             //    (si la red falló para el insert de pagos)
                             await actualizarFacturaVentaEnPagosLocales(
                               snap.facturaActual,
@@ -5842,7 +5883,7 @@ export default function PuntoDeVentaView({
                   >
                     Tipo de pago
                   </label>
-                  <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                     {[
                       { value: "Efectivo", icon: "💵", color: "#10b981" },
                       { value: "Tarjeta", icon: "💳", color: "#3b82f6" },
@@ -6900,21 +6941,50 @@ export default function PuntoDeVentaView({
                                 borderRadius: 12,
                                 fontSize: 12,
                                 background:
+                                  p.tipo_pago === "efectivo" ||
                                   p.tipo_pago === "Efectivo"
                                     ? "#e8f5e9"
-                                    : "#e3f2fd",
+                                    : p.tipo_pago === "tarjeta" ||
+                                        p.tipo_pago === "Tarjeta"
+                                      ? "#e3f2fd"
+                                      : p.tipo_pago === "transferencia" ||
+                                          p.tipo_pago === "Transferencia"
+                                        ? "#f3e8ff"
+                                        : p.tipo_pago === "dolares" ||
+                                            p.tipo_pago === "Dolares"
+                                          ? "#fef9c3"
+                                          : "#f3f4f6",
                                 color:
+                                  p.tipo_pago === "efectivo" ||
                                   p.tipo_pago === "Efectivo"
                                     ? "#2e7d32"
-                                    : "#1565c0",
-                                border: `1px solid ${
-                                  p.tipo_pago === "Efectivo"
-                                    ? "#c8e6c9"
-                                    : "#bbdefb"
-                                }`,
+                                    : p.tipo_pago === "tarjeta" ||
+                                        p.tipo_pago === "Tarjeta"
+                                      ? "#1565c0"
+                                      : p.tipo_pago === "transferencia" ||
+                                          p.tipo_pago === "Transferencia"
+                                        ? "#7c3aed"
+                                        : p.tipo_pago === "dolares" ||
+                                            p.tipo_pago === "Dolares"
+                                          ? "#d97706"
+                                          : "#6b7280",
+                                border: "1px solid transparent",
+                                fontWeight: 600,
                               }}
                             >
-                              {p.tipo_pago}
+                              {p.tipo_pago === "efectivo" ||
+                              p.tipo_pago === "Efectivo"
+                                ? "💵 Efectivo"
+                                : p.tipo_pago === "tarjeta" ||
+                                    p.tipo_pago === "Tarjeta"
+                                  ? "💳 Tarjeta"
+                                  : p.tipo_pago === "transferencia" ||
+                                      p.tipo_pago === "Transferencia"
+                                    ? "🏦 Transferencia"
+                                    : p.tipo_pago === "dolares" ||
+                                        p.tipo_pago === "Dolares"
+                                      ? "💱 Dólares"
+                                      : p.tipo_pago}
                             </span>
                           </td>
                           <td
@@ -7090,26 +7160,46 @@ export default function PuntoDeVentaView({
                                       total: Number(p.total || 0).toFixed(2),
                                     };
 
-                                    // Preparar objeto de pago (normalizar tipo a minúsculas)
+                                    // Preparar fila de pagosf (1 sola fila con pago + delivery)
                                     const tipoPago = (
                                       p.tipo_pago || "efectivo"
                                     ).toLowerCase();
-                                    const pago = {
-                                      tipo: tipoPago,
-                                      monto: Number(p.total || 0),
-                                      recibido: Number(p.total || 0),
-                                      cambio: 0,
-                                      referencia: null,
-                                      tarjeta: null,
-                                      banco: null,
-                                      autorizador: null,
-                                      usd_monto: null,
-                                      fecha_hora: formatToHondurasLocal(),
+                                    const montoProductos = Number(p.total || 0);
+                                    const costoEnvioValor = parseFloat(
+                                      p.costo_envio || "0",
+                                    );
+
+                                    const pagoFDelivery = {
                                       factura: facturaActual,
+                                      efectivo:
+                                        tipoPago === "efectivo"
+                                          ? montoProductos
+                                          : 0,
+                                      tarjeta:
+                                        tipoPago === "tarjeta"
+                                          ? montoProductos
+                                          : 0,
+                                      transferencia:
+                                        tipoPago === "transferencia"
+                                          ? montoProductos
+                                          : 0,
+                                      dolares:
+                                        tipoPago === "dolares"
+                                          ? montoProductos
+                                          : 0,
+                                      dolares_usd: 0,
+                                      delivery: costoEnvioValor,
+                                      total_recibido:
+                                        montoProductos + costoEnvioValor,
+                                      cambio: 0,
+                                      banco: null,
+                                      tarjeta_num: null,
+                                      autorizacion: null,
+                                      ref_transferencia: null,
+                                      fecha_hora: formatToHondurasLocal(),
                                       cajero: usuarioActual?.nombre || null,
                                       cajero_id: usuarioActual?.id || null,
                                       cliente: p.cliente || null,
-                                      factura_venta: facturaActual,
                                     };
 
                                     // PASO 1: Guardar primero en IndexedDB (siempre)
@@ -7118,13 +7208,9 @@ export default function PuntoDeVentaView({
                                     );
                                     const facturaIdLocal =
                                       await guardarFacturaLocal(venta);
-                                    const pagosIdsLocal =
-                                      await guardarPagosLocal([pago]);
+                                    await guardarPagoFLocal(pagoFDelivery);
                                     console.log(
-                                      `✓ Factura guardada en IndexedDB (ID: ${facturaIdLocal})`,
-                                    );
-                                    console.log(
-                                      `✓ Pago guardado en IndexedDB (IDs: ${pagosIdsLocal})`,
+                                      `✓ Factura e pagosf guardados en IndexedDB (ID: ${facturaIdLocal})`,
                                     );
 
                                     // PASO 2: Si hay conexión, intentar guardar en Supabase
@@ -7149,34 +7235,33 @@ export default function PuntoDeVentaView({
                                           throw errFact;
                                         }
 
-                                        // Guardar pago en Supabase
+                                        // Guardar pagosf en Supabase (upsert — no duplicados)
                                         const { error: errPago } =
                                           await supabase
-                                            .from("pagos")
-                                            .insert([pago]);
+                                            .from("pagosf")
+                                            .upsert([pagoFDelivery], {
+                                              onConflict: "factura",
+                                            });
 
                                         if (errPago) {
                                           console.error(
-                                            "Error guardando pago en Supabase:",
+                                            "Error guardando pagosf en Supabase:",
                                             errPago,
                                           );
                                           throw errPago;
                                         }
 
                                         console.log(
-                                          "✓ Factura y pago guardados en Supabase exitosamente",
+                                          "✓ Factura y pagosf guardados en Supabase exitosamente",
                                         );
                                         guardadoEnSupabase = true;
 
-                                        // PASO 3: Si se guardó en Supabase exitosamente, eliminar de IndexedDB
+                                        // PASO 3: Si se guardó en Supabase, eliminar de IndexedDB
                                         await eliminarFacturaLocal(
                                           facturaIdLocal,
                                         );
-                                        await eliminarPagoLocal(
-                                          pagosIdsLocal[0],
-                                        );
                                         console.log(
-                                          "✓ Factura y pago eliminados de IndexedDB (sincronizados)",
+                                          "✓ Factura eliminada de IndexedDB (sincronizada)",
                                         );
                                       } catch (supabaseErr) {
                                         console.error(
@@ -7194,88 +7279,45 @@ export default function PuntoDeVentaView({
                                       );
                                     }
 
-                                    // PASO 4: Eliminar el pedido de envío
-                                    // IMPORTANTE: Primero guardar el ingreso de delivery
-                                    // en costo_delivery para que no se pierda al borrar el pedido.
+                                    // PASO 4: Registrar costo_delivery para auditoría
                                     try {
-                                      const costoEnvio = parseFloat(
-                                        p.costo_envio || "0",
-                                      );
-                                      if (costoEnvio > 0) {
-                                        // Registrar en tabla `pagos` para que aparezca
-                                        // en el cierre de caja y resumen de efectivo
-                                        const tipoPagoDelivery = (
-                                          p.tipo_pago || "efectivo"
-                                        ).toLowerCase();
-                                        const pagoDelivery = {
-                                          tipo: tipoPagoDelivery,
-                                          monto: costoEnvio,
-                                          recibido: costoEnvio,
-                                          cambio: 0,
-                                          referencia: "DELIVERY",
-                                          banco: null,
-                                          tarjeta: null,
-                                          autorizador: null,
-                                          usd_monto: null,
-                                          factura: facturaActual,
-                                          factura_venta: facturaActual,
-                                          fecha_hora: formatToHondurasLocal(),
-                                          cajero: usuarioActual?.nombre || null,
-                                          cajero_id: usuarioActual?.id || null,
-                                          cliente: p.cliente || null,
-                                          operation_id: crypto.randomUUID(),
-                                        };
-                                        if (isOnline && estaConectado()) {
-                                          await supabase
-                                            .from("pagos")
-                                            .insert([pagoDelivery]);
-                                          console.log(
-                                            `✓ Costo delivery L ${costoEnvio} registrado en tabla pagos`,
-                                          );
-                                        } else {
-                                          await guardarPagosLocal([
-                                            pagoDelivery,
+                                      if (
+                                        costoEnvioValor > 0 &&
+                                        isOnline &&
+                                        estaConectado()
+                                      ) {
+                                        await supabase
+                                          .from("costo_delivery")
+                                          .insert([
+                                            {
+                                              pedido_id:
+                                                p.id &&
+                                                !String(p.id).startsWith(
+                                                  "local-",
+                                                )
+                                                  ? Number(p.id)
+                                                  : null,
+                                              monto: costoEnvioValor,
+                                              fecha:
+                                                p.fecha ||
+                                                formatToHondurasLocal(),
+                                              cliente: p.cliente || null,
+                                              cajero_id:
+                                                usuarioActual?.id || null,
+                                              caja:
+                                                p.caja ||
+                                                caiInfo?.caja_asignada ||
+                                                null,
+                                              tipo_pago: p.tipo_pago || null,
+                                            },
                                           ]);
-                                          console.log(
-                                            `✓ Costo delivery L ${costoEnvio} guardado en IndexedDB (sin conexión)`,
-                                          );
-                                        }
-
-                                        // También mantener registro en costo_delivery para auditoría
-                                        if (isOnline && estaConectado()) {
-                                          await supabase
-                                            .from("costo_delivery")
-                                            .insert([
-                                              {
-                                                pedido_id:
-                                                  p.id &&
-                                                  !String(p.id).startsWith(
-                                                    "local-",
-                                                  )
-                                                    ? Number(p.id)
-                                                    : null,
-                                                monto: costoEnvio,
-                                                fecha:
-                                                  p.fecha ||
-                                                  formatToHondurasLocal(),
-                                                cliente: p.cliente || null,
-                                                cajero_id:
-                                                  usuarioActual?.id || null,
-                                                caja:
-                                                  p.caja ||
-                                                  caiInfo?.caja_asignada ||
-                                                  null,
-                                                tipo_pago: p.tipo_pago || null,
-                                              },
-                                            ]);
-                                          console.log(
-                                            `✓ Ingreso de delivery L ${costoEnvio} guardado en costo_delivery`,
-                                          );
-                                        }
+                                        console.log(
+                                          `✓ Ingreso de delivery L ${costoEnvioValor} guardado en costo_delivery`,
+                                        );
                                       }
                                     } catch (deliveryErr) {
                                       console.error(
-                                        "Error guardando pago/costo_delivery:",
+                                        "Error guardando costo_delivery:",
                                         deliveryErr,
                                       );
                                       // No bloqueamos el flujo principal si falla esto
@@ -7393,7 +7435,166 @@ export default function PuntoDeVentaView({
                                   ? "..."
                                   : "Entregado y Cobrado"}
                               </button>
+                              {/* Cambiar método de pago */}
+                              <button
+                                onClick={() => {
+                                  const key = String(
+                                    p.id || p.local_id || `row-${index}`,
+                                  );
+                                  if (editPagoRowId === key) {
+                                    setEditPagoRowId(null);
+                                  } else {
+                                    setEditPagoRowId(key);
+                                    setEditPagoTipo(
+                                      (p.tipo_pago || "efectivo").toLowerCase(),
+                                    );
+                                  }
+                                }}
+                                style={{
+                                  background:
+                                    editPagoRowId ===
+                                    String(p.id || p.local_id || `row-${index}`)
+                                      ? "#1976d2"
+                                      : "#e3f2fd",
+                                  color:
+                                    editPagoRowId ===
+                                    String(p.id || p.local_id || `row-${index}`)
+                                      ? "#fff"
+                                      : "#1976d2",
+                                  border: "1px solid #90caf9",
+                                  padding: "6px 10px",
+                                  borderRadius: 6,
+                                  cursor: "pointer",
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                💳 Cambiar pago
+                              </button>
                             </div>
+                            {/* Panel inline para cambiar método de pago */}
+                            {editPagoRowId ===
+                              String(p.id || p.local_id || `row-${index}`) && (
+                              <div
+                                style={{
+                                  marginTop: 8,
+                                  padding: "10px 12px",
+                                  background: "#f0f7ff",
+                                  borderRadius: 8,
+                                  border: "1.5px solid #90caf9",
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: 6,
+                                  alignItems: "center",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    color: "#1976d2",
+                                    marginRight: 4,
+                                  }}
+                                >
+                                  Nuevo método:
+                                </span>
+                                {[
+                                  {
+                                    value: "efectivo",
+                                    label: "💵 Efectivo",
+                                    color: "#16a34a",
+                                  },
+                                  {
+                                    value: "tarjeta",
+                                    label: "💳 Tarjeta",
+                                    color: "#1976d2",
+                                  },
+                                  {
+                                    value: "transferencia",
+                                    label: "🏦 Transf.",
+                                    color: "#7c3aed",
+                                  },
+                                ].map((opt) => (
+                                  <button
+                                    key={opt.value}
+                                    onClick={() => setEditPagoTipo(opt.value)}
+                                    style={{
+                                      background:
+                                        editPagoTipo === opt.value
+                                          ? opt.color
+                                          : "#fff",
+                                      color:
+                                        editPagoTipo === opt.value
+                                          ? "#fff"
+                                          : opt.color,
+                                      border: `1.5px solid ${opt.color}`,
+                                      borderRadius: 6,
+                                      padding: "4px 10px",
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      if (p.__localPending) {
+                                        // Actualizar en IndexedDB si es local
+                                      } else {
+                                        const { error } = await supabase
+                                          .from("pedidos_envio")
+                                          .update({ tipo_pago: editPagoTipo })
+                                          .eq("id", p.id);
+                                        if (error) throw error;
+                                      }
+                                      // Actualizar localmente
+                                      setPedidosList((prev) =>
+                                        prev.map((x) =>
+                                          String(x.id || x.local_id) ===
+                                          String(p.id || p.local_id)
+                                            ? { ...x, tipo_pago: editPagoTipo }
+                                            : x,
+                                        ),
+                                      );
+                                      setEditPagoRowId(null);
+                                    } catch (err) {
+                                      alert("Error al cambiar método de pago");
+                                    }
+                                  }}
+                                  style={{
+                                    background: "#1976d2",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: 6,
+                                    padding: "4px 14px",
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    marginLeft: 4,
+                                  }}
+                                >
+                                  ✓ Guardar
+                                </button>
+                                <button
+                                  onClick={() => setEditPagoRowId(null)}
+                                  style={{
+                                    background: "#f3f4f6",
+                                    color: "#6b7280",
+                                    border: "1px solid #d1d5db",
+                                    borderRadius: 6,
+                                    padding: "4px 10px",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}

@@ -13,6 +13,7 @@ export interface Factura {
   productos: string;
   cliente: string;
   es_donacion?: boolean;
+  tipo_orden?: string;
 }
 
 export interface FacturasEmitidasViewProps {
@@ -30,6 +31,9 @@ export default function FacturasEmitidasView({
   const [loading, setLoading] = useState(false);
   const [modalFactura, setModalFactura] = useState<Factura | null>(null);
   const [soloDonaciones, setSoloDonaciones] = useState(false);
+  const [pagosPorFacturaMap, setPagosPorFacturaMap] = useState<
+    Map<string, string>
+  >(new Map());
 
   useEffect(() => {
     fetchFacturas();
@@ -52,6 +56,23 @@ export default function FacturasEmitidasView({
     });
     if (!error && data) {
       setFacturas(data as Factura[]);
+      // Construir mapa factura -> tipo_pago desde tabla pagos
+      const numeros = (data as Factura[]).map((f) => f.factura).filter(Boolean);
+      const newMap = new Map<string, string>();
+      if (numeros.length > 0) {
+        try {
+          const { data: pagosData } = await supabase
+            .from("pagos")
+            .select("factura, tipo")
+            .in("factura", numeros);
+          for (const p of pagosData || []) {
+            if (p.factura && !newMap.has(p.factura)) {
+              newMap.set(p.factura, p.tipo as string);
+            }
+          }
+        } catch (_) {}
+      }
+      setPagosPorFacturaMap(newMap);
     }
     setLoading(false);
   }
@@ -235,9 +256,9 @@ export default function FacturasEmitidasView({
             </div>
           ))}
         </div>
-        <div style={{ overflowX: "auto", marginTop: 8 }}>
+        <div style={{ marginTop: 16 }}>
           {loading ? (
-            <div style={{ textAlign: "center", padding: 32 }}>
+            <div style={{ textAlign: "center", padding: 40 }}>
               <div
                 className="loader"
                 style={{
@@ -255,145 +276,371 @@ export default function FacturasEmitidasView({
               </p>
             </div>
           ) : (
-            <table
-              className="desktop-table"
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                background: "#f8faff",
-                borderRadius: 12,
-                overflow: "hidden",
-                boxShadow: "0 2px 8px #0001",
-              }}
-            >
-              <thead>
-                <tr
-                  style={{ background: "#1976d2", color: "#fff", fontSize: 16 }}
-                >
-                  <th style={{ padding: 12, fontWeight: 700 }}>ID</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Fecha/Hora</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Factura</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>CAI</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Cajero</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Caja</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Sub Total</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>ISV 15%</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>ISV 18%</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Total</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Productos</th>
-                  <th style={{ padding: 12, fontWeight: 700 }}>Cliente</th>
-                </tr>
-              </thead>
-              <tbody>
-                {facturas.map((f) => (
-                  <tr
-                    key={f.id}
-                    style={{
-                      borderBottom: "1px solid #e3f0ff",
-                      fontSize: 15,
-                      cursor: "pointer",
-                      transition: "background 0.2s",
-                      background: f.es_donacion ? "#faf5ff" : undefined,
-                    }}
-                    onClick={() => setModalFactura(f)}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = f.es_donacion
-                        ? "#f0e9ff"
-                        : "#e3f0ff")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = f.es_donacion
-                        ? "#faf5ff"
-                        : "")
-                    }
-                  >
-                    <td data-label="ID" style={{ padding: 10 }}>
-                      {f.id}
-                    </td>
-                    <td data-label="Fecha/Hora" style={{ padding: 10 }}>
-                      {f.fecha_hora?.replace("T", " ").slice(0, 19)}
-                    </td>
-                    <td data-label="Factura" style={{ padding: 10 }}>
-                      {f.factura}
-                      {f.es_donacion && (
-                        <span
+            (() => {
+              // Definir grupos de pago
+              const grupos: {
+                key: string;
+                label: string;
+                icon: string;
+                color: string;
+                bg: string;
+                headerBg: string;
+              }[] = [
+                {
+                  key: "efectivo",
+                  label: "Efectivo",
+                  icon: "💵",
+                  color: "#16a34a",
+                  bg: "#f0fdf4",
+                  headerBg: "#16a34a",
+                },
+                {
+                  key: "tarjeta",
+                  label: "Tarjeta",
+                  icon: "💳",
+                  color: "#1976d2",
+                  bg: "#eff6ff",
+                  headerBg: "#1976d2",
+                },
+                {
+                  key: "transferencia",
+                  label: "Transferencia",
+                  icon: "🏦",
+                  color: "#7c3aed",
+                  bg: "#f5f3ff",
+                  headerBg: "#7c3aed",
+                },
+                {
+                  key: "dolares",
+                  label: "Dólares",
+                  icon: "💱",
+                  color: "#d97706",
+                  bg: "#fef9c3",
+                  headerBg: "#d97706",
+                },
+                {
+                  key: "donacion",
+                  label: "Donaciones",
+                  icon: "🎁",
+                  color: "#9333ea",
+                  bg: "#fdf4ff",
+                  headerBg: "#9333ea",
+                },
+              ];
+              // Clasificar cada factura en su grupo
+              const grouped: Record<string, Factura[]> = {
+                efectivo: [],
+                tarjeta: [],
+                transferencia: [],
+                dolares: [],
+                donacion: [],
+              };
+              for (const f of facturas) {
+                if (f.es_donacion) {
+                  grouped["donacion"].push(f);
+                  continue;
+                }
+                const tipo = (
+                  pagosPorFacturaMap.get(f.factura) || "efectivo"
+                ).toLowerCase();
+                const key = tipo.includes("tarjeta")
+                  ? "tarjeta"
+                  : tipo.includes("transfer")
+                    ? "transferencia"
+                    : tipo.includes("dolar") || tipo === "dolares"
+                      ? "dolares"
+                      : "efectivo";
+                grouped[key].push(f);
+              }
+              const totalGeneral = facturas.reduce(
+                (s, f) => s + parseFloat(f.total || "0"),
+                0,
+              );
+
+              // Helper para renderizar tabla de un grupo
+              const renderTabla = (
+                lista: Factura[],
+                color: string,
+                bg: string,
+              ) => {
+                const subtotal = lista.reduce(
+                  (s, f) => s + parseFloat(f.total || "0"),
+                  0,
+                );
+                const thStyle: React.CSSProperties = {
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  whiteSpace: "nowrap",
+                };
+                const tdStyle: React.CSSProperties = {
+                  padding: "7px 10px",
+                  fontSize: 13,
+                  borderBottom: "1px solid #f0f0f0",
+                };
+                return (
+                  <div style={{ overflowX: "auto" }}>
+                    <table
+                      className="desktop-table"
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        background: "#fff",
+                        borderRadius: 8,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <thead>
+                        <tr style={{ background: bg }}>
+                          <th style={{ ...thStyle, color }}>Fecha/Hora</th>
+                          <th style={{ ...thStyle, color }}>Factura</th>
+                          <th style={{ ...thStyle, color }}>CAI</th>
+                          <th style={{ ...thStyle, color }}>Cajero</th>
+                          <th style={{ ...thStyle, color }}>Caja</th>
+                          <th style={{ ...thStyle, color, textAlign: "right" }}>
+                            Sub Total
+                          </th>
+                          <th style={{ ...thStyle, color, textAlign: "right" }}>
+                            ISV 15%
+                          </th>
+                          <th style={{ ...thStyle, color, textAlign: "right" }}>
+                            ISV 18%
+                          </th>
+                          <th style={{ ...thStyle, color, textAlign: "right" }}>
+                            Total
+                          </th>
+                          <th style={{ ...thStyle, color }}>Productos</th>
+                          <th style={{ ...thStyle, color }}>Cliente</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lista.map((f) => (
+                          <tr
+                            key={f.id}
+                            style={{
+                              cursor: "pointer",
+                              transition: "background 0.15s",
+                            }}
+                            onClick={() => setModalFactura(f)}
+                            onMouseEnter={(e) =>
+                              (e.currentTarget.style.background = bg + "88")
+                            }
+                            onMouseLeave={(e) =>
+                              (e.currentTarget.style.background = "")
+                            }
+                          >
+                            <td style={tdStyle}>
+                              {f.fecha_hora?.replace("T", " ").slice(0, 19)}
+                            </td>
+                            <td style={tdStyle}>
+                              {f.factura}
+                              {f.es_donacion && (
+                                <span
+                                  style={{
+                                    marginLeft: 5,
+                                    background: "#7c3aed",
+                                    color: "#fff",
+                                    borderRadius: 5,
+                                    padding: "1px 6px",
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  🎁 DON.
+                                </span>
+                              )}
+                            </td>
+                            <td
+                              style={{
+                                ...tdStyle,
+                                maxWidth: 90,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {f.cai}
+                            </td>
+                            <td style={tdStyle}>{f.cajero}</td>
+                            <td style={tdStyle}>{f.caja || ""}</td>
+                            <td style={{ ...tdStyle, textAlign: "right" }}>
+                              {parseFloat(f.sub_total || "0").toFixed(2)}
+                            </td>
+                            <td style={{ ...tdStyle, textAlign: "right" }}>
+                              {parseFloat(f.isv_15 || "0").toFixed(2)}
+                            </td>
+                            <td style={{ ...tdStyle, textAlign: "right" }}>
+                              {parseFloat(f.isv_18 || "0").toFixed(2)}
+                            </td>
+                            <td
+                              style={{
+                                ...tdStyle,
+                                textAlign: "right",
+                                fontWeight: 700,
+                                color: f.es_donacion ? "#7c3aed" : color,
+                              }}
+                            >
+                              {f.es_donacion
+                                ? "🎁 0.00"
+                                : parseFloat(f.total || "0").toFixed(2)}
+                            </td>
+                            <td
+                              style={{
+                                ...tdStyle,
+                                maxWidth: 160,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                color: "#555",
+                              }}
+                            >
+                              {(() => {
+                                try {
+                                  const arr = JSON.parse(f.productos);
+                                  return Array.isArray(arr)
+                                    ? arr
+                                        .map(
+                                          (p: any) =>
+                                            `${p.nombre}(${p.cantidad})`,
+                                        )
+                                        .join(", ")
+                                    : "";
+                                } catch {
+                                  return "";
+                                }
+                              })()}
+                            </td>
+                            <td style={tdStyle}>{f.cliente}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: bg }}>
+                          <td
+                            colSpan={8}
+                            style={{
+                              ...tdStyle,
+                              fontWeight: 700,
+                              color,
+                              textAlign: "right",
+                            }}
+                          >
+                            Subtotal ({lista.length} facturas):
+                          </td>
+                          <td
+                            style={{
+                              ...tdStyle,
+                              fontWeight: 800,
+                              fontSize: 14,
+                              color,
+                              textAlign: "right",
+                            }}
+                          >
+                            L {subtotal.toFixed(2)}
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              };
+
+              return (
+                <div>
+                  {grupos.map((g) => {
+                    const lista = grouped[g.key];
+                    if (!lista || lista.length === 0) return null;
+                    return (
+                      <div key={g.key} style={{ marginBottom: 28 }}>
+                        {/* Encabezado del grupo */}
+                        <div
                           style={{
-                            marginLeft: 6,
-                            background: "#7c3aed",
+                            background: g.headerBg,
                             color: "#fff",
-                            borderRadius: 6,
-                            padding: "1px 7px",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            verticalAlign: "middle",
+                            borderRadius: "10px 10px 0 0",
+                            padding: "12px 18px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
                           }}
                         >
-                          🎁 DON.
-                        </span>
-                      )}
-                    </td>
-                    <td data-label="CAI" style={{ padding: 10 }}>
-                      {f.cai}
-                    </td>
-                    <td data-label="Cajero" style={{ padding: 10 }}>
-                      {f.cajero}
-                    </td>
-                    <td data-label="Caja" style={{ padding: 10 }}>
-                      {f.caja || ""}
-                    </td>
-                    <td data-label="Sub Total" style={{ padding: 10 }}>
-                      {parseFloat(f.sub_total).toFixed(2)}
-                    </td>
-                    <td data-label="ISV 15%" style={{ padding: 10 }}>
-                      {parseFloat(f.isv_15).toFixed(2)}
-                    </td>
-                    <td data-label="ISV 18%" style={{ padding: 10 }}>
-                      {parseFloat(f.isv_18 || "0").toFixed(2)}
-                    </td>
-                    <td
-                      data-label="Total"
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
+                            <span style={{ fontSize: 24 }}>{g.icon}</span>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: 18 }}>
+                                {g.label}
+                              </div>
+                              <div style={{ fontSize: 12, opacity: 0.88 }}>
+                                {lista.length} factura
+                                {lista.length !== 1 ? "s" : ""}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ fontWeight: 900, fontSize: 22 }}>
+                            L{" "}
+                            {lista
+                              .reduce(
+                                (s, f) => s + parseFloat(f.total || "0"),
+                                0,
+                              )
+                              .toFixed(2)}
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            border: `1px solid ${g.color}33`,
+                            borderTop: "none",
+                            borderRadius: "0 0 10px 10px",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {renderTabla(lista, g.color, g.bg)}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Total General */}
+                  {facturas.length > 0 && (
+                    <div
                       style={{
-                        padding: 10,
-                        fontWeight: 700,
-                        color: f.es_donacion ? "#7c3aed" : "#1976d2",
+                        background: "linear-gradient(135deg,#1976d2,#0d47a1)",
+                        color: "#fff",
+                        borderRadius: 14,
+                        padding: "18px 24px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginTop: 16,
+                        boxShadow: "0 4px 18px #1976d233",
                       }}
                     >
-                      {f.es_donacion
-                        ? "🎁 0.00"
-                        : parseFloat(f.total).toFixed(2)}
-                    </td>
-                    <td
-                      data-label="Productos"
-                      style={{
-                        padding: 10,
-                        maxWidth: 180,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        color: "#555",
-                      }}
-                    >
-                      {(() => {
-                        try {
-                          const arr = JSON.parse(f.productos);
-                          if (Array.isArray(arr)) {
-                            return arr
-                              .map((p: any) => `${p.nombre} (${p.cantidad})`)
-                              .join(", ");
-                          }
-                        } catch {
-                          return "";
-                        }
-                        return "";
-                      })()}
-                    </td>
-                    <td data-label="Cliente" style={{ padding: 10 }}>
-                      {f.cliente}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 20 }}>
+                          💰 TOTAL GENERAL
+                        </div>
+                        <div
+                          style={{ fontSize: 13, opacity: 0.85, marginTop: 2 }}
+                        >
+                          {facturas.length} facturas en total
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 900, fontSize: 32 }}>
+                        L {totalGeneral.toFixed(2)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()
           )}
         </div>
         {onBack && (
