@@ -6005,7 +6005,7 @@ export default function PuntoDeVentaView({
                   }}
                 >
                   <div>Subtotal</div>
-                  <div style={{ fontWeight: 600 }}>L {total.toFixed(2)}</div>
+                  <div style={{ fontWeight: 600 }}>L {totalConDescuento.toFixed(2)}</div>
                 </div>
                 <div
                   style={{
@@ -6021,6 +6021,20 @@ export default function PuntoDeVentaView({
                     L {Number(envioCosto || 0).toFixed(2)}
                   </div>
                 </div>
+                {totalDescuento > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "10px 0",
+                      fontSize: 15,
+                      color: "#16a34a",
+                    }}
+                  >
+                    <div>Descuento</div>
+                    <div style={{ fontWeight: 600 }}>− L {totalDescuento.toFixed(2)}</div>
+                  </div>
+                )}
                 <div
                   style={{
                     height: 2,
@@ -6038,7 +6052,7 @@ export default function PuntoDeVentaView({
                   }}
                 >
                   <div>Total</div>
-                  <div>L {(total + Number(envioCosto || 0)).toFixed(2)}</div>
+                  <div>L {(totalConDescuento + Number(envioCosto || 0)).toFixed(2)}</div>
                 </div>
                 <div
                   style={{
@@ -6113,7 +6127,7 @@ export default function PuntoDeVentaView({
                           cliente: envioCliente,
                           telefono: envioCelular,
                           direccion: "", // No se captura dirección en este formulario
-                          total: Number(total.toFixed(2)),
+                          total: Number(totalConDescuento.toFixed(2)),
                           costo_envio: parseFloat(envioCosto || "0"),
                           tipo_pago: tipoPagoNormalizado,
                           factura_venta: facturaActual || null,
@@ -6126,7 +6140,7 @@ export default function PuntoDeVentaView({
                           fecha: registro.fecha_hora,
                           cliente: envioCliente,
                           celular: envioCelular,
-                          total: Number(total.toFixed(2)),
+                          total: Number(totalConDescuento.toFixed(2)),
                           costo_envio: parseFloat(envioCosto || "0"),
                           tipo_pago: tipoPagoNormalizado,
                         };

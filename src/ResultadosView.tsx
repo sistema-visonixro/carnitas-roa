@@ -2092,7 +2092,9 @@ export default function ResultadosView({
         return todasLasFacturas;
       }
 
-      const facturas_reporte = await obtenerTodasLasFacturasReporte();
+      const facturas_reporte = (await obtenerTodasLasFacturasReporte()).filter(
+        (f: any) => f.tipo_venta !== "credito",
+      );
       const nombreCajero = cajeroFiltro
         ? cajeros.find((c) => c.id === cajeroFiltro)?.nombre || "Sin nombre"
         : "";
