@@ -29,6 +29,7 @@ declare interface USBDevice {
   claimInterface(interfaceNumber: number): Promise<void>;
   releaseInterface(interfaceNumber: number): Promise<void>;
   selectConfiguration(configurationValue: number): Promise<void>;
+  selectAlternateInterface(interfaceNumber: number, alternateSetting: number): Promise<void>;
   transferOut(
     endpointNumber: number,
     data: BufferSource,
@@ -41,6 +42,7 @@ declare interface USBInterface {
 }
 declare interface USBAlternateInterface {
   interfaceClass: number;
+  alternateSetting?: number;
   endpoints: USBEndpoint[];
 }
 declare interface USBEndpoint {
@@ -409,6 +411,7 @@ async function enviarBytes(device: USBDevice, data: Uint8Array): Promise<void> {
 
   // Buscar la interfaz + endpoint bulk-out
   let ifaceNumber = 0;
+  let altSetting = 0;
   let endpointNumber = 1;
   let found = false;
 
@@ -417,6 +420,7 @@ async function enviarBytes(device: USBDevice, data: Uint8Array): Promise<void> {
       for (const ep of alt.endpoints) {
         if (ep.type === "bulk" && ep.direction === "out") {
           ifaceNumber = iface.interfaceNumber;
+          altSetting = alt.alternateSetting ?? 0;
           endpointNumber = ep.endpointNumber;
           found = true;
           break;
@@ -431,6 +435,13 @@ async function enviarBytes(device: USBDevice, data: Uint8Array): Promise<void> {
     await device.claimInterface(ifaceNumber);
   } catch (_) {
     // ya estaba reclamada
+  }
+
+  // Seleccionar alternate interface para activar el endpoint bulk-out
+  try {
+    await device.selectAlternateInterface(ifaceNumber, altSetting);
+  } catch (_) {
+    // algunos dispositivos no lo necesitan o lo ignoran
   }
 
   // Enviar en chunks para evitar problemas con buffers pequeños
