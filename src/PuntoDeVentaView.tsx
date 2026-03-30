@@ -2301,7 +2301,7 @@ export default function PuntoDeVentaView({
           dolares_usd: -parseFloat(pagosfRow.dolares_usd || 0),
           delivery: -parseFloat(pagosfRow.delivery || 0),
           total_recibido: -parseFloat(pagosfRow.total_recibido || 0),
-          cambio: parseFloat(pagosfRow.cambio || 0), // cambio se recupera del cliente
+          cambio: -parseFloat(pagosfRow.cambio || 0), // cambio debe ser negativo en devoluciones
           banco: pagosfRow.banco || null,
           tarjeta_num: pagosfRow.tarjeta_num || null,
           autorizacion: pagosfRow.autorizacion || null,
