@@ -21,7 +21,8 @@ type ViewType =
   | "gananciasNetas"
   | "creditosPendientes"
   | "proveedores"
-  | "donacionesMensuales";
+  | "donacionesMensuales"
+  | "impresoras";
 
 const cards: {
   label: string;
@@ -114,6 +115,13 @@ const cards: {
     color: "#7c3aed",
     subtitle: "Platillos regalados",
   },
+  {
+    label: "Impresoras",
+    icon: "🖨️",
+    view: "impresoras",
+    color: "#0284c7",
+    subtitle: "USB recibo y comanda",
+  },
 ];
 
 interface AdminPanelProps {
@@ -136,6 +144,7 @@ import GananciasNetasView from "./GananciasNetasView";
 import CreditosPendientesView from "./CreditosPendientesView";
 import ProveedoresCxPView from "./ProveedoresCxPView";
 import DonacionesMensualesView from "./DonacionesMensualesView";
+import ImpresorasView from "./ImpresorasView";
 
 const AdminPanel: FC<AdminPanelProps> = (props) => {
   const { user } = props;
@@ -372,6 +381,22 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
         <path d="M12 22V7" />
         <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
         <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+      </svg>
+    ),
+    impresoras: (
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polyline points="6 9 6 2 18 2 18 9" />
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+        <rect x="6" y="14" width="12" height="8" />
       </svg>
     ),
   };
@@ -1084,6 +1109,9 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
             )}
             {currentView === "donacionesMensuales" && (
               <DonacionesMensualesView onBack={() => setCurrentView("menu")} />
+            )}
+            {currentView === "impresoras" && (
+              <ImpresorasView onBack={() => setCurrentView("menu")} />
             )}
           </div>
         </section>

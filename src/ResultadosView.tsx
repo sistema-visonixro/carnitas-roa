@@ -165,35 +165,35 @@ export default function ResultadosView({
 
       // Distribuir delivery al método de pago principal de cada factura.
       for (const r of pagosfRows) {
-        const ef  = parseFloat(r.efectivo      || 0);
-        const tk  = parseFloat(r.tarjeta       || 0);
-        const tr  = parseFloat(r.transferencia || 0);
-        const dl  = parseFloat(r.dolares       || 0);
-        const dlU = parseFloat(r.dolares_usd   || 0);
-        const cb  = parseFloat(r.cambio        || 0);
-        const dv  = parseFloat(r.delivery      || 0);
+        const ef = parseFloat(r.efectivo || 0);
+        const tk = parseFloat(r.tarjeta || 0);
+        const tr = parseFloat(r.transferencia || 0);
+        const dl = parseFloat(r.dolares || 0);
+        const dlU = parseFloat(r.dolares_usd || 0);
+        const cb = parseFloat(r.cambio || 0);
+        const dv = parseFloat(r.delivery || 0);
 
-        dolaresSum    += dl;
+        dolaresSum += dl;
         dolaresSumUsd += dlU;
-        cambioSum     += cb;
-        deliverySum   += dv;
+        cambioSum += cb;
+        deliverySum += dv;
 
         if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
           efectivoSumBruto += ef + dv;
-          tarjetaSum       += tk;
-          transSum         += tr;
+          tarjetaSum += tk;
+          transSum += tr;
         } else if (tk > 0) {
           efectivoSumBruto += ef;
-          tarjetaSum       += tk + dv;
-          transSum         += tr;
+          tarjetaSum += tk + dv;
+          transSum += tr;
         } else if (tr > 0) {
           efectivoSumBruto += ef;
-          tarjetaSum       += tk;
-          transSum         += tr + dv;
+          tarjetaSum += tk;
+          transSum += tr + dv;
         } else {
           efectivoSumBruto += ef + dv;
-          tarjetaSum       += tk;
-          transSum         += tr;
+          tarjetaSum += tk;
+          transSum += tr;
         }
       }
 
@@ -431,14 +431,17 @@ export default function ResultadosView({
         // al método de pago principal (misma lógica que fetchResumenCaja).
         const normalizado: any[] = [];
         for (const r of todosLosPagosF) {
-          const ef  = parseFloat(r.efectivo      || 0);
-          const tk  = parseFloat(r.tarjeta       || 0);
-          const tr  = parseFloat(r.transferencia || 0);
-          const dl  = parseFloat(r.dolares       || 0);
-          const dv  = parseFloat(r.delivery      || 0);
+          const ef = parseFloat(r.efectivo || 0);
+          const tk = parseFloat(r.tarjeta || 0);
+          const tr = parseFloat(r.transferencia || 0);
+          const dl = parseFloat(r.dolares || 0);
+          const dv = parseFloat(r.delivery || 0);
 
           // Asignar delivery al método activo (igual que fetchResumenCaja)
-          let dvEf = 0, dvTk = 0, dvTr = 0, dvDl = 0;
+          let dvEf = 0,
+            dvTk = 0,
+            dvTr = 0,
+            dvDl = 0;
           if (dv > 0) {
             if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) dvEf = dv;
             else if (tk > 0) dvTk = dv;
@@ -691,13 +694,16 @@ export default function ResultadosView({
         // al método de pago principal (igual que fetchResumenCaja).
         const normalizado: any[] = [];
         for (const r of todosLosPagosF) {
-          const ef  = parseFloat(r.efectivo      || 0);
-          const tk  = parseFloat(r.tarjeta       || 0);
-          const tr  = parseFloat(r.transferencia || 0);
-          const dl  = parseFloat(r.dolares       || 0);
-          const dv  = parseFloat(r.delivery      || 0);
+          const ef = parseFloat(r.efectivo || 0);
+          const tk = parseFloat(r.tarjeta || 0);
+          const tr = parseFloat(r.transferencia || 0);
+          const dl = parseFloat(r.dolares || 0);
+          const dv = parseFloat(r.delivery || 0);
 
-          let dvEf = 0, dvTk = 0, dvTr = 0, dvDl = 0;
+          let dvEf = 0,
+            dvTk = 0,
+            dvTr = 0,
+            dvDl = 0;
           if (dv > 0) {
             if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) dvEf = dv;
             else if (tk > 0) dvTk = dv;

@@ -44,6 +44,9 @@ import type {
   CuentaPorPagarInput,
   Proveedor,
 } from "./types/creditos";
+import { cargarPrinterConfig } from "./utils/printerConfig";
+import { imprimirReciboUSB, imprimirComandaUSB } from "./utils/webUsbPrinter";
+import type { DatosRecibo, DatosComanda } from "./utils/webUsbPrinter";
 
 interface Producto {
   id: string;
@@ -511,39 +514,39 @@ export default function PuntoDeVentaView({
       // Si la factura tiene efectivo, el delivery entra a efectivo (cobrado en mano).
       // Si solo tiene tarjeta/transferencia/dólares, el delivery entra en ese método.
       for (const r of pagosfRows) {
-        const ef  = parseFloat(r.efectivo      || 0);
-        const tk  = parseFloat(r.tarjeta       || 0);
-        const tr  = parseFloat(r.transferencia || 0);
-        const dl  = parseFloat(r.dolares       || 0);
-        const dlU = parseFloat(r.dolares_usd   || 0);
-        const cb  = parseFloat(r.cambio        || 0);
-        const dv  = parseFloat(r.delivery      || 0);
+        const ef = parseFloat(r.efectivo || 0);
+        const tk = parseFloat(r.tarjeta || 0);
+        const tr = parseFloat(r.transferencia || 0);
+        const dl = parseFloat(r.dolares || 0);
+        const dlU = parseFloat(r.dolares_usd || 0);
+        const cb = parseFloat(r.cambio || 0);
+        const dv = parseFloat(r.delivery || 0);
 
-        dolaresSum    += dl;
+        dolaresSum += dl;
         dolaresSumUsd += dlU;
-        cambioSum     += cb;  // el cambio siempre sale del cajón de efectivo
-        deliverySum   += dv;
+        cambioSum += cb; // el cambio siempre sale del cajón de efectivo
+        deliverySum += dv;
 
         if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
           // Pagó en efectivo (o no hay otro método) → delivery va a efectivo
           efectivoSumBruto += ef + dv;
-          tarjetaSum       += tk;
-          transSum         += tr;
+          tarjetaSum += tk;
+          transSum += tr;
         } else if (tk > 0) {
           // Pagó solo con tarjeta → delivery va a tarjeta
           efectivoSumBruto += ef;
-          tarjetaSum       += tk + dv;
-          transSum         += tr;
+          tarjetaSum += tk + dv;
+          transSum += tr;
         } else if (tr > 0) {
           // Pagó solo con transferencia → delivery va a transferencia
           efectivoSumBruto += ef;
-          tarjetaSum       += tk;
-          transSum         += tr + dv;
+          tarjetaSum += tk;
+          transSum += tr + dv;
         } else {
           // Pagó en dólares (u otro) → delivery va a efectivo por defecto
           efectivoSumBruto += ef + dv;
-          tarjetaSum       += tk;
-          transSum         += tr;
+          tarjetaSum += tk;
+          transSum += tr;
         }
       }
 
@@ -3884,33 +3887,18 @@ export default function PuntoDeVentaView({
                 </div>
               </div>
             `;
-            // Imprimir recibo y comanda sin cortes automáticos en el recibo
+            // Imprimir recibo y comanda (USB silenciosa o navegador)
             const printHtml = `
               <html>
                 <head>
                   <title>Recibo y Comanda</title>
                   <style>
-                    @page {
-                      margin: 0;
-                      size: auto;
-                    }
-                    body {
-                      margin: 0;
-                      padding: 0;
-                      overflow: visible;
-                    }
-                    * {
-                      page-break-inside: avoid;
-                      -webkit-print-color-adjust: exact;
-                    }
+                    @page { margin: 0; size: auto; }
+                    body { margin: 0; padding: 0; overflow: visible; }
+                    * { page-break-inside: avoid; -webkit-print-color-adjust: exact; }
                     @media print {
-                      html, body {
-                        height: auto;
-                        overflow: visible;
-                      }
-                      .comanda-break {
-                        page-break-before: always;
-                      }
+                      html, body { height: auto; overflow: visible; }
+                      .comanda-break { page-break-before: always; }
                     }
                   </style>
                 </head>
@@ -3921,33 +3909,124 @@ export default function PuntoDeVentaView({
               </html>
             `;
 
-            // Precargar la imagen antes de imprimir
-            const preloadImage = () => {
-              return new Promise((resolve) => {
+            const preloadImage = () =>
+              new Promise((resolve) => {
                 const img = new Image();
                 img.onload = () => resolve(true);
-                img.onerror = () => resolve(false); // Continuar aunque falle
+                img.onerror = () => resolve(false);
                 img.src = datosNegocio.logo_url || "/favicon.ico";
-                // Timeout de seguridad de 2 segundos
                 setTimeout(() => resolve(false), 2000);
               });
-            };
 
+            // ── Verificar configuración USB ────────────────────────────────
             try {
-              // Esperar a que la imagen se cargue
-              await preloadImage();
-              // Fallback: abrir ventana de impresión del navegador
-              const printWindow = window.open("", "", "height=800,width=400");
-              if (printWindow) {
-                printWindow.document.write(printHtml);
-                printWindow.document.close();
-                printWindow.onload = () => {
-                  setTimeout(() => {
-                    printWindow.focus();
-                    printWindow.print();
-                    printWindow.close();
-                  }, 500);
-                };
+              const [cfgComandaP, cfgReciboP] = await Promise.all([
+                cargarPrinterConfig("comanda"),
+                cargarPrinterConfig("recibo"),
+              ]);
+              const usarUSBComanda =
+                cfgComandaP?.modoImpresion === "silenciosa" &&
+                cfgComandaP.vendorId &&
+                cfgComandaP.productId;
+              const usarUSBRecibo =
+                cfgReciboP?.modoImpresion === "silenciosa" &&
+                cfgReciboP.vendorId &&
+                cfgReciboP.productId;
+
+              if (usarUSBComanda || usarUSBRecibo) {
+                const itemsUSB = snap.seleccionados.map((p) => ({
+                  nombre: p.nombre,
+                  cantidad: p.cantidad,
+                  precio: p.precio,
+                  tipo: p.tipo,
+                  complementos: p.complementos,
+                  piezas: p.piezas ?? undefined,
+                }));
+                // Comanda
+                if (usarUSBComanda) {
+                  const datosComandaUSB: DatosComanda = {
+                    factura: snap.facturaActual || "",
+                    cliente: snap.nombreCliente,
+                    tipoOrden: snap.tipoOrden,
+                    items: itemsUSB,
+                    fecha: new Date().toLocaleString("es-HN", {
+                      timeZone: "America/Tegucigalpa",
+                    }),
+                  };
+                  imprimirComandaUSB(
+                    cfgComandaP!.vendorId,
+                    cfgComandaP!.productId,
+                    datosComandaUSB,
+                  ).catch((e) => console.error("Error USB comanda:", e));
+                } else {
+                  const pwC = window.open("", "", "height=800,width=400");
+                  if (pwC) {
+                    pwC.document.write(
+                      `<html><head><title>Comanda</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`,
+                    );
+                    pwC.document.close();
+                    pwC.onload = () => {
+                      setTimeout(() => {
+                        pwC.focus();
+                        pwC.print();
+                        pwC.close();
+                      }, 500);
+                    };
+                  }
+                }
+                // Recibo
+                if (usarUSBRecibo) {
+                  const datosReciboUSB: DatosRecibo = {
+                    nombreNegocio: datosNegocio.nombre_negocio,
+                    factura: snap.facturaActual || "",
+                    cajero: usuarioActual?.nombre || "",
+                    caja: caiInfo?.caja_asignada || "",
+                    cliente: snap.nombreCliente,
+                    fecha: new Date().toLocaleString("es-HN", {
+                      timeZone: "America/Tegucigalpa",
+                    }),
+                    items: itemsUSB,
+                    total: snap.totalConDescuento,
+                    descuento:
+                      snap.totalDescuento > 0 ? snap.totalDescuento : undefined,
+                    cambio: cambioValue > 0 ? cambioValue : undefined,
+                  };
+                  imprimirReciboUSB(
+                    cfgReciboP!.vendorId,
+                    cfgReciboP!.productId,
+                    datosReciboUSB,
+                  ).catch((e) => console.error("Error USB recibo:", e));
+                } else {
+                  const pwR = window.open("", "", "height=600,width=400");
+                  if (pwR) {
+                    pwR.document.write(
+                      `<html><head><title>Recibo</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}*{-webkit-print-color-adjust:exact;}</style></head><body>${comprobanteHtml}</body></html>`,
+                    );
+                    pwR.document.close();
+                    pwR.onload = () => {
+                      setTimeout(() => {
+                        pwR.focus();
+                        pwR.print();
+                        pwR.close();
+                      }, 500);
+                    };
+                  }
+                }
+              } else {
+                // Modo navegador: recibo + comanda juntos en una ventana
+                await preloadImage();
+                const printWindow = window.open("", "", "height=800,width=400");
+                if (printWindow) {
+                  printWindow.document.write(printHtml);
+                  printWindow.document.close();
+                  printWindow.onload = () => {
+                    setTimeout(() => {
+                      printWindow.focus();
+                      printWindow.print();
+                      printWindow.close();
+                    }, 500);
+                  };
+                }
               }
             } catch (err) {
               console.error("Error al intentar imprimir:", err);
@@ -6005,7 +6084,9 @@ export default function PuntoDeVentaView({
                   }}
                 >
                   <div>Subtotal</div>
-                  <div style={{ fontWeight: 600 }}>L {totalConDescuento.toFixed(2)}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    L {totalConDescuento.toFixed(2)}
+                  </div>
                 </div>
                 <div
                   style={{
@@ -6032,7 +6113,9 @@ export default function PuntoDeVentaView({
                     }}
                   >
                     <div>Descuento</div>
-                    <div style={{ fontWeight: 600 }}>− L {totalDescuento.toFixed(2)}</div>
+                    <div style={{ fontWeight: 600 }}>
+                      − L {totalDescuento.toFixed(2)}
+                    </div>
                   </div>
                 )}
                 <div
@@ -6052,7 +6135,9 @@ export default function PuntoDeVentaView({
                   }}
                 >
                   <div>Total</div>
-                  <div>L {(totalConDescuento + Number(envioCosto || 0)).toFixed(2)}</div>
+                  <div>
+                    L {(totalConDescuento + Number(envioCosto || 0)).toFixed(2)}
+                  </div>
                 </div>
                 <div
                   style={{
@@ -6460,24 +6545,135 @@ export default function PuntoDeVentaView({
                             });
                           };
 
-                          // Print using browser fallback (QZ Tray integration removed)
+                          // ── Imprimir (USB silenciosa o navegador) ─────────────
                           try {
-                            await preloadImage();
-                            const printWindow = window.open(
-                              "",
-                              "",
-                              "height=800,width=400",
+                            const [cfgComandaE, cfgReciboE] = await Promise.all(
+                              [
+                                cargarPrinterConfig("comanda"),
+                                cargarPrinterConfig("recibo"),
+                              ],
                             );
-                            if (printWindow) {
-                              printWindow.document.write(printHtml);
-                              printWindow.document.close();
-                              printWindow.onload = () => {
-                                setTimeout(() => {
-                                  printWindow.focus();
-                                  printWindow.print();
-                                  printWindow.close();
-                                }, 500);
-                              };
+                            const usarUSBComandaE =
+                              cfgComandaE?.modoImpresion === "silenciosa" &&
+                              cfgComandaE.vendorId &&
+                              cfgComandaE.productId;
+                            const usarUSBReciboE =
+                              cfgReciboE?.modoImpresion === "silenciosa" &&
+                              cfgReciboE.vendorId &&
+                              cfgReciboE.productId;
+
+                            if (usarUSBComandaE || usarUSBReciboE) {
+                              const itemsE = registro.productos.map(
+                                (p: any) => ({
+                                  nombre: p.nombre,
+                                  cantidad: p.cantidad,
+                                  precio: p.precio,
+                                  tipo: p.tipo,
+                                  complementos: p.complementos,
+                                  piezas: p.piezas ?? undefined,
+                                }),
+                              );
+                              if (usarUSBComandaE) {
+                                const datosComandaE: DatosComanda = {
+                                  factura: facturaActual || "",
+                                  cliente: registro.cliente,
+                                  tipoOrden: tipoOrden,
+                                  items: itemsE,
+                                  fecha: new Date().toLocaleString("es-HN", {
+                                    timeZone: "America/Tegucigalpa",
+                                  }),
+                                  esTelefono: true,
+                                };
+                                imprimirComandaUSB(
+                                  cfgComandaE!.vendorId,
+                                  cfgComandaE!.productId,
+                                  datosComandaE,
+                                ).catch((e) =>
+                                  console.error("Error USB comanda envío:", e),
+                                );
+                              } else {
+                                const pwCE = window.open(
+                                  "",
+                                  "",
+                                  "height=800,width=400",
+                                );
+                                if (pwCE) {
+                                  pwCE.document.write(
+                                    `<html><head><title>Comanda</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`,
+                                  );
+                                  pwCE.document.close();
+                                  pwCE.onload = () => {
+                                    setTimeout(() => {
+                                      pwCE.focus();
+                                      pwCE.print();
+                                      pwCE.close();
+                                    }, 500);
+                                  };
+                                }
+                              }
+                              if (usarUSBReciboE) {
+                                const datosReciboE: DatosRecibo = {
+                                  nombreNegocio: datosNegocio.nombre_negocio,
+                                  factura: facturaActual || "",
+                                  cajero: usuarioActual?.nombre || "",
+                                  caja: caiInfo?.caja_asignada || "",
+                                  cliente: registro.cliente,
+                                  fecha: new Date().toLocaleString("es-HN", {
+                                    timeZone: "America/Tegucigalpa",
+                                  }),
+                                  items: itemsE,
+                                  total: registro.total + registro.costo_envio,
+                                  costoEnvio:
+                                    registro.costo_envio > 0
+                                      ? registro.costo_envio
+                                      : undefined,
+                                };
+                                imprimirReciboUSB(
+                                  cfgReciboE!.vendorId,
+                                  cfgReciboE!.productId,
+                                  datosReciboE,
+                                ).catch((e) =>
+                                  console.error("Error USB recibo envío:", e),
+                                );
+                              } else {
+                                const pwRE = window.open(
+                                  "",
+                                  "",
+                                  "height=600,width=400",
+                                );
+                                if (pwRE) {
+                                  pwRE.document.write(
+                                    `<html><head><title>Recibo</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}*{-webkit-print-color-adjust:exact;}</style></head><body>${comprobanteHtml}</body></html>`,
+                                  );
+                                  pwRE.document.close();
+                                  pwRE.onload = () => {
+                                    setTimeout(() => {
+                                      pwRE.focus();
+                                      pwRE.print();
+                                      pwRE.close();
+                                    }, 500);
+                                  };
+                                }
+                              }
+                            } else {
+                              // Modo navegador: recibo + comanda juntos
+                              await preloadImage();
+                              const printWindow = window.open(
+                                "",
+                                "",
+                                "height=800,width=400",
+                              );
+                              if (printWindow) {
+                                printWindow.document.write(printHtml);
+                                printWindow.document.close();
+                                printWindow.onload = () => {
+                                  setTimeout(() => {
+                                    printWindow.focus();
+                                    printWindow.print();
+                                    printWindow.close();
+                                  }, 500);
+                                };
+                              }
                             }
                           } catch (err) {
                             console.error(
@@ -7169,22 +7365,29 @@ export default function PuntoDeVentaView({
                                         })),
                                         // Agregar línea de delivery si hay costo de envío
                                         ...(parseFloat(p.costo_envio || "0") > 0
-                                          ? [{
-                                              id: "delivery",
-                                              nombre: "Delivery",
-                                              precio: parseFloat(p.costo_envio || "0"),
-                                              cantidad: 1,
-                                              tipo: "delivery",
-                                              complementos: [],
-                                              piezas: null,
-                                            }]
+                                          ? [
+                                              {
+                                                id: "delivery",
+                                                nombre: "Delivery",
+                                                precio: parseFloat(
+                                                  p.costo_envio || "0",
+                                                ),
+                                                cantidad: 1,
+                                                tipo: "delivery",
+                                                complementos: [],
+                                                piezas: null,
+                                              },
+                                            ]
                                           : []),
                                       ]),
                                       sub_total: subTotal.toFixed(2),
                                       isv_15: isv15.toFixed(2),
                                       isv_18: isv18.toFixed(2),
                                       // total incluye costo de envío
-                                      total: (Number(p.total || 0) + parseFloat(p.costo_envio || "0")).toFixed(2),
+                                      total: (
+                                        Number(p.total || 0) +
+                                        parseFloat(p.costo_envio || "0")
+                                      ).toFixed(2),
                                     };
 
                                     // Preparar fila de pagosf (1 sola fila con pago + delivery)
