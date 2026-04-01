@@ -665,7 +665,7 @@ export default function ResultadosView({
           let query = supabase
             .from("pagosf")
             .select(
-              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cajero_id, cajero, fecha_hora",
+              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, cajero, fecha_hora",
             );
 
           query = query
@@ -715,6 +715,18 @@ export default function ResultadosView({
             normalizado.push({
               tipo: "efectivo",
               monto: ef + dvEf,
+              usd_monto: 0,
+              factura: r.factura,
+              factura_venta: r.factura,
+              cajero: r.cajero,
+              cajero_id: r.cajero_id,
+              fecha_hora: r.fecha_hora,
+            });
+          if (parseFloat(r.cambio || 0) > 0)
+            // El cambio devuelto se contabiliza como efectivo negativo
+            normalizado.push({
+              tipo: "efectivo",
+              monto: -parseFloat(r.cambio),
               usd_monto: 0,
               factura: r.factura,
               factura_venta: r.factura,

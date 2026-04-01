@@ -29,7 +29,10 @@ declare interface USBDevice {
   claimInterface(interfaceNumber: number): Promise<void>;
   releaseInterface(interfaceNumber: number): Promise<void>;
   selectConfiguration(configurationValue: number): Promise<void>;
-  selectAlternateInterface(interfaceNumber: number, alternateSetting: number): Promise<void>;
+  selectAlternateInterface(
+    interfaceNumber: number,
+    alternateSetting: number,
+  ): Promise<void>;
   transferOut(
     endpointNumber: number,
     data: BufferSource,
