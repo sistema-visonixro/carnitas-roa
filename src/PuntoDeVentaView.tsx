@@ -201,7 +201,7 @@ export default function PuntoDeVentaView({
         isv_15: 0,
         isv_18: 0,
         total,
-        fecha_hora: new Date().toISOString(),
+        fecha_hora: formatToHondurasLocal(),
         tipo_orden: "PARA LLEVAR",
         dias_vencimiento: 30,
       });
@@ -752,7 +752,11 @@ export default function PuntoDeVentaView({
     setShowHistorialCreditos(true);
     setHistorialCreditosLoading(true);
     try {
-      const { end: dayEnd } = getLocalDayRange();
+      // Extender hasta el fin del día siguiente para capturar registros
+      // que pudieron haberse guardado con hora UTC (desfase +1 día)
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const { end: dayEnd } = getLocalDayRange(tomorrow);
       let cajaAsignada = caiInfo?.caja_asignada;
       if (!cajaAsignada) {
         const { data: caiData } = await supabase
@@ -1206,6 +1210,7 @@ export default function PuntoDeVentaView({
   const [pedidosList, setPedidosList] = useState<any[]>([]);
   const [pedidosLoading] = useState(false);
   const [pedidosPendientesCount, setPedidosPendientesCount] = useState(0);
+  const [showCierrePedidosWarning, setShowCierrePedidosWarning] = useState(false);
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
@@ -1617,6 +1622,11 @@ export default function PuntoDeVentaView({
               );
             }
 
+            // Sanitizar: si facturaFinal no es un número válido, no guardar basura en cache
+            const facturaFinalSanitizada = Number.isFinite(parseInt(facturaFinal))
+              ? facturaFinal
+              : caiData.rango_desde;
+
             // Guardar en cache con la factura final
             await guardarCaiCache({
               id: caiData.id.toString(),
@@ -1625,7 +1635,7 @@ export default function PuntoDeVentaView({
               cai: caiData.cai,
               factura_desde: caiData.rango_desde,
               factura_hasta: caiData.rango_hasta,
-              factura_actual: facturaFinal,
+              factura_actual: facturaFinalSanitizada,
               nombre_cajero: usuarioActual.nombre,
             });
 
@@ -3241,32 +3251,12 @@ export default function PuntoDeVentaView({
               onBack={() => setShowCierre(false)}
               onCierreGuardado={async () => {
                 if (!setView) return;
-                // Consultar el cierre de hoy para este cajero y caja usando rango local
-                const { start, end } = getLocalDayRange();
-                const { data: cierresHoy } = await supabase
-                  .from("cierres")
-                  .select("diferencia, observacion, estado")
-                  .eq("cajero_id", usuarioActual?.id)
-                  .eq("caja", caiInfo?.caja_asignada || "")
-                  .eq("estado", "CIERRE")
-                  .gte("fecha", start)
-                  .lte("fecha", end);
-
-                // Actualizar estado de apertura
+                // Siempre navegar a resultados de caja al finalizar el cierre,
+                // independientemente de si hay diferencia o no.
+                // (El filtro por fecha/diferencia anterior causaba que no
+                //  aparecieran las aclaraciones en cierres cuadrados o cruzando medianoche)
                 setAperturaRegistrada(false);
-
-                if (cierresHoy && cierresHoy.length > 0) {
-                  const cierre = cierresHoy[0];
-                  // Si hay diferencia, mostrar resultados
-                  if (cierre.diferencia !== 0) {
-                    setView("resultadosCaja");
-                  } else {
-                    // Si no hay diferencia, cerrar modal y quedarse en punto de ventas
-                    setShowCierre(false);
-                  }
-                } else {
-                  setShowCierre(false);
-                }
+                setView("resultadosCaja");
               }}
             />
             <button
@@ -3338,9 +3328,10 @@ export default function PuntoDeVentaView({
           isSubmittingRef.current = true;
 
           // ── Resolver número correcto de factura ANTES de cualquier operación
-          // Consulta la última fila real en la tabla facturas (por id DESC, que
-          // es numérico y nunca miente). Si el contador en cai_facturas está
-          // por detrás de la realidad, lo corregimos aquí mismo.
+          // Consulta la última fila en 'facturas' y el contador en 'cai_facturas',
+          // toma el MAYOR de los tres valores (estado local, BD real, contador CAI)
+          // y usa ese como número a emitir. Esto cubre el caso donde facturaActual
+          // está vacío/NaN (carga lenta) sin cancelar la venta.
           let facturaResuelta = facturaActual;
           if (
             isOnline &&
@@ -3348,42 +3339,54 @@ export default function PuntoDeVentaView({
             facturaActual !== "Límite alcanzado"
           ) {
             try {
-              const { data: ultimaFila } = await supabase
-                .from("facturas")
-                .select("factura")
-                .eq("cajero_id", usuarioActual.id)
-                .order("id", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-              if (ultimaFila) {
-                const maxReal = parseInt(ultimaFila.factura);
-                const contadorActual = parseInt(facturaActual);
-                if (maxReal >= contadorActual) {
-                  const correcta = (maxReal + 1).toString();
-                  const siguiente = (maxReal + 2).toString();
+              // Consultar en paralelo: última factura emitida + contador del CAI
+              const [ultimaFilaRes, caiRes] = await Promise.all([
+                supabase
+                  .from("facturas")
+                  .select("factura")
+                  .eq("cajero_id", usuarioActual.id)
+                  .order("id", { ascending: false })
+                  .limit(1)
+                  .maybeSingle(),
+                supabase
+                  .from("cai_facturas")
+                  .select("factura_actual, rango_hasta")
+                  .eq("cajero_id", usuarioActual.id)
+                  .maybeSingle(),
+              ]);
+
+              // Recopilar todos los candidatos como enteros válidos
+              const candidatos: number[] = [];
+              const numLocal = parseInt(facturaActual);
+              if (Number.isFinite(numLocal)) candidatos.push(numLocal);
+              if (ultimaFilaRes.data) {
+                const n = parseInt(ultimaFilaRes.data.factura);
+                // El último emitido en BD: el siguiente disponible es ese+1
+                if (Number.isFinite(n)) candidatos.push(n + 1);
+              }
+              if (caiRes.data?.factura_actual) {
+                const n = parseInt(caiRes.data.factura_actual);
+                if (Number.isFinite(n)) candidatos.push(n);
+              }
+
+              if (candidatos.length > 0) {
+                const maxCandidato = Math.max(...candidatos);
+                const rangoHasta = caiRes.data?.rango_hasta
+                  ? parseInt(caiRes.data.rango_hasta)
+                  : Infinity;
+
+                if (maxCandidato > rangoHasta) {
+                  // Límite de rango alcanzado
+                  setFacturaActual("Límite alcanzado");
+                  facturaResuelta = "Límite alcanzado";
+                } else if (maxCandidato.toString() !== facturaActual) {
                   console.warn(
-                    `[facturar] Contador desincronizado: cai=${contadorActual}, última en BD=${maxReal}. Usando ${correcta}.`,
+                    `[facturar] Auto-resolver: local=${facturaActual}, max candidato=${maxCandidato}. Usando ${maxCandidato}.`,
                   );
-                  facturaResuelta = correcta;
-                  // Actualizar estado local para el siguiente uso
-                  setFacturaActual(siguiente);
-                  // Actualizar cai_facturas en Supabase
-                  await supabase
-                    .from("cai_facturas")
-                    .update({ factura_actual: siguiente })
-                    .eq("cajero_id", usuarioActual.id);
-                  // Actualizar cache offline
-                  try {
-                    const caiCache = await obtenerCaiCache();
-                    if (caiCache) {
-                      await guardarCaiCache({
-                        ...caiCache,
-                        factura_actual: siguiente,
-                      });
-                    }
-                  } catch {
-                    /* no crítico */
-                  }
+                  // Solo actualizar la variable de resolución.
+                  // El bloque post-venta es el responsable ÚNICO de incrementar
+                  // estado y cai_facturas, evitando doble incremento.
+                  facturaResuelta = maxCandidato.toString();
                 }
               }
             } catch (err) {
@@ -3407,6 +3410,14 @@ export default function PuntoDeVentaView({
             totalConDescuento: esDonacion ? 0 : totalConDescuento,
             totalDescuento: totalDescuento,
           };
+          // Número definitivo para esta venta (fallback offline si no hay numero válido)
+          const facturaParaEstaVenta = (
+            snap.facturaActual &&
+            snap.facturaActual !== "Límite alcanzado" &&
+            Number.isFinite(parseInt(snap.facturaActual))
+          )
+            ? snap.facturaActual
+            : `OFFLINE-${Date.now()}`;
           // ID único por operación de facturación
           const operationId = crypto.randomUUID();
           console.log(
@@ -3446,7 +3457,7 @@ export default function PuntoDeVentaView({
               );
 
               const pagoFila = {
-                factura: snap.facturaActual,
+                factura: facturaParaEstaVenta,
                 efectivo: efectivoMonto,
                 tarjeta: tarjetaMonto,
                 transferencia: transferenciaMonto,
@@ -3515,7 +3526,7 @@ export default function PuntoDeVentaView({
             if (paymentData.pagos && paymentData.pagos.length > 0) {
               try {
                 const pagoEmergencia = {
-                  factura: snap.facturaActual,
+                  factura: facturaParaEstaVenta,
                   efectivo: paymentData.pagos
                     .filter((p) => p.tipo === "efectivo")
                     .reduce((s, p) => s + p.monto, 0),
@@ -4073,7 +4084,7 @@ export default function PuntoDeVentaView({
                 );
                 return;
               }
-              const factura = snap.facturaActual;
+              const factura = facturaParaEstaVenta;
               const venta = {
                 fecha_hora: formatToHondurasLocal(),
                 cajero: usuarioActual?.nombre || "",
@@ -4240,57 +4251,61 @@ export default function PuntoDeVentaView({
                 );
               }
 
-              // Actualizar el número de factura actual en la vista.
-              // Se usa forma funcional (prev =>) para NO depender del valor
-              // de la closure, evitando que dos operaciones rápidas lean
-              // el mismo valor y generen el mismo número de factura.
-              if (snap.facturaActual !== "Límite alcanzado") {
-                const nuevaFactura = (
-                  parseInt(snap.facturaActual) + 1
-                ).toString();
+              // ── Incrementar contador de factura ────────────────────────────
+              // Fuente de verdad: facturaParaEstaVenta (número que se acaba de
+              // emitir). El siguiente será siempre ese número + 1.
+              // El resolver NO pre-actualiza estado/Supabase; este bloque es el
+              // ÚNICO lugar que lo hace, garantizando un solo incremento por venta.
+              if (facturaParaEstaVenta && !facturaParaEstaVenta.startsWith("OFFLINE-")) {
+                const numUsado = parseInt(facturaParaEstaVenta);
+                if (!Number.isFinite(numUsado)) {
+                  console.error(
+                    "[facturar] facturaParaEstaVenta no es un número válido, omitiendo incremento:",
+                    facturaParaEstaVenta,
+                  );
+                } else {
+                  const nuevaFactura = (numUsado + 1).toString();
 
-                // Actualizar estado local con forma funcional
-                setFacturaActual((prev) =>
-                  prev !== "Límite alcanzado"
-                    ? (parseInt(prev) + 1).toString()
-                    : prev,
-                );
+                  // Actualizar estado local directo (isSubmittingRef garantiza
+                  // que no hay otra venta concurrente)
+                  setFacturaActual(nuevaFactura);
 
-                // Actualizar factura_actual en cai_facturas (Supabase) — atómico
-                if (usuarioActual?.id) {
+                  // Actualizar factura_actual en cai_facturas (Supabase)
+                  if (usuarioActual?.id) {
+                    try {
+                      await supabase
+                        .from("cai_facturas")
+                        .update({ factura_actual: nuevaFactura })
+                        .eq("cajero_id", usuarioActual.id);
+                      console.log(
+                        `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase`,
+                      );
+                    } catch (err) {
+                      console.error(
+                        "Error actualizando factura_actual en Supabase:",
+                        err,
+                      );
+                    }
+                  }
+
+                  // Actualizar también el cache de CAI para modo offline
                   try {
-                    await supabase
-                      .from("cai_facturas")
-                      .update({ factura_actual: nuevaFactura })
-                      .eq("cajero_id", usuarioActual.id);
-                    console.log(
-                      `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase`,
-                    );
+                    const caiCache = await obtenerCaiCache();
+                    if (caiCache) {
+                      await guardarCaiCache({
+                        ...caiCache,
+                        factura_actual: nuevaFactura,
+                      });
+                      console.log(
+                        `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en cache`,
+                      );
+                    }
                   } catch (err) {
                     console.error(
-                      "Error actualizando factura_actual en Supabase:",
+                      "Error actualizando factura_actual en cache:",
                       err,
                     );
                   }
-                }
-
-                // Actualizar también el cache de CAI para modo offline
-                try {
-                  const caiCache = await obtenerCaiCache();
-                  if (caiCache) {
-                    await guardarCaiCache({
-                      ...caiCache,
-                      factura_actual: nuevaFactura,
-                    });
-                    console.log(
-                      `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en cache`,
-                    );
-                  }
-                } catch (err) {
-                  console.error(
-                    "Error actualizando factura_actual en cache:",
-                    err,
-                  );
                 }
               }
             } catch (err) {
@@ -6958,6 +6973,114 @@ export default function PuntoDeVentaView({
         </div>
       )}
 
+      {/* Modal aviso: pedidos pendientes al intentar cerrar caja */}
+      {showCierrePedidosWarning && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 130000,
+          }}
+          onClick={() => setShowCierrePedidosWarning(false)}
+        >
+          <div
+            style={{
+              background: theme === "lite" ? "#fff" : "#232526",
+              color: theme === "lite" ? "#333" : "#fff",
+              borderRadius: 16,
+              padding: 36,
+              minWidth: 360,
+              maxWidth: 480,
+              boxShadow: "0 8px 40px rgba(0,0,0,0.35)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 52, marginBottom: 10 }}>📦</div>
+              <h3
+                style={{
+                  margin: "0 0 8px",
+                  color: "#e65100",
+                  fontSize: 22,
+                  fontWeight: 800,
+                }}
+              >
+                ¡Hay Pedidos Pendientes!
+              </h3>
+              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: theme === "lite" ? "#555" : "#ccc" }}>
+                Tienes <strong style={{ color: "#e53935" }}>{pedidosPendientesCount} pedido(s) a domicilio</strong> sin
+                facturar o eliminar.
+              </p>
+            </div>
+            <div
+              style={{
+                background: theme === "lite" ? "#fff8e1" : "#2a2200",
+                border: "1px solid #ffd54f",
+                borderRadius: 10,
+                padding: 16,
+                marginBottom: 24,
+                fontSize: 14,
+                lineHeight: 1.6,
+              }}
+            >
+              <strong>Antes de cerrar caja debes:</strong>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                <li>Facturar los pedidos entregados, <strong>ó</strong></li>
+                <li>Eliminar los pedidos cancelados</li>
+              </ul>
+              <p style={{ margin: "10px 0 0", fontSize: 13, color: theme === "lite" ? "#888" : "#aaa" }}>
+               
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => {
+                  setShowCierrePedidosWarning(false);
+                  // Abrir el modal de pedidos para que los gestione
+                  setShowOptionsMenu(false);
+                  setShowPedidosModal(true);
+                }}
+                style={{
+                  padding: "11px 22px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#1976d2",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: "pointer",
+                }}
+              >
+                🏠 Ver Pedidos
+              </button>
+             
+              <button
+                onClick={() => setShowCierrePedidosWarning(false)}
+                style={{
+                  padding: "11px 22px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: theme === "lite" ? "#f5f5f5" : "#444",
+                  color: theme === "lite" ? "#555" : "#ccc",
+                  fontWeight: 600,
+                  fontSize: 15,
+                  cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Pedidos del cajero */}
       {showPedidosModal && (
         <div
@@ -7596,11 +7719,11 @@ export default function PuntoDeVentaView({
 
                                     // PASO 5: Incrementar factura actual
                                     try {
-                                      setFacturaActual((prev) =>
-                                        prev && prev !== "Límite alcanzado"
-                                          ? (parseInt(prev) + 1).toString()
-                                          : prev,
-                                      );
+                                      setFacturaActual((prev) => {
+                                        if (!prev || prev === "Límite alcanzado") return prev;
+                                        const n = parseInt(prev);
+                                        return Number.isFinite(n) ? (n + 1).toString() : prev;
+                                      });
                                     } catch (err) {
                                       console.error(
                                         "Error incrementando factura:",
@@ -8978,12 +9101,17 @@ export default function PuntoDeVentaView({
                   <button
                     className="menu-btn"
                     onClick={() => {
+                      closeMenuAnimated();
                       if (!isOnline) {
                         setShowNoConnectionModal(true);
-                      } else {
-                        setShowCierre(true);
+                        return;
                       }
-                      closeMenuAnimated();
+                      // Si hay pedidos a domicilio pendientes, advertir antes de cerrar
+                      if (pedidosPendientesCount > 0) {
+                        setShowCierrePedidosWarning(true);
+                        return;
+                      }
+                      setShowCierre(true);
                     }}
                     style={{
                       background: isOnline
@@ -8994,13 +9122,18 @@ export default function PuntoDeVentaView({
                         ? "1px solid #fcd34d"
                         : "1px solid #e5e7eb",
                       animationDelay: "120ms",
+                      position: "relative",
                     }}
                   >
                     <span className="btn-icon">🚪</span>
                     <span>
                       <div className="btn-label">Cierre de Caja</div>
                       <div className="btn-desc">
-                        {isOnline ? "Finalizar turno" : "Sin conexión"}
+                        {!isOnline
+                          ? "Sin conexión"
+                          : pedidosPendientesCount > 0
+                          ? `⚠ ${pedidosPendientesCount} pedido(s) pendiente(s)`
+                          : "Finalizar turno"}
                       </div>
                     </span>
                   </button>

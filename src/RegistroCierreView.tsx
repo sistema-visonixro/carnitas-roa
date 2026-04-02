@@ -103,7 +103,9 @@ export default function RegistroCierreView({
     // ── Consulta única a pagosf (una fila por factura) ──────────────────
     const { data: pagosfRows, error: pagosfError } = await supabase
       .from("pagosf")
-      .select("efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio")
+      .select(
+        "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio",
+      )
       .eq("cajero_id", usuarioActual.id)
       .gte("fecha_hora", desde)
       .lte("fecha_hora", hasta);
@@ -119,32 +121,32 @@ export default function RegistroCierreView({
     let cambioTotal = 0;
 
     for (const r of rows) {
-      const ef  = parseFloat(r.efectivo      || 0);
-      const tk  = parseFloat(r.tarjeta       || 0);
-      const tr  = parseFloat(r.transferencia || 0);
-      const dl  = parseFloat(r.dolares       || 0);
-      const dlU = parseFloat(r.dolares_usd   || 0);
-      const cb  = parseFloat(r.cambio        || 0);
-      const dv  = parseFloat(r.delivery      || 0);
+      const ef = parseFloat(r.efectivo || 0);
+      const tk = parseFloat(r.tarjeta || 0);
+      const tr = parseFloat(r.transferencia || 0);
+      const dl = parseFloat(r.dolares || 0);
+      const dlU = parseFloat(r.dolares_usd || 0);
+      const cb = parseFloat(r.cambio || 0);
+      const dv = parseFloat(r.delivery || 0);
 
-      dolaresDia  += dlU;
+      dolaresDia += dlU;
       cambioTotal += cb;
 
       if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
-        efectivoBruto     += ef + dv;
-        tarjetaDia        += tk;
+        efectivoBruto += ef + dv;
+        tarjetaDia += tk;
         transferenciasDia += tr;
       } else if (tk > 0) {
-        efectivoBruto     += ef;
-        tarjetaDia        += tk + dv;
+        efectivoBruto += ef;
+        tarjetaDia += tk + dv;
         transferenciasDia += tr;
       } else if (tr > 0) {
-        efectivoBruto     += ef;
-        tarjetaDia        += tk;
+        efectivoBruto += ef;
+        tarjetaDia += tk;
         transferenciasDia += tr + dv;
       } else {
-        efectivoBruto     += ef + dv;
-        tarjetaDia        += tk;
+        efectivoBruto += ef + dv;
+        tarjetaDia += tk;
         transferenciasDia += tr;
       }
     }
@@ -556,6 +558,7 @@ export default function RegistroCierreView({
             .from("cierres")
             .update({
               tipo_registro: "cierre",
+              fecha: registro.fecha, // Actualizar a la fecha/hora del cierre (no la de apertura)
               fondo_fijo_registrado: registro.fondo_fijo_registrado,
               fondo_fijo: registro.fondo_fijo,
               efectivo_registrado: registro.efectivo_registrado,
@@ -696,7 +699,10 @@ export default function RegistroCierreView({
   const efectivoFilled = efectivo.trim() !== "";
   const tarjetaFilled = tarjeta.trim() !== "";
   const transferenciasFilled = transferencias.trim() !== "";
-  const isCierreReady = efectivoFilled && tarjetaFilled && transferenciasFilled;
+  const dolaresFilled = dolares.trim() !== "";
+  // El cierre requiere los 4 campos: efectivo, tarjeta, transferencias y dólares
+  const isCierreReady =
+    efectivoFilled && tarjetaFilled && transferenciasFilled && dolaresFilled;
   const showGuardar = isCierreReady;
 
   return (

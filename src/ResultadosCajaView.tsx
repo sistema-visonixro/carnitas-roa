@@ -6,6 +6,8 @@ export default function ResultadosCajaView() {
   const { datos: datosNegocio } = useDatosNegocio();
   const [cierres, setCierres] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Mes mostrado (0 = mes actual, -1 = mes anterior, etc.)
+  const [monthOffset, setMonthOffset] = useState<number>(0);
 
   // Obtener usuario actual de localStorage
   const usuarioActual = (() => {
@@ -17,45 +19,51 @@ export default function ResultadosCajaView() {
     }
   })();
 
+  // Helper: obtener rango ISO para el mes con offset
+  const getMonthRange = (offset: number) => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + offset, 1, 0, 0, 0, 0);
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59, 999);
+    return {
+      fechaInicio: start.toISOString(),
+      fechaFin: end.toISOString(),
+      label: start.toLocaleDateString("es-HN", { year: "numeric", month: "long" }),
+    };
+  };
+
   useEffect(() => {
     const fetchCierres = async () => {
       setLoading(true);
+      try {
+        const { fechaInicio, fechaFin } = getMonthRange(monthOffset);
 
-      // Obtener primer y último día del mes actual
-      const ahora = new Date();
-      const primerDiaMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
-      const ultimoDiaMes = new Date(
-        ahora.getFullYear(),
-        ahora.getMonth() + 1,
-        0,
-        23,
-        59,
-        59,
-      );
+        let query = supabase
+          .from("cierres")
+          .select("*")
+          .eq("tipo_registro", "cierre")
+          .gte("fecha", fechaInicio)
+          .lte("fecha", fechaFin)
+          .order("fecha", { ascending: false });
 
-      const fechaInicio = primerDiaMes.toISOString();
-      const fechaFin = ultimoDiaMes.toISOString();
+        if (usuarioActual && usuarioActual.rol === "cajero") {
+          query = query.eq("cajero_id", usuarioActual.id);
+        }
 
-      let query = supabase
-        .from("cierres")
-        .select("*")
-        .eq("tipo_registro", "cierre")
-        .gte("fecha", fechaInicio)
-        .lte("fecha", fechaFin)
-        .order("fecha", { ascending: false });
-
-      if (usuarioActual && usuarioActual.rol === "cajero") {
-        query = query.eq("cajero_id", usuarioActual.id);
+        const { data, error } = await query;
+        if (!error && data) {
+          setCierres(data);
+        } else if (error) {
+          console.error("Error cargando cierres:", error);
+        }
+      } catch (err) {
+        console.error("Error en fetchCierres:", err);
+      } finally {
+        setLoading(false);
       }
-
-      const { data, error } = await query;
-      if (!error && data) {
-        setCierres(data);
-      }
-      setLoading(false);
     };
     fetchCierres();
-  }, []);
+    // Depend only on monthOffset and user id (stable primitive) to avoid infinite loops
+  }, [monthOffset, usuarioActual?.id]);
 
   const getColor = (value: number) => {
     if (value > 0) return "#388e3c"; // Verde para positivos
@@ -363,8 +371,36 @@ export default function ResultadosCajaView() {
                 WebkitTextFillColor: "transparent",
               }}
             >
-              RESULTADOS DE CAJA - MES ACTUAL
+              {(() => {
+                const lbl = getMonthRange(monthOffset).label;
+                return `RESULTADOS DE CAJA — ${lbl.toUpperCase()}`;
+              })()}
             </h1>
+            {/* Controles de navegación de mes */}
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                onClick={() => setMonthOffset((m) => m - 1)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "none", cursor: "pointer" }}
+                title="Mes anterior"
+              >
+                ◀ Mes anterior
+              </button>
+              <button
+                onClick={() => setMonthOffset(0)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", cursor: "pointer" }}
+                title="Mes actual"
+              >
+                Mes actual
+              </button>
+              <button
+                onClick={() => setMonthOffset((m) => Math.min(m + 1, 0))}
+                disabled={monthOffset === 0}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "none", cursor: monthOffset === 0 ? "not-allowed" : "pointer", opacity: monthOffset === 0 ? 0.5 : 1 }}
+                title="Mes siguiente"
+              >
+                Mes siguiente ▶
+              </button>
+            </div>
             {cierres.length > 0 && (
               <div style={{ marginTop: 8, fontSize: "1.1rem", opacity: 0.9 }}>
                 <span style={{ marginRight: 24 }}>
