@@ -365,6 +365,39 @@ export default function PuntoDeVentaView({
         }
       }, 800);
 
+      // ── Incrementar contador de factura (igual que venta normal) ─────────
+      const numUsado = parseInt(factura_numero);
+      if (Number.isFinite(numUsado)) {
+        const nuevaFactura = (numUsado + 1).toString();
+        setFacturaActual(nuevaFactura);
+
+        if (usuarioActual?.id) {
+          try {
+            await supabase
+              .from("cai_facturas")
+              .update({ factura_actual: nuevaFactura })
+              .eq("cajero_id", usuarioActual.id);
+          } catch (err) {
+            console.error(
+              "Error actualizando factura_actual tras venta a crédito:",
+              err,
+            );
+          }
+        }
+
+        try {
+          const caiCache = await obtenerCaiCache();
+          if (caiCache) {
+            await guardarCaiCache({
+              ...caiCache,
+              factura_actual: nuevaFactura,
+            });
+          }
+        } catch {
+          /* non-critical */
+        }
+      }
+
       setSeleccionados([]);
       setDescuentosProductos(new Set());
     } catch (e: any) {
@@ -1210,7 +1243,8 @@ export default function PuntoDeVentaView({
   const [pedidosList, setPedidosList] = useState<any[]>([]);
   const [pedidosLoading] = useState(false);
   const [pedidosPendientesCount, setPedidosPendientesCount] = useState(0);
-  const [showCierrePedidosWarning, setShowCierrePedidosWarning] = useState(false);
+  const [showCierrePedidosWarning, setShowCierrePedidosWarning] =
+    useState(false);
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
@@ -1623,7 +1657,9 @@ export default function PuntoDeVentaView({
             }
 
             // Sanitizar: si facturaFinal no es un número válido, no guardar basura en cache
-            const facturaFinalSanitizada = Number.isFinite(parseInt(facturaFinal))
+            const facturaFinalSanitizada = Number.isFinite(
+              parseInt(facturaFinal),
+            )
               ? facturaFinal
               : caiData.rango_desde;
 
@@ -3411,13 +3447,12 @@ export default function PuntoDeVentaView({
             totalDescuento: totalDescuento,
           };
           // Número definitivo para esta venta (fallback offline si no hay numero válido)
-          const facturaParaEstaVenta = (
+          const facturaParaEstaVenta =
             snap.facturaActual &&
             snap.facturaActual !== "Límite alcanzado" &&
             Number.isFinite(parseInt(snap.facturaActual))
-          )
-            ? snap.facturaActual
-            : `OFFLINE-${Date.now()}`;
+              ? snap.facturaActual
+              : `OFFLINE-${Date.now()}`;
           // ID único por operación de facturación
           const operationId = crypto.randomUUID();
           console.log(
@@ -4256,7 +4291,10 @@ export default function PuntoDeVentaView({
               // emitir). El siguiente será siempre ese número + 1.
               // El resolver NO pre-actualiza estado/Supabase; este bloque es el
               // ÚNICO lugar que lo hace, garantizando un solo incremento por venta.
-              if (facturaParaEstaVenta && !facturaParaEstaVenta.startsWith("OFFLINE-")) {
+              if (
+                facturaParaEstaVenta &&
+                !facturaParaEstaVenta.startsWith("OFFLINE-")
+              ) {
                 const numUsado = parseInt(facturaParaEstaVenta);
                 if (!Number.isFinite(numUsado)) {
                   console.error(
@@ -7014,9 +7052,19 @@ export default function PuntoDeVentaView({
               >
                 ¡Hay Pedidos Pendientes!
               </h3>
-              <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: theme === "lite" ? "#555" : "#ccc" }}>
-                Tienes <strong style={{ color: "#e53935" }}>{pedidosPendientesCount} pedido(s) a domicilio</strong> sin
-                facturar o eliminar.
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  color: theme === "lite" ? "#555" : "#ccc",
+                }}
+              >
+                Tienes{" "}
+                <strong style={{ color: "#e53935" }}>
+                  {pedidosPendientesCount} pedido(s) a domicilio
+                </strong>{" "}
+                sin facturar o eliminar.
               </p>
             </div>
             <div
@@ -7032,14 +7080,27 @@ export default function PuntoDeVentaView({
             >
               <strong>Antes de cerrar caja debes:</strong>
               <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
-                <li>Facturar los pedidos entregados, <strong>ó</strong></li>
+                <li>
+                  Facturar los pedidos entregados, <strong>ó</strong>
+                </li>
                 <li>Eliminar los pedidos cancelados</li>
               </ul>
-              <p style={{ margin: "10px 0 0", fontSize: 13, color: theme === "lite" ? "#888" : "#aaa" }}>
-               
-              </p>
+              <p
+                style={{
+                  margin: "10px 0 0",
+                  fontSize: 13,
+                  color: theme === "lite" ? "#888" : "#aaa",
+                }}
+              ></p>
             </div>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                justifyContent: "center",
+                flexWrap: "wrap",
+              }}
+            >
               <button
                 onClick={() => {
                   setShowCierrePedidosWarning(false);
@@ -7060,7 +7121,7 @@ export default function PuntoDeVentaView({
               >
                 🏠 Ver Pedidos
               </button>
-             
+
               <button
                 onClick={() => setShowCierrePedidosWarning(false)}
                 style={{
@@ -7720,9 +7781,15 @@ export default function PuntoDeVentaView({
                                     // PASO 5: Incrementar factura actual
                                     try {
                                       setFacturaActual((prev) => {
-                                        if (!prev || prev === "Límite alcanzado") return prev;
+                                        if (
+                                          !prev ||
+                                          prev === "Límite alcanzado"
+                                        )
+                                          return prev;
                                         const n = parseInt(prev);
-                                        return Number.isFinite(n) ? (n + 1).toString() : prev;
+                                        return Number.isFinite(n)
+                                          ? (n + 1).toString()
+                                          : prev;
                                       });
                                     } catch (err) {
                                       console.error(
@@ -9132,8 +9199,8 @@ export default function PuntoDeVentaView({
                         {!isOnline
                           ? "Sin conexión"
                           : pedidosPendientesCount > 0
-                          ? `⚠ ${pedidosPendientesCount} pedido(s) pendiente(s)`
-                          : "Finalizar turno"}
+                            ? `⚠ ${pedidosPendientesCount} pedido(s) pendiente(s)`
+                            : "Finalizar turno"}
                       </div>
                     </span>
                   </button>
