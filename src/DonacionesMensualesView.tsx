@@ -60,7 +60,7 @@ export default function DonacionesMensualesView({
       const hasta = new Date(year, month, 0, 23, 59, 59).toISOString();
 
       const { data, error } = await supabase
-        .from("facturas")
+        .from("ventas")
         .select("fecha_hora, factura, cajero, caja, cliente, productos")
         .eq("es_donacion", true)
         .gte("fecha_hora", desde)

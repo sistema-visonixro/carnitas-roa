@@ -336,9 +336,9 @@ export async function obtenerDatosReporteCreditos(
       .lte("fecha_hora", filtro.hasta),
 
     supabase
-      .from("facturas")
+      .from("ventas")
       .select("total")
-      .eq("tipo_venta", "contado")
+      .eq("tipo", "CONTADO")
       .gte("fecha_hora", filtro.desde)
       .lte("fecha_hora", filtro.hasta),
   ]);

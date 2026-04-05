@@ -100,17 +100,18 @@ export default function RegistroCierreView({
 
     console.debug("Rango de cierre - desde apertura:", desde, "hasta:", hasta);
 
-    // ── Consulta única a pagosf (una fila por factura) ──────────────────
+    // ── Consulta única a ventas (una fila por factura, incluye datos de pago) ────────────────────
     const { data: pagosfRows, error: pagosfError } = await supabase
-      .from("pagosf")
+      .from("ventas")
       .select(
         "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio",
       )
       .eq("cajero_id", usuarioActual.id)
+      .neq("tipo", "CREDITO")
       .gte("fecha_hora", desde)
       .lte("fecha_hora", hasta);
 
-    if (pagosfError) console.error("Error leyendo pagosf:", pagosfError);
+    if (pagosfError) console.error("Error leyendo ventas:", pagosfError);
 
     const rows = pagosfRows || [];
 
@@ -154,7 +155,7 @@ export default function RegistroCierreView({
     // Efectivo que el cajero retiene = efectivo (+ delivery en efectivo) − cambio
     const efectivoDia = efectivoBruto - cambioTotal;
     console.debug(
-      "pagosf rows:",
+      "ventas rows:",
       rows.length,
       "efectivoBruto:",
       efectivoBruto,
@@ -200,7 +201,7 @@ export default function RegistroCierreView({
     let bebidasDia = 0;
     try {
       const facturasQuery = supabase
-        .from("facturas")
+        .from("ventas")
         .select("productos, factura")
         .eq("cajero_id", usuarioActual.id)
         .gte("fecha_hora", desde)

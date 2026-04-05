@@ -7,17 +7,18 @@ import { supabase } from "../supabaseClient";
 
 // Nombre de la base de datos
 const DB_NAME = "PuntoVentaOfflineDB";
-const DB_VERSION = 5; // v5: agrega store pagosf_pendientes
+const DB_VERSION = 6; // v6: tabla ventas_pendientes; cai_cache por cajero_id
 
 // Nombres de las tablas (stores)
 const FACTURAS_STORE = "facturas_pendientes";
 const PAGOS_STORE = "pagos_pendientes";
-const PAGOSF_STORE = "pagosf_pendientes"; // ← nueva tabla plana (1 fila/factura)
+const PAGOSF_STORE = "pagosf_pendientes"; // ← pagosf (abonos crédito)
+const VENTAS_STORE = "ventas_pendientes"; // ← nueva: fusiona factura + pago
 const GASTOS_STORE = "gastos_pendientes";
 const ENVIOS_STORE = "envios_pendientes";
 const PRODUCTOS_STORE = "productos_cache"; // Cache de productos
 const APERTURA_STORE = "apertura_cache"; // Cache de apertura de caja
-const CAI_STORE = "cai_cache"; // Cache de información CAI
+const CAI_STORE = "cai_cache"; // Cache de información CAI (key = cajero_id)
 const DATOS_NEGOCIO_STORE = "datos_negocio_cache"; // Cache de datos del negocio
 
 // Tipos
@@ -64,6 +65,46 @@ export interface PagoPendiente {
   factura_venta: string;
   recibido: number;
   cambio: number;
+  timestamp: number;
+  intentos: number;
+}
+
+/** Venta completa: combina datos de factura + datos de pago para la tabla ventas. */
+export interface VentaPendiente {
+  id?: number;
+  /** UUID único por operación — previene duplicados al sincronizar */
+  operation_id?: string;
+  fecha_hora: string;
+  cajero: string;
+  cajero_id: string | null;
+  caja: string;
+  cai: string;
+  factura: string;
+  tipo: string; // CONTADO | CREDITO | DEVOLUCION
+  cliente: string;
+  tipo_orden?: string;
+  productos: string; // JSON
+  sub_total: string;
+  isv_15: string;
+  isv_18: string;
+  descuento?: number | null;
+  total: string;
+  es_donacion?: boolean | null;
+  // Campos de pago
+  efectivo: number;
+  tarjeta: number;
+  transferencia: number;
+  dolares: number;
+  dolares_usd: number;
+  delivery: number;
+  total_recibido: number;
+  cambio: number;
+  banco?: string | null;
+  tarjeta_num?: string | null;
+  autorizacion?: string | null;
+  ref_transferencia?: string | null;
+  /** Estado de sincronización */
+  sync_status?: "pending" | "syncing" | "synced" | "error";
   timestamp: number;
   intentos: number;
 }
@@ -260,13 +301,26 @@ export async function initIndexedDB(): Promise<IDBDatabase> {
         console.log("Store de apertura cache creado");
       }
 
-      // Crear store para cache de CAI
+      // ── Cache de CAI (v6: keyPath = cajero_id para aislar por usuario)
+      // Si existe con el esquema anterior (keyPath=id), recrear.
+      if (database.objectStoreNames.contains(CAI_STORE)) {
+        try {
+          // Intentar leer la keyPath; si es 'id' (viejo), eliminar y recrear
+          const oldStore = (
+            event.target as IDBOpenDBRequest
+          ).transaction!.objectStore(CAI_STORE);
+          if (oldStore.keyPath === "id") {
+            database.deleteObjectStore(CAI_STORE);
+          }
+        } catch {
+          /* ignorar */
+        }
+      }
       if (!database.objectStoreNames.contains(CAI_STORE)) {
-        const caiStore = database.createObjectStore(CAI_STORE, {
-          keyPath: "id",
+        database.createObjectStore(CAI_STORE, {
+          keyPath: "cajero_id", // 🔑 uno por cajero
         });
-        caiStore.createIndex("cajero_id", "cajero_id", { unique: false });
-        console.log("Store de CAI cache creado");
+        console.log("Store de CAI cache creado (v6, por cajero_id)");
       }
 
       // Crear store para cache de datos del negocio
@@ -277,7 +331,7 @@ export async function initIndexedDB(): Promise<IDBDatabase> {
         console.log("Store de datos del negocio cache creado");
       }
 
-      // Crear store para pagosf pendientes (una fila por factura)
+      // Crear store para pagosf pendientes (abonos de crédito)
       if (!database.objectStoreNames.contains(PAGOSF_STORE)) {
         const pagosfStore = database.createObjectStore(PAGOSF_STORE, {
           keyPath: "id",
@@ -286,6 +340,20 @@ export async function initIndexedDB(): Promise<IDBDatabase> {
         pagosfStore.createIndex("timestamp", "timestamp", { unique: false });
         pagosfStore.createIndex("factura", "factura", { unique: false });
         console.log("Store pagosf_pendientes creado");
+      }
+
+      // ── NUEVO: ventas_pendientes (fusión factura + pago para tabla ventas) ──
+      if (!database.objectStoreNames.contains(VENTAS_STORE)) {
+        const ventasStore = database.createObjectStore(VENTAS_STORE, {
+          keyPath: "id",
+          autoIncrement: true,
+        });
+        ventasStore.createIndex("timestamp", "timestamp", { unique: false });
+        ventasStore.createIndex("factura", "factura", { unique: false });
+        ventasStore.createIndex("operation_id", "operation_id", {
+          unique: false,
+        });
+        console.log("Store ventas_pendientes creado");
       }
     };
   });
@@ -1185,15 +1253,16 @@ export async function sincronizarTodo(): Promise<{
   console.log("[sync] Iniciando sincronización completa...");
 
   try {
-    const facturas = await sincronizarFacturas();
-    const pagos = await sincronizarPagos();
-    const pagosFResult = await sincronizarPagosF();
+    const facturas = await sincronizarFacturas(); // legado (facturas antiguas)
+    const pagos = await sincronizarPagos(); // legado
+    await sincronizarPagosF(); // abonos crédito
+    const ventasResult = await sincronizarVentas(); // nueva tabla ventas
     const gastos = await sincronizarGastos();
     const envios = await sincronizarEnvios();
 
     console.log(
-      `[sync] Completa: ${facturas.exitosas} facturas, ${pagos.exitosos} pagos (old), ` +
-        `${pagosFResult.exitosos} pagosf, ${gastos.exitosos} gastos y ${envios.exitosos} envíos sincronizados.`,
+      `[sync] Completa: ${facturas.exitosas} facturas (legado), ${pagos.exitosos} pagos (legado), ` +
+        `${ventasResult.exitosas} ventas, ${gastos.exitosos} gastos, ${envios.exitosos} envíos.`,
     );
 
     return { facturas, pagos, gastos, envios };
@@ -1210,17 +1279,20 @@ export async function obtenerContadorPendientes(): Promise<{
   pagos: number;
   gastos: number;
   envios: number;
+  ventas: number;
 }> {
   const facturas = await obtenerFacturasPendientes();
   const pagos = await obtenerPagosPendientes();
   const gastos = await obtenerGastosPendientes();
   const envios = await obtenerEnviosPendientes();
+  const ventas = await obtenerVentasPendientes();
 
   return {
     facturas: facturas.length,
     pagos: pagos.length,
     gastos: gastos.length,
     envios: envios.length,
+    ventas: ventas.length,
   };
 }
 
@@ -1573,7 +1645,9 @@ export async function limpiarAperturaCache(): Promise<void> {
 }
 
 /**
- * Guarda información CAI en cache
+ * Guarda información CAI en cache (escoped por cajero_id — v6)
+ * Usa put() con keyPath=cajero_id: cada cajero tiene su propia entrada.
+ * Esto evita que dos usuarios en el mismo dispositivo se sobreescriban.
  */
 export async function guardarCaiCache(
   cai: Omit<CaiCache, "timestamp">,
@@ -1584,59 +1658,59 @@ export async function guardarCaiCache(
     const transaction = database.transaction([CAI_STORE], "readwrite");
     const store = transaction.objectStore(CAI_STORE);
 
-    // Limpiar cache anterior
-    const clearRequest = store.clear();
-
-    clearRequest.onsuccess = () => {
-      const caiConTimestamp: CaiCache = {
-        ...cai,
-        timestamp: Date.now(),
-      };
-
-      const addRequest = store.add(caiConTimestamp);
-
-      addRequest.onsuccess = () => {
-        console.log("CAI guardado en cache");
-        resolve();
-      };
-
-      addRequest.onerror = () => {
-        console.error("Error guardando CAI en cache:", addRequest.error);
-        reject(addRequest.error);
-      };
+    const caiConTimestamp: CaiCache = {
+      ...cai,
+      timestamp: Date.now(),
     };
 
-    clearRequest.onerror = () => {
-      console.error("Error limpiando cache de CAI:", clearRequest.error);
-      reject(clearRequest.error);
+    // put() upserta: si existe la clave (cajero_id) la actualiza, si no la crea
+    const request = store.put(caiConTimestamp);
+
+    request.onsuccess = () => {
+      console.log(`CAI guardado en cache para cajero ${cai.cajero_id}`);
+      resolve();
+    };
+
+    request.onerror = () => {
+      console.error("Error guardando CAI en cache:", request.error);
+      reject(request.error);
     };
   });
 }
 
 /**
- * Obtiene información CAI desde el cache
+ * Obtiene información CAI del cache para un cajero específico (v6).
+ * Si se proporciona cajeroId, recupera la entrada exacta de ese cajero.
+ * Para compatibilidad con código antiguo, si no se pasa cajeroId devuelve el primero.
  */
-export async function obtenerCaiCache(): Promise<CaiCache | null> {
+export async function obtenerCaiCache(
+  cajeroId?: string,
+): Promise<CaiCache | null> {
   const database = await initIndexedDB();
 
   return new Promise((resolve, reject) => {
     const transaction = database.transaction([CAI_STORE], "readonly");
     const store = transaction.objectStore(CAI_STORE);
-    const request = store.getAll();
 
-    request.onsuccess = () => {
-      const cais = request.result as CaiCache[];
-      if (cais.length > 0) {
-        resolve(cais[0]);
-      } else {
-        resolve(null);
-      }
-    };
-
-    request.onerror = () => {
-      console.error("Error obteniendo CAI desde cache:", request.error);
-      reject(request.error);
-    };
+    if (cajeroId) {
+      // Buscar entrada exacta por cajero_id
+      const request = store.get(cajeroId);
+      request.onsuccess = () => {
+        resolve((request.result as CaiCache) ?? null);
+      };
+      request.onerror = () => reject(request.error);
+    } else {
+      // Compatibilidad: devolver el primero disponible
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const cais = request.result as CaiCache[];
+        resolve(cais.length > 0 ? cais[0] : null);
+      };
+      request.onerror = () => {
+        console.error("Error obteniendo CAI desde cache:", request.error);
+        reject(request.error);
+      };
+    }
   });
 }
 
@@ -1718,6 +1792,237 @@ export async function obtenerDatosNegocioCache(): Promise<DatosNegocioCache | nu
       reject(request.error);
     };
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  VENTAS PENDIENTES — Una fila por venta (factura + pago unificados)
+//  Escribe en la tabla `ventas` de Supabase.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Guarda una venta en IndexedDB (modo offline o respaldo ante fallo de Supabase).
+ * Si ya existe una entrada con el mismo operation_id la reemplaza (put).
+ */
+export async function guardarVentaLocal(
+  venta: Omit<VentaPendiente, "id" | "timestamp" | "intentos">,
+): Promise<number> {
+  const database = await initIndexedDB();
+
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([VENTAS_STORE], "readwrite");
+    const store = transaction.objectStore(VENTAS_STORE);
+
+    const ventaConMeta: Omit<VentaPendiente, "id"> = {
+      ...venta,
+      timestamp: Date.now(),
+      intentos: 0,
+    };
+
+    const request = store.add(ventaConMeta);
+
+    request.onsuccess = () => {
+      console.log(
+        `Venta ${venta.factura} guardada en IndexedDB (ventas_pendientes)`,
+      );
+      resolve(request.result as number);
+    };
+
+    request.onerror = () => {
+      console.error("Error guardando venta en IndexedDB:", request.error);
+      reject(request.error);
+    };
+  });
+}
+
+/**
+ * Obtiene todas las ventas pendientes de sincronización.
+ */
+export async function obtenerVentasPendientes(): Promise<VentaPendiente[]> {
+  const database = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction([VENTAS_STORE], "readonly");
+    const req = tx.objectStore(VENTAS_STORE).getAll();
+    req.onsuccess = () => resolve(req.result as VentaPendiente[]);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Elimina una venta de IndexedDB después de sincronizarla con Supabase.
+ */
+export async function eliminarVentaLocal(id: number): Promise<void> {
+  const database = await initIndexedDB();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction([VENTAS_STORE], "readwrite");
+    const req = tx.objectStore(VENTAS_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Sincroniza las ventas pendientes con Supabase.
+ * Usa upsert con onConflict="operation_id" para evitar duplicados.
+ */
+export async function sincronizarVentas(): Promise<{
+  exitosas: number;
+  fallidas: number;
+}> {
+  const pendientes = await obtenerVentasPendientes();
+  if (pendientes.length === 0) return { exitosas: 0, fallidas: 0 };
+
+  console.log(
+    `[ventas] Sincronizando ${pendientes.length} ventas pendientes...`,
+  );
+  let exitosas = 0;
+  let fallidas = 0;
+
+  for (const venta of pendientes) {
+    try {
+      const { id, timestamp, intentos, sync_status, ...ventaData } = venta;
+
+      const { error } = await supabase.from("ventas").upsert([ventaData], {
+        onConflict: "operation_id",
+        ignoreDuplicates: true,
+      });
+
+      if (error) {
+        if (error.code === "23505") {
+          // Verificar si es nuestro propio operation_id (doble submit)
+          const { data: existe } = await supabase
+            .from("ventas")
+            .select("id")
+            .eq("operation_id", venta.operation_id ?? "")
+            .maybeSingle();
+
+          if (existe) {
+            console.warn(
+              `⚠ [ventas] Venta ${venta.factura} ya existe (mismo operation_id). Eliminando.`,
+            );
+            await eliminarVentaLocal(venta.id!);
+            exitosas++;
+          } else {
+            // Número tomado → buscar siguiente libre con loop robusto
+            const cajeroId = venta.cajero_id ?? "";
+
+            // Helper: obtener siguiente número libre para este cajero (su rango de CAI)
+            const buscarSiguienteLibre = async (): Promise<string | null> => {
+              // 1. Intentar RPC primero
+              try {
+                const { data: rpcNum, error: rpcErr } = await supabase.rpc(
+                  "obtener_siguiente_factura",
+                  { p_cajero_id: cajeroId },
+                );
+                if (!rpcErr && rpcNum && rpcNum !== "LIMITE_ALCANZADO") {
+                  // Verificar libre para ESTE cajero.
+                  // La constraint uq_ventas_factura_cajero es UNIQUE(factura, cajero_id).
+                  const { data: ocup } = await supabase
+                    .from("ventas")
+                    .select("id")
+                    .eq("factura", rpcNum)
+                    .eq("cajero_id", cajeroId)
+                    .maybeSingle();
+                  if (!ocup) return rpcNum as string;
+                }
+              } catch {
+                /* continuar con fallback */
+              }
+              // 2. Fallback: MAX del cajero (cada cajero tiene su propio rango de CAI)
+              try {
+                const { data: rows } = await supabase
+                  .from("ventas")
+                  .select("factura")
+                  .eq("cajero_id", cajeroId)
+                  .not("factura", "like", "DEV-%")
+                  .not("factura", "like", "OFFLINE-%");
+                if (rows && rows.length > 0) {
+                  const maxNum = rows.reduce((max, r) => {
+                    const n = parseInt(r.factura);
+                    return Number.isFinite(n) ? Math.max(max, n) : max;
+                  }, 0);
+                  // Sincronizar el contador
+                  await supabase
+                    .from("cai_facturas")
+                    .update({ factura_actual: (maxNum + 2).toString() })
+                    .eq("cajero_id", cajeroId);
+                  return (maxNum + 1).toString();
+                }
+              } catch {
+                /* ignore */
+              }
+              return null;
+            };
+
+            let sincronizado = false;
+            let intentos = 0;
+            while (!sincronizado && intentos < 5) {
+              intentos++;
+              const nuevoNumero = await buscarSiguienteLibre();
+              if (!nuevoNumero) {
+                console.error("[ventas] No se pudo obtener número libre");
+                fallidas++;
+                break;
+              }
+              console.warn(
+                `⚠ [ventas] Número ${venta.factura} tomado. Auto-corrigiendo → ${nuevoNumero} (intento ${intentos})`,
+              );
+              const ventaCorregida = { ...ventaData, factura: nuevoNumero };
+              const { error: retryError } = await supabase
+                .from("ventas")
+                .insert([ventaCorregida]);
+              if (!retryError) {
+                await eliminarVentaLocal(venta.id!);
+                console.log(
+                  `✓ [ventas] Corregida: ${venta.factura} → ${nuevoNumero}`,
+                );
+                exitosas++;
+                sincronizado = true;
+              } else if (
+                retryError.code !== "23505" &&
+                (retryError as any).status !== 409
+              ) {
+                // Solo abortar si NO es conflicto de clave duplicada
+                console.error("[ventas] Error no recuperable:", retryError);
+                fallidas++;
+                break;
+              }
+              // Si sigue siendo conflicto 23505/409, el loop intenta de nuevo
+            }
+            if (!sincronizado && intentos >= 5) {
+              console.error(
+                `[ventas] Se agotaron los reintentos para ${venta.factura}`,
+              );
+              fallidas++;
+            }
+          }
+        } else {
+          console.error(
+            `[ventas] Error sincronizando venta ${venta.factura}:`,
+            error,
+          );
+          // Incrementar intentos
+          const database = await initIndexedDB();
+          const tx = database.transaction([VENTAS_STORE], "readwrite");
+          const store = tx.objectStore(VENTAS_STORE);
+          const getReq = store.get(venta.id!);
+          getReq.onsuccess = () => {
+            const row = getReq.result as VentaPendiente;
+            if (row) store.put({ ...row, intentos: (row.intentos || 0) + 1 });
+          };
+          fallidas++;
+        }
+      } else {
+        await eliminarVentaLocal(venta.id!);
+        console.log(`✓ [ventas] Venta ${venta.factura} sincronizada`);
+        exitosas++;
+      }
+    } catch (err) {
+      console.error(`[ventas] Error crítico:`, err);
+      fallidas++;
+    }
+  }
+
+  return { exitosas, fallidas };
 }
 
 /**

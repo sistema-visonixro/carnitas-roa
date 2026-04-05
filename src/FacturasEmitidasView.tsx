@@ -14,6 +14,13 @@ export interface Factura {
   cliente: string;
   es_donacion?: boolean;
   tipo_orden?: string;
+  tipo?: string;
+  efectivo?: number;
+  tarjeta?: number;
+  transferencia?: number;
+  dolares?: number;
+  dolares_usd?: number;
+  delivery?: number;
 }
 
 export interface FacturasEmitidasViewProps {
@@ -31,7 +38,7 @@ export default function FacturasEmitidasView({
   const [loading, setLoading] = useState(false);
   const [modalFactura, setModalFactura] = useState<Factura | null>(null);
   const [soloDonaciones, setSoloDonaciones] = useState(false);
-  const [pagosPorFacturaMap, setPagosPorFacturaMap] = useState<
+  const [pagosPorFacturaMap, _setPagosPorFacturaMap] = useState<
     Map<string, string>
   >(new Map());
 
@@ -42,7 +49,7 @@ export default function FacturasEmitidasView({
 
   async function fetchFacturas() {
     setLoading(true);
-    let query = supabase.from("facturas").select("*");
+    let query = supabase.from("ventas").select("*");
     if (desde && hasta) {
       query = query
         .gte("fecha_hora", desde)
@@ -56,23 +63,16 @@ export default function FacturasEmitidasView({
     });
     if (!error && data) {
       setFacturas(data as Factura[]);
-      // Construir mapa factura -> tipo_pago desde tabla pagos
-      const numeros = (data as Factura[]).map((f) => f.factura).filter(Boolean);
+      // Construir mapa factura -> tipo_pago desde los propios datos de ventas
       const newMap = new Map<string, string>();
-      if (numeros.length > 0) {
-        try {
-          const { data: pagosData } = await supabase
-            .from("pagos")
-            .select("factura, tipo")
-            .in("factura", numeros);
-          for (const p of pagosData || []) {
-            if (p.factura && !newMap.has(p.factura)) {
-              newMap.set(p.factura, p.tipo as string);
-            }
-          }
-        } catch (_) {}
+      for (const f of data as Factura[]) {
+        let tipoPago = "efectivo";
+        if ((f.tarjeta ?? 0) > 0) tipoPago = "tarjeta";
+        else if ((f.transferencia ?? 0) > 0) tipoPago = "transferencia";
+        else if ((f.dolares ?? 0) > 0) tipoPago = "dolares";
+        newMap.set(f.factura, tipoPago);
       }
-      setPagosPorFacturaMap(newMap);
+      _setPagosPorFacturaMap(newMap);
     }
     setLoading(false);
   }

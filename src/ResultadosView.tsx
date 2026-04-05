@@ -136,11 +136,12 @@ export default function ResultadosView({
 
       const [{ data: pagosfDia }, { data: gastosDia }] = await Promise.all([
         supabase
-          .from("pagosf")
+          .from("ventas")
           .select(
             "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
           )
           .eq("cajero_id", cajeroId)
+          .neq("tipo", "CREDITO")
           .gte("fecha_hora", start)
           .lte("fecha_hora", dayEnd),
         supabase
@@ -224,7 +225,7 @@ export default function ResultadosView({
       let bebidasDonadas = 0;
       try {
         const { data: facturasResumen } = await supabase
-          .from("facturas")
+          .from("ventas")
           .select("productos, es_donacion")
           .eq("cajero_id", cajeroId)
           .gte("fecha_hora", start)
@@ -327,7 +328,7 @@ export default function ResultadosView({
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("facturas").select("*", { count: "exact" });
+          let query = supabase.from("ventas").select("*", { count: "exact" });
 
           if (desdeInicio && hastaFin) {
             query = query
@@ -398,7 +399,7 @@ export default function ResultadosView({
 
         while (hayMasRegistros) {
           let query = supabase
-            .from("pagosf")
+            .from("ventas")
             .select(
               "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
             );
@@ -426,9 +427,8 @@ export default function ResultadosView({
             hayMasRegistros = false;
           }
         }
-        // Normalizar pagosf (una fila por factura) al formato multi-tipo legado
-        // Normalizar pagosf al formato multi-tipo. El campo `delivery` se suma
-        // al método de pago principal (misma lógica que fetchResumenCaja).
+        // Normalizar ventas (una fila por factura) al formato multi-tipo legado.
+        // El campo `delivery` se suma al método de pago principal (misma lógica que fetchResumenCaja).
         const normalizado: any[] = [];
         for (const r of todosLosPagosF) {
           const ef = parseFloat(r.efectivo || 0);
@@ -596,7 +596,7 @@ export default function ResultadosView({
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("facturas").select("*");
+          let query = supabase.from("ventas").select("*");
 
           query = query
             .gte("fecha_hora", desdeInicio)
@@ -663,7 +663,7 @@ export default function ResultadosView({
 
         while (hayMasRegistros) {
           let query = supabase
-            .from("pagosf")
+            .from("ventas")
             .select(
               "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, cajero, fecha_hora",
             );
@@ -2081,7 +2081,7 @@ export default function ResultadosView({
         let hayMasRegistros = true;
 
         while (hayMasRegistros) {
-          let query = supabase.from("facturas").select("*", { count: "exact" });
+          let query = supabase.from("ventas").select("*", { count: "exact" });
 
           if (desdeInicio && hastaFin) {
             query = query
@@ -2111,37 +2111,36 @@ export default function ResultadosView({
       }
 
       const facturas_reporte = (await obtenerTodasLasFacturasReporte()).filter(
-        (f: any) => f.tipo_venta !== "credito",
+        (f: any) => {
+          // Excluir ventas a crédito (nunca ingresaron dinero)
+          if (f.tipo === "CREDITO") return false;
+          // Excluir reversiones de créditos: DEVOLUCION con pagos todos en 0
+          // (si el original era crédito, nunca hubo movimiento de dinero)
+          if (f.tipo === "DEVOLUCION") {
+            const ef = parseFloat(f.efectivo || 0);
+            const tk = parseFloat(f.tarjeta || 0);
+            const tr = parseFloat(f.transferencia || 0);
+            const dl = parseFloat(f.dolares || 0);
+            const dv = parseFloat(f.delivery || 0);
+            if (ef === 0 && tk === 0 && tr === 0 && dl === 0 && dv === 0)
+              return false;
+          }
+          return true;
+        },
       );
       const nombreCajero = cajeroFiltro
         ? cajeros.find((c) => c.id === cajeroFiltro)?.nombre || "Sin nombre"
         : "";
 
-      // Obtener tipos de pago por factura desde pagosf (una fila por factura)
-      const numeros = facturas_reporte
-        .map((f: any) => f.factura)
-        .filter(Boolean);
-      // Map: factura -> array de tipos (derivados de columnas no-cero)
+      // Derivar tipos de pago directamente desde los datos de ventas (ya incluyen los campos de pago)
       const pagosTiposMap = new Map<string, string[]>();
-      if (numeros.length > 0) {
-        const chunkSize = 500;
-        for (let i = 0; i < numeros.length; i += chunkSize) {
-          const chunk = numeros.slice(i, i + chunkSize);
-          const { data: pagosfChunk } = await supabase
-            .from("pagosf")
-            .select("factura, efectivo, tarjeta, transferencia, dolares")
-            .in("factura", chunk);
-          for (const r of pagosfChunk || []) {
-            if (!r.factura) continue;
-            const tipos: string[] = [];
-            if (parseFloat(r.efectivo || 0) > 0) tipos.push("efectivo");
-            if (parseFloat(r.tarjeta || 0) > 0) tipos.push("tarjeta");
-            if (parseFloat(r.transferencia || 0) > 0)
-              tipos.push("transferencia");
-            if (parseFloat(r.dolares || 0) > 0) tipos.push("dolares");
-            if (tipos.length > 0) pagosTiposMap.set(r.factura, tipos);
-          }
-        }
+      for (const f of facturas_reporte) {
+        const tipos: string[] = [];
+        if (parseFloat(f.efectivo || 0) > 0) tipos.push("efectivo");
+        if (parseFloat(f.tarjeta || 0) > 0) tipos.push("tarjeta");
+        if (parseFloat(f.transferencia || 0) > 0) tipos.push("transferencia");
+        if (parseFloat(f.dolares || 0) > 0) tipos.push("dolares");
+        if (tipos.length > 0) pagosTiposMap.set(f.factura, tipos);
       }
 
       // Helper: etiqueta legible del tipo de pago
@@ -2393,15 +2392,15 @@ export default function ResultadosView({
       const desdeInicio = desde.replace("T", " ") + ":00";
       const hastaFin = hasta.replace("T", " ") + ":59";
 
-      // Obtener filas de pagosf directamente (1 fila por factura)
+      // Obtener filas de ventas directamente (1 fila por factura - incluye datos de pago)
       const todasLasFilas: any[] = [];
       let offset = 0;
       const limite = 1000;
       while (true) {
         let q = supabase
-          .from("pagosf")
+          .from("ventas")
           .select(
-            "factura, cliente, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero, cajero_id, fecha_hora",
+            "factura, cliente, tipo, efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero, cajero_id, fecha_hora",
           )
           .gte("fecha_hora", desdeInicio)
           .lte("fecha_hora", hastaFin);
@@ -2446,8 +2445,23 @@ export default function ResultadosView({
           ? ""
           : ` ($${n.toLocaleString("de-DE", { minimumFractionDigits: 2 })})`;
 
+      // Filtrar: excluir CREDITO y reversiones de crédito (DEV con pagos en 0)
+      const filasValidas = todasLasFilas.filter((r: any) => {
+        if (r.tipo === "CREDITO") return false;
+        if (r.tipo === "DEVOLUCION") {
+          const ef = parseFloat(r.efectivo || 0);
+          const tk = parseFloat(r.tarjeta || 0);
+          const tr = parseFloat(r.transferencia || 0);
+          const dl = parseFloat(r.dolares || 0);
+          const dv = parseFloat(r.delivery || 0);
+          if (ef === 0 && tk === 0 && tr === 0 && dl === 0 && dv === 0)
+            return false;
+        }
+        return true;
+      });
+
       let filas = "";
-      todasLasFilas.forEach((r, i) => {
+      filasValidas.forEach((r, i) => {
         const ef = parseFloat(r.efectivo || 0);
         const tk = parseFloat(r.tarjeta || 0);
         const tr = parseFloat(r.transferencia || 0);
@@ -2503,7 +2517,7 @@ export default function ResultadosView({
 </head><body>
 <div style="max-width:1400px;margin:0 auto;">
   <h1 style="text-align:center;color:#333;margin-bottom:4px;">💳 Reporte de Pagos (Detalle)</h1>
-  <p style="text-align:center;color:#666;margin-bottom:20px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` — Cajero: ${nombreCajero}` : ""} &nbsp;|&nbsp; ${todasLasFilas.length} facturas</p>
+  <p style="text-align:center;color:#666;margin-bottom:20px;">Del ${desde} al ${hasta}${cajeroFiltro ? ` — Cajero: ${nombreCajero}` : ""} &nbsp;|&nbsp; ${filasValidas.length} facturas</p>
   <table>
     <thead><tr>
       ${th("#")}

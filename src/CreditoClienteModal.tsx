@@ -16,6 +16,7 @@ interface Props {
   onClose: () => void;
   onClienteSeleccionado: (cliente: ClienteCredito, saldoActual: number) => void;
   theme?: "lite" | "dark";
+  totalVenta?: number; // total de la venta actual (para mostrar en confirmación)
 }
 
 // Regex de validación de DNI hondureño (ej: 1809-1966-00326)
@@ -33,6 +34,7 @@ export default function CreditoClienteModal({
   onClose,
   onClienteSeleccionado,
   theme = "lite",
+  totalVenta = 0,
 }: Props) {
   const [tab, setTab] = useState<"buscar" | "nuevo">("buscar");
   const [busqueda, setBusqueda] = useState("");
@@ -40,6 +42,11 @@ export default function CreditoClienteModal({
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seleccionando, setSeleccionando] = useState(false);
+
+  // Paso de confirmación: cliente seleccionado pendiente de confirmar
+  const [clientePendiente, setClientePendiente] =
+    useState<ClienteCredito | null>(null);
+  const [saldoPendiente, setSaldoPendiente] = useState(0);
 
   // Formulario nuevo cliente
   const [fNombre, setFNombre] = useState("");
@@ -61,6 +68,8 @@ export default function CreditoClienteModal({
       setFDni("");
       setFTelefono("");
       setErrForm(null);
+      setClientePendiente(null);
+      setSaldoPendiente(0);
       setTimeout(() => busquedaRef.current?.focus(), 100);
     }
   }, [isOpen]);
@@ -108,7 +117,9 @@ export default function CreditoClienteModal({
     setSeleccionando(true);
     try {
       const cuenta = await obtenerCuentaCobrar(cli.id);
-      onClienteSeleccionado(cli, cuenta?.saldo_actual ?? 0);
+      // Mostrar paso de confirmación antes de facturar
+      setClientePendiente(cli);
+      setSaldoPendiente(cuenta?.saldo_actual ?? 0);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -139,8 +150,9 @@ export default function CreditoClienteModal({
         telefono: fTelefono.trim(),
         activo: true,
       });
-      // Seleccionar inmediatamente al nuevo cliente
-      onClienteSeleccionado(nuevo, 0);
+      // Seleccionar inmediatamente al nuevo cliente → mostrar confirmación
+      setClientePendiente(nuevo);
+      setSaldoPendiente(0);
     } catch (e: any) {
       setErrForm(e.message);
     } finally {
@@ -157,6 +169,205 @@ export default function CreditoClienteModal({
   const text = theme === "lite" ? "#0f172a" : "#f5f5f5";
   const sub = theme === "lite" ? "#64748b" : "#94a3b8";
   const accent = "#7c3aed"; // morado para distinguir del POS de contado
+
+  // ──── Panel de confirmación ──────────────────────────────────
+  // Se muestra cuando el cajero ya eligió un cliente y debe confirmar antes de facturar.
+  if (clientePendiente) {
+    const nuevoSaldo = saldoPendiente + totalVenta;
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0,0,0,0.55)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 11000,
+          backdropFilter: "blur(4px)",
+        }}
+      >
+        <div
+          style={{
+            background: bg,
+            borderRadius: 20,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+            width: "100%",
+            maxWidth: 420,
+            padding: "0 0 24px",
+            color: text,
+            overflow: "hidden",
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              background: `linear-gradient(135deg, ${accent} 0%, #6d28d9 100%)`,
+              padding: "18px 24px",
+            }}
+          >
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>
+              ✅ Confirmar venta a crédito
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "rgba(255,255,255,0.75)",
+                marginTop: 4,
+              }}
+            >
+              Revise los datos antes de facturar
+            </div>
+          </div>
+
+          {/* Cuerpo */}
+          <div
+            style={{
+              padding: "20px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            {/* Cliente */}
+            <div
+              style={{
+                background: bg2,
+                border: `1px solid ${border}`,
+                borderRadius: 12,
+                padding: "14px 16px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  color: sub,
+                  fontWeight: 600,
+                  marginBottom: 4,
+                }}
+              >
+                CLIENTE
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: text }}>
+                {clientePendiente.nombre}
+              </div>
+              {clientePendiente.dni && (
+                <div style={{ fontSize: 13, color: sub, marginTop: 2 }}>
+                  DNI: {clientePendiente.dni}
+                </div>
+              )}
+              {clientePendiente.telefono && (
+                <div style={{ fontSize: 13, color: sub }}>
+                  Tel: {clientePendiente.telefono}
+                </div>
+              )}
+            </div>
+
+            {/* Montos */}
+            <div
+              style={{
+                background: bg2,
+                border: `1px solid ${border}`,
+                borderRadius: 12,
+                padding: "14px 16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 14,
+                  color: sub,
+                }}
+              >
+                <span>Saldo anterior</span>
+                <span>L {saldoPendiente.toFixed(2)}</span>
+              </div>
+              {totalVenta > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 14,
+                    color: sub,
+                  }}
+                >
+                  <span>Esta venta</span>
+                  <span style={{ fontWeight: 700, color: accent }}>
+                    + L {totalVenta.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 16,
+                  fontWeight: 800,
+                  color: text,
+                  borderTop: `1px solid ${border}`,
+                  paddingTop: 8,
+                }}
+              >
+                <span>Nuevo saldo</span>
+                <span style={{ color: nuevoSaldo > 0 ? "#dc2626" : text }}>
+                  L {nuevoSaldo.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Botones */}
+            <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+              <button
+                onClick={() => setClientePendiente(null)}
+                style={{
+                  flex: 1,
+                  padding: "12px 0",
+                  background: "transparent",
+                  border: `1.5px solid ${border}`,
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: sub,
+                  cursor: "pointer",
+                }}
+              >
+                ← Cambiar cliente
+              </button>
+              <button
+                onClick={() => {
+                  const cli = clientePendiente;
+                  const saldo = saldoPendiente;
+                  setClientePendiente(null);
+                  onClienteSeleccionado(cli, saldo);
+                }}
+                style={{
+                  flex: 2,
+                  padding: "12px 0",
+                  background: accent,
+                  border: "none",
+                  borderRadius: 10,
+                  fontSize: 15,
+                  fontWeight: 700,
+                  color: "#fff",
+                  cursor: "pointer",
+                  boxShadow: "0 4px 14px rgba(124,58,237,0.35)",
+                }}
+              >
+                💳 Registrar crédito
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

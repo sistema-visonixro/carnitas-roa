@@ -115,7 +115,7 @@ export default function GananciasNetasView({
       const PG = 1000;
       while (true) {
         const { data, error: e } = await supabase
-          .from("facturas")
+          .from("ventas")
           .select("id, factura, productos, total, fecha_hora")
           .gte("fecha_hora", desdeStr)
           .lte("fecha_hora", hastaStr)

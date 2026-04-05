@@ -7,13 +7,11 @@ import { getLocalDayRange, formatToHondurasLocal } from "./utils/fechas";
 import { useDatosNegocio } from "./useDatosNegocio";
 import {
   inicializarSistemaOffline,
-  guardarFacturaLocal,
   guardarGastoLocal,
   guardarEnvioLocal,
 
   // obtenerContadorPendientes,
   sincronizarTodo,
-  eliminarFacturaLocal,
   eliminarGastoLocal,
   eliminarEnvioLocal,
   obtenerEnviosPendientes,
@@ -27,8 +25,9 @@ import {
   limpiarAperturaCache,
   guardarCaiCache,
   obtenerCaiCache,
-  actualizarFacturaVentaEnPagosLocales,
-  guardarPagoFLocal,
+  guardarVentaLocal,
+  eliminarVentaLocal,
+  obtenerVentasPendientes as _obtenerVentasPendientes,
 } from "./utils/offlineSync";
 import { migrarPagosDesdeLocalStorage } from "./utils/migrarLocalStorage";
 import { useConexion } from "./utils/useConexion";
@@ -165,14 +164,10 @@ export default function PuntoDeVentaView({
   ) {
     if (seleccionados.length === 0) return;
 
-    const factura_numero =
-      facturaActual && facturaActual !== "Límite alcanzado"
-        ? facturaActual
-        : "";
-    if (!factura_numero) {
-      alert("No hay número de factura disponible. Verifica el CAI activo.");
-      return;
-    }
+    // Abrir UNA SOLA ventana de impresión para comanda + recibo.
+    // El navegador bloquea el segundo window.open() aunque sea síncronoi
+    // porque los popups están limitados a uno por gesto de usuario.
+    const printWin = window.open("", "_blank", "height=900,width=420");
 
     const sub_total = seleccionados.reduce(
       (s, p) => s + p.precio * p.cantidad,
@@ -189,22 +184,93 @@ export default function PuntoDeVentaView({
     }));
 
     try {
-      const result = await confirmarVentaCredito({
-        factura_numero,
-        cliente_id: cliente.id,
-        cajero_id: usuarioActual?.id ?? "",
-        cajero: usuarioActual?.nombre ?? "",
-        caja: caiInfo?.caja_asignada ?? "",
-        cai: caiInfo?.cai ?? "",
-        productos,
-        sub_total,
-        isv_15: 0,
-        isv_18: 0,
-        total,
-        fecha_hora: formatToHondurasLocal(),
-        tipo_orden: "PARA LLEVAR",
-        dias_vencimiento: 30,
-      });
+      // ── Helper: obtener siguiente número libre para este cajero ───────────
+      // 1. Intenta RPC. 2. Si falla (404/error), consulta MAX de ventas + 1.
+      const obtenerNumeroLibreCredito = async (): Promise<string | null> => {
+        const { data: rpcNum, error: rpcErr } = await supabase.rpc(
+          "obtener_siguiente_factura",
+          { p_cajero_id: usuarioActual?.id ?? "" },
+        );
+        if (!rpcErr && rpcNum && rpcNum !== "LIMITE_ALCANZADO") {
+          return rpcNum as string;
+        }
+        // Fallback: MAX de ventas de este cajero (funciona aunque el RPC no esté desplegado)
+        const { data: rows } = await supabase
+          .from("ventas")
+          .select("factura")
+          .eq("cajero_id", usuarioActual?.id ?? "")
+          .not("factura", "like", "DEV-%")
+          .not("factura", "like", "OFFLINE-%");
+        if (rows && rows.length > 0) {
+          const maxNum = rows.reduce((max, r) => {
+            const n = parseInt(r.factura);
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+          }, 0);
+          if (maxNum > 0) {
+            const siguiente = (maxNum + 1).toString();
+            // Sincronizar contador en cai_facturas para la próxima vez
+            await supabase
+              .from("cai_facturas")
+              .update({ factura_actual: (maxNum + 2).toString() })
+              .eq("cajero_id", usuarioActual?.id ?? "");
+            return siguiente;
+          }
+        }
+        // Si no hay ventas aún, usar rango_desde del CAI
+        const { data: caiRow } = await supabase
+          .from("cai_facturas")
+          .select("rango_desde")
+          .eq("cajero_id", usuarioActual?.id ?? "")
+          .maybeSingle();
+        if (caiRow?.rango_desde) return String(caiRow.rango_desde);
+        // Último recurso: valor del estado local
+        return facturaActual && facturaActual !== "Límite alcanzado"
+          ? facturaActual
+          : null;
+      };
+
+      // ── Obtener número de factura fresco ──────────────────────────────────
+      let factura_numero = await obtenerNumeroLibreCredito();
+      if (!factura_numero) {
+        printWin?.close();
+        alert("No hay número de factura disponible. Verifica el CAI activo.");
+        return;
+      }
+
+      // Helper reutilizable para confirmar con un número dado
+      const intentarConfirmar = (num: string) =>
+        confirmarVentaCredito({
+          factura_numero: num,
+          cliente_id: cliente.id,
+          cajero_id: usuarioActual?.id ?? "",
+          cajero: usuarioActual?.nombre ?? "",
+          caja: caiInfo?.caja_asignada ?? "",
+          cai: caiInfo?.cai ?? "",
+          productos,
+          sub_total,
+          isv_15: 0,
+          isv_18: 0,
+          total,
+          fecha_hora: formatToHondurasLocal(),
+          tipo_orden: "PARA LLEVAR",
+          dias_vencimiento: 30,
+        });
+
+      // ── Intentar confirmar la venta (con retry si factura duplicada) ──────
+      let result = await intentarConfirmar(factura_numero);
+
+      // Si hay conflicto de factura duplicada, reintentar hasta 4 veces con fallback MAX.
+      if (!result.ok && result.error?.includes("uq_ventas_factura")) {
+        for (let intento = 0; intento < 4 && !result.ok; intento++) {
+          console.warn(
+            `⚠ Factura ${factura_numero} duplicada en crédito. Reintentando (${intento + 1}/4)...`,
+          );
+          const nuevoNum = await obtenerNumeroLibreCredito();
+          if (!nuevoNum) break;
+          factura_numero = nuevoNum;
+          result = await intentarConfirmar(factura_numero);
+        }
+      }
 
       if (!result.ok) {
         alert("Error al registrar venta a crédito: " + result.error);
@@ -290,22 +356,7 @@ export default function PuntoDeVentaView({
           }
         </div>`;
 
-      const pwComanda = window.open("", "", "height=800,width=400");
-      if (pwComanda) {
-        pwComanda.document.write(
-          `<html><head><title>Comanda ${factura_numero}</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`,
-        );
-        pwComanda.document.close();
-        pwComanda.onload = () => {
-          setTimeout(() => {
-            pwComanda.focus();
-            pwComanda.print();
-            pwComanda.close();
-          }, 500);
-        };
-      }
-
-      // ── 3. Imprimir RECIBO de crédito (para el cliente) ──────────────────
+      // ── 3. Recibo de crédito (para el cliente) ───────────────────────────
       const filasProductos = seleccionados
         .map(
           (p) => `<tr>
@@ -316,25 +367,17 @@ export default function PuntoDeVentaView({
         )
         .join("");
 
-      const receiptHtml = `<html><head><title>Crédito</title>
-        <style>
-          body{font-family:monospace;font-size:12px;max-width:320px;margin:0 auto;padding:12px;}
-          table{width:100%;border-collapse:collapse;}
-          td{padding:3px 4px;}
-          .center{text-align:center;}.bold{font-weight:700;}
-          .divider{border-top:1px dashed #333;margin:6px 0;}
-          .total{font-size:15px;font-weight:900;}
-        </style></head><body>
-        <div class='center bold' style='font-size:15px'>VENTA A CRÉDITO</div>
-        <div class='divider'></div>
+      const reciboHtml = `<div style='font-family:monospace;font-size:12px;max-width:320px;margin:0 auto;padding:12px;'>
+        <div style='text-align:center;font-weight:700;font-size:15px'>VENTA A CRÉDITO</div>
+        <div style='border-top:1px dashed #333;margin:6px 0'></div>
         <div>Cliente: <strong>${cliente.nombre}</strong></div>
         <div>DNI: ${cliente.dni ?? "—"}</div>
         <div>Factura: ${factura_numero}</div>
         <div>Cajero: ${usuarioActual?.nombre ?? ""}</div>
         <div>Caja: ${caiInfo?.caja_asignada ?? ""}</div>
         <div>Fecha: ${new Date().toLocaleString("es-HN")}</div>
-        <div class='divider'></div>
-        <table>
+        <div style='border-top:1px dashed #333;margin:6px 0'></div>
+        <table style='width:100%;border-collapse:collapse;'>
           <thead><tr>
             <th style='text-align:left'>Producto</th>
             <th style='text-align:center'>Cant</th>
@@ -342,28 +385,34 @@ export default function PuntoDeVentaView({
           </tr></thead>
           <tbody>${filasProductos}</tbody>
         </table>
-        <div class='divider'></div>
+        <div style='border-top:1px dashed #333;margin:6px 0'></div>
         <div>Saldo anterior: L ${saldoAnterior.toFixed(2)}</div>
         <div>Esta venta: <strong>L ${total.toFixed(2)}</strong></div>
-        <div class='total'>Nuevo saldo: L ${(saldoAnterior + total).toFixed(2)}</div>
-        <div class='divider'></div>
-        <div class='center' style='font-size:10px;margin-top:8px'>— Pendiente de cobro —</div>
-      </body></html>`;
+        <div style='font-size:15px;font-weight:900'>Nuevo saldo: L ${(saldoAnterior + total).toFixed(2)}</div>
+        <div style='border-top:1px dashed #333;margin:6px 0'></div>
+        <div style='text-align:center;font-size:10px;margin-top:8px'>— Pendiente de cobro —</div>
+      </div>`;
 
-      setTimeout(() => {
-        const w = window.open("", "", "height=600,width=400");
-        if (w) {
-          w.document.write(receiptHtml);
-          w.document.close();
-          w.onload = () => {
-            setTimeout(() => {
-              w.focus();
-              w.print();
-              w.close();
-            }, 400);
-          };
-        }
-      }, 800);
+      // ── 4. Imprimir comanda + recibo en una sola ventana (popup único) ────
+      if (printWin) {
+        printWin.document.write(
+          `<html><head><title>Crédito ${factura_numero}</title><style>
+            @page{margin:0;size:auto;}
+            body{margin:0;padding:0;}
+            .pagina{page-break-after:always;}
+            .ultima{page-break-after:avoid;}
+          </style></head><body>
+            <div class='pagina'>${comandaHtml}</div>
+            <div class='ultima'>${reciboHtml}</div>
+          </body></html>`,
+        );
+        printWin.document.close();
+        setTimeout(() => {
+          printWin.focus();
+          printWin.print();
+          printWin.close();
+        }, 500);
+      }
 
       // ── Incrementar contador de factura (igual que venta normal) ─────────
       const numUsado = parseInt(factura_numero);
@@ -386,7 +435,7 @@ export default function PuntoDeVentaView({
         }
 
         try {
-          const caiCache = await obtenerCaiCache();
+          const caiCache = await obtenerCaiCache(usuarioActual?.id);
           if (caiCache) {
             await guardarCaiCache({
               ...caiCache,
@@ -462,11 +511,12 @@ export default function PuntoDeVentaView({
 
       const [{ data: pagosfDia }, { data: gastosDia }] = await Promise.all([
         supabase
-          .from("pagosf")
+          .from("ventas")
           .select(
             "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
           )
           .eq("cajero_id", usuarioActual?.id)
+          .neq("tipo", "CREDITO")
           .gte("fecha_hora", start)
           .lte("fecha_hora", end),
         // Obtener gastos: ahora usa fecha_hora (timestamp) para filtrar desde apertura exacta
@@ -487,8 +537,8 @@ export default function PuntoDeVentaView({
       let bebidasSum = 0;
       try {
         const { data: facturasResumen } = await supabase
-          .from("facturas")
-          .select("productos, factura")
+          .from("ventas")
+          .select("productos, factura, tipo")
           .eq("cajero_id", usuarioActual?.id)
           .or("es_donacion.is.null,es_donacion.eq.false")
           .gte("fecha_hora", start)
@@ -614,7 +664,7 @@ export default function PuntoDeVentaView({
       let bebidasDonadas = 0;
       try {
         const { data: facturaDonaciones } = await supabase
-          .from("facturas")
+          .from("ventas")
           .select("productos")
           .eq("cajero_id", usuarioActual?.id)
           .eq("es_donacion", true)
@@ -712,62 +762,51 @@ export default function PuntoDeVentaView({
         setShowHistorialVentas(false);
         return;
       }
-      const [{ data: ventas, error }, { data: pagosfData }] = await Promise.all(
-        [
-          supabase
-            .from("facturas")
-            .select("*")
-            .eq("cajero_id", usuarioActual?.id)
-            .or("tipo_venta.eq.contado,tipo_venta.is.null")
-            .gte("fecha_hora", aperturaActual.fecha)
-            .lte("fecha_hora", dayEnd)
-            .order("fecha_hora", { ascending: false }),
-          supabase
-            .from("pagosf")
-            .select(
-              "factura, efectivo, tarjeta, transferencia, dolares, dolares_usd, cajero_id, fecha_hora",
-            )
-            .eq("cajero_id", usuarioActual?.id)
-            .gte("fecha_hora", aperturaActual.fecha)
-            .lte("fecha_hora", dayEnd),
-        ],
-      );
+      const { data: ventas, error } = await supabase
+        .from("ventas")
+        .select("*")
+        .eq("cajero_id", usuarioActual?.id)
+        .neq("tipo", "CREDITO")
+        .gte("fecha_hora", aperturaActual.fecha)
+        .lte("fecha_hora", dayEnd)
+        .order("fecha_hora", { ascending: false });
+
       if (error) throw error;
       setHistorialVentas(ventas || []);
-      // Normalizar pagosf (una fila por factura) al formato multi-tipo que usa la UI
+      // Normalizar datos de pago desde ventas (una fila ya incluye todo)
       const pagosNorm: any[] = [];
-      for (const r of pagosfData || []) {
-        if (parseFloat(r.efectivo || 0) > 0)
+      for (const v of ventas || []) {
+        if (parseFloat(v.efectivo || 0) > 0)
           pagosNorm.push({
             tipo: "efectivo",
-            monto: r.efectivo,
+            monto: v.efectivo,
             usd_monto: 0,
-            factura: r.factura,
-            factura_venta: r.factura,
+            factura: v.factura,
+            factura_venta: v.factura,
           });
-        if (parseFloat(r.tarjeta || 0) > 0)
+        if (parseFloat(v.tarjeta || 0) > 0)
           pagosNorm.push({
             tipo: "tarjeta",
-            monto: r.tarjeta,
+            monto: v.tarjeta,
             usd_monto: 0,
-            factura: r.factura,
-            factura_venta: r.factura,
+            factura: v.factura,
+            factura_venta: v.factura,
           });
-        if (parseFloat(r.transferencia || 0) > 0)
+        if (parseFloat(v.transferencia || 0) > 0)
           pagosNorm.push({
             tipo: "transferencia",
-            monto: r.transferencia,
+            monto: v.transferencia,
             usd_monto: 0,
-            factura: r.factura,
-            factura_venta: r.factura,
+            factura: v.factura,
+            factura_venta: v.factura,
           });
-        if (parseFloat(r.dolares || 0) > 0)
+        if (parseFloat(v.dolares || 0) > 0)
           pagosNorm.push({
             tipo: "dolares",
-            monto: r.dolares,
-            usd_monto: r.dolares_usd,
-            factura: r.factura,
-            factura_venta: r.factura,
+            monto: v.dolares,
+            usd_monto: v.dolares_usd,
+            factura: v.factura,
+            factura_venta: v.factura,
           });
       }
       setHistorialPagos(pagosNorm);
@@ -941,7 +980,7 @@ export default function PuntoDeVentaView({
           .select("*")
           .eq("nombre", "default")
           .single(),
-        supabase.from("pagosf").select("*").eq("factura", venta.factura),
+        supabase.from("ventas").select("*").eq("factura", venta.factura),
       ]);
       const prods: Array<{
         nombre: string;
@@ -1566,194 +1605,162 @@ export default function PuntoDeVentaView({
   // Estado para contador de cierres sin aclarar
   const [cierresSinAclarar, setCierresSinAclarar] = useState<number>(0);
 
-  // Obtener datos de CAI y factura actual
+  // Obtener datos de CAI y el número de factura correcto
+  // ─ Online  : lee cai_facturas para los meta-datos y llama al RPC ver_factura_actual
+  //             que hace el LOOP saltando números ya usados en ventas (SAR-safe).
+  // ─ Offline : usa el cache de IndexedDB y ajusta con las ventas pendientes locales.
   useEffect(() => {
     async function fetchCaiYFactura() {
       if (!usuarioActual) return;
 
-      try {
-        // SIEMPRE obtener el número de factura del cache primero
-        const caiCache = await obtenerCaiCache();
-        let facturaDesdeCache: string | null = null;
+      // ── Helpers ────────────────────────────────────────────────────────────
+      const aplicarFactura = (num: string, rangoHasta: string) => {
+        const n = parseInt(num);
+        const fin = parseInt(rangoHasta);
+        if (!Number.isFinite(n)) return;
+        setFacturaActual(n > fin ? "Límite alcanzado" : n.toString());
+      };
 
-        if (
-          caiCache &&
-          caiCache.factura_actual &&
-          caiCache.factura_actual.trim() !== ""
-        ) {
-          facturaDesdeCache = caiCache.factura_actual;
-          console.log("📦 Factura desde IndexedDB:", facturaDesdeCache);
-        }
-
-        // Si hay conexión, obtener de Supabase
-        if (isOnline) {
+      // ── ONLINE ─────────────────────────────────────────────────────────────
+      if (isOnline) {
+        try {
+          // 1. Cargar meta-datos del CAI desde cai_facturas
           const { data: caiData, error: caiError } = await supabase
             .from("cai_facturas")
             .select("*")
             .eq("cajero_id", usuarioActual.id)
             .single();
 
-          // Si hay error de conexión, ir directo a cache
-          if (caiError) {
-            console.log("⚠ Error obteniendo CAI de Supabase:", caiError);
-            throw new Error(caiError.message || "Error de conexión");
+          if (caiError || !caiData) {
+            throw new Error(caiError?.message ?? "Sin datos de CAI");
           }
 
-          if (caiData) {
-            setCaiInfo({
-              caja_asignada: caiData.caja_asignada,
-              nombre_cajero: usuarioActual.nombre,
-              cai: caiData.cai,
-            });
+          setCaiInfo({
+            caja_asignada: caiData.caja_asignada,
+            nombre_cajero: usuarioActual.nombre,
+            cai: caiData.cai,
+          });
 
-            const rango_fin = parseInt(caiData.rango_hasta);
-            let facturaDesdeSupabase: string | null = null;
+          // 2. Obtener el SIGUIENTE número libre real via RPC (hace el LOOP
+          //    saltando los que ya existen en ventas para este cajero).
+          let facturaParaMostrar: string = caiData.rango_desde;
 
-            // Obtener factura actual de Supabase
-            if (
-              caiData.factura_actual &&
-              caiData.factura_actual.trim() !== ""
-            ) {
-              facturaDesdeSupabase = caiData.factura_actual;
-              console.log("☁️ Factura desde Supabase:", facturaDesdeSupabase);
-            }
+          const { data: rpcFactura, error: rpcError } = await supabase.rpc(
+            "ver_factura_actual",
+            { p_cajero_id: usuarioActual.id },
+          );
 
-            // COMPARAR: usar la factura mayor entre cache y Supabase
-            let facturaFinal: string;
-            if (facturaDesdeCache && facturaDesdeSupabase) {
-              const numCache = parseInt(facturaDesdeCache);
-              const numSupabase = parseInt(facturaDesdeSupabase);
-              if (numCache > numSupabase) {
-                facturaFinal = facturaDesdeCache;
-                console.log(
-                  "✅ Usando factura de IndexedDB (mayor):",
-                  facturaFinal,
-                );
-              } else {
-                facturaFinal = facturaDesdeSupabase;
-                console.log(
-                  "✅ Usando factura de Supabase (mayor o igual):",
-                  facturaFinal,
-                );
-              }
-            } else if (facturaDesdeCache) {
-              facturaFinal = facturaDesdeCache;
-              console.log(
-                "✅ Usando factura de IndexedDB (única disponible):",
-                facturaFinal,
-              );
-            } else if (facturaDesdeSupabase) {
-              facturaFinal = facturaDesdeSupabase;
-              console.log(
-                "✅ Usando factura de Supabase (única disponible):",
-                facturaFinal,
-              );
-            } else {
-              facturaFinal = caiData.rango_desde;
-              console.log(
-                "✅ Usando rango_desde (no hay factura_actual):",
-                facturaFinal,
-              );
-            }
-
-            // Sanitizar: si facturaFinal no es un número válido, no guardar basura en cache
-            const facturaFinalSanitizada = Number.isFinite(
-              parseInt(facturaFinal),
-            )
-              ? facturaFinal
-              : caiData.rango_desde;
-
-            // Guardar en cache con la factura final
-            await guardarCaiCache({
-              id: caiData.id.toString(),
-              cajero_id: caiData.cajero_id,
-              caja_asignada: caiData.caja_asignada,
-              cai: caiData.cai,
-              factura_desde: caiData.rango_desde,
-              factura_hasta: caiData.rango_hasta,
-              factura_actual: facturaFinalSanitizada,
-              nombre_cajero: usuarioActual.nombre,
-            });
-
-            // Validar si está dentro del rango
-            const facturaFinalNum = parseInt(facturaFinal);
-            if (Number.isFinite(facturaFinalNum)) {
-              if (facturaFinalNum > rango_fin) {
-                setFacturaActual("Límite alcanzado");
-              } else {
-                setFacturaActual(facturaFinalNum.toString());
-              }
-            } else {
-              // Fallback a rango_desde si no se puede parsear
-              setFacturaActual(caiData.rango_desde);
-            }
+          if (!rpcError && rpcFactura && rpcFactura !== "LIMITE_ALCANZADO") {
+            facturaParaMostrar = rpcFactura as string;
+            console.log("☁️ Factura próxima (RPC):", facturaParaMostrar);
+          } else if (rpcFactura === "LIMITE_ALCANZADO") {
+            setFacturaActual("Límite alcanzado");
+            facturaParaMostrar = "LIMITE_ALCANZADO";
           } else {
-            setFacturaActual("");
+            // Fallback al campo directo si RPC falla
+            facturaParaMostrar =
+              caiData.factura_actual?.trim() || caiData.rango_desde;
+            console.warn(
+              "⚠ RPC ver_factura_actual falló, usando campo directo:",
+              facturaParaMostrar,
+            );
           }
-        } else {
-          // Si no hay conexión, intentar cargar desde cache
-          console.log("⚠ Sin conexión. Cargando CAI desde cache...");
-          const caiCacheOffline = await obtenerCaiCache();
 
-          if (caiCacheOffline) {
-            console.log("✓ CAI recuperado desde cache");
-            setCaiInfo({
-              caja_asignada: caiCacheOffline.caja_asignada,
-              nombre_cajero: caiCacheOffline.nombre_cajero,
-              cai: caiCacheOffline.cai,
-            });
-
-            // Usar factura_actual del cache
-            if (
-              caiCacheOffline.factura_actual &&
-              caiCacheOffline.factura_actual.trim() !== ""
-            ) {
-              const facturaActualNum = parseInt(caiCacheOffline.factura_actual);
-              const rango_fin = parseInt(caiCacheOffline.factura_hasta);
-              if (Number.isFinite(facturaActualNum)) {
-                if (facturaActualNum > rango_fin) {
-                  setFacturaActual("Límite alcanzado");
-                } else {
-                  setFacturaActual(facturaActualNum.toString());
+          // 3. Ajustar con ventas pendientes locales (offline no sincronizadas).
+          //    Si volví a conectarme pero aún no se sincronizaron las facturas
+          //    offline, Supabase devuelve un número menor al real.
+          if (facturaParaMostrar !== "LIMITE_ALCANZADO") {
+            try {
+              const pendientes = await _obtenerVentasPendientes();
+              const pendientesCajero = pendientes.filter(
+                (v) => v.cajero_id === usuarioActual?.id,
+              );
+              let maxPendiente = parseInt(facturaParaMostrar);
+              for (const v of pendientesCajero) {
+                const n = parseInt(v.factura);
+                if (Number.isFinite(n) && n >= maxPendiente) {
+                  maxPendiente = n + 1;
                 }
-              } else {
-                setFacturaActual(caiCacheOffline.factura_desde);
               }
-            } else {
-              // Usar rango desde
-              setFacturaActual(caiCacheOffline.factura_desde);
+              if (maxPendiente > parseInt(facturaParaMostrar)) {
+                console.log(
+                  `📦 Ajustando por pendientes offline: ${facturaParaMostrar} → ${maxPendiente}`,
+                );
+                facturaParaMostrar = maxPendiente.toString();
+              }
+            } catch {
+              /* no crítico */
             }
-          } else {
-            console.warn("⚠ No hay CAI en cache");
-            setFacturaActual("");
           }
-        }
-      } catch (error: any) {
-        console.error("Error cargando CAI:", error);
-        console.log("🔍 DEBUG CAI - Tipo de error:", typeof error);
-        console.log("🔍 DEBUG CAI - error.message:", error?.message);
-        console.log("🔍 DEBUG CAI - error.details:", error?.details);
 
-        // SIEMPRE intentar desde cache cuando hay error
-        console.log("🔄 Intentando recuperar CAI desde cache (fallback)...");
-        try {
-          const caiCache = await obtenerCaiCache();
-          if (caiCache) {
-            console.log("✓ CAI recuperado desde cache:", caiCache);
-            setCaiInfo({
-              caja_asignada: caiCache.caja_asignada,
-              nombre_cajero: caiCache.nombre_cajero,
-              cai: caiCache.cai,
-            });
-            setFacturaActual(caiCache.factura_actual || caiCache.factura_desde);
-          } else {
-            console.warn("⚠ No hay CAI en cache para fallback");
+          // 4. Guardar en cache con el valor correcto
+          await guardarCaiCache({
+            id: caiData.id.toString(),
+            cajero_id: caiData.cajero_id,
+            caja_asignada: caiData.caja_asignada,
+            cai: caiData.cai,
+            factura_desde: caiData.rango_desde,
+            factura_hasta: caiData.rango_hasta,
+            factura_actual:
+              facturaParaMostrar !== "LIMITE_ALCANZADO"
+                ? facturaParaMostrar
+                : caiData.rango_hasta,
+            nombre_cajero: usuarioActual.nombre,
+          });
+
+          // 5. Mostrar en UI
+          if (facturaParaMostrar !== "LIMITE_ALCANZADO") {
+            aplicarFactura(facturaParaMostrar, caiData.rango_hasta);
           }
-        } catch (cacheErr) {
-          console.error("Error cargando CAI desde cache:", cacheErr);
+        } catch (err: any) {
+          console.error("Error cargando CAI online:", err);
+          // Fallback al cache local
+          await cargarDesdeCache();
         }
+      } else {
+        // ── OFFLINE ──────────────────────────────────────────────────────────
+        await cargarDesdeCache();
+      }
+
+      // ── Función offline/fallback ──────────────────────────────────────────
+      async function cargarDesdeCache() {
+        const caiCache = await obtenerCaiCache(usuarioActual?.id);
+        if (!caiCache) {
+          console.warn("⚠ No hay CAI en cache");
+          return;
+        }
+
+        setCaiInfo({
+          caja_asignada: caiCache.caja_asignada,
+          nombre_cajero: caiCache.nombre_cajero,
+          cai: caiCache.cai,
+        });
+
+        // Partir del factura_actual guardado en cache
+        let maxNum = parseInt(
+          caiCache.factura_actual || caiCache.factura_desde,
+        );
+        if (!Number.isFinite(maxNum)) maxNum = parseInt(caiCache.factura_desde);
+
+        // Ajustar con ventas pendientes en IndexedDB para este cajero
+        try {
+          const pendientes = await _obtenerVentasPendientes();
+          const pendientesCajero = pendientes.filter(
+            (v) => v.cajero_id === usuarioActual?.id,
+          );
+          for (const v of pendientesCajero) {
+            const n = parseInt(v.factura);
+            if (Number.isFinite(n) && n >= maxNum) maxNum = n + 1;
+          }
+        } catch {
+          /* no crítico */
+        }
+
+        console.log("📦 Factura próxima (offline/cache):", maxNum.toString());
+        aplicarFactura(maxNum.toString(), caiCache.factura_hasta);
       }
     }
+
     fetchCaiYFactura();
   }, [usuarioActual, isOnline]);
 
@@ -2227,14 +2234,16 @@ export default function PuntoDeVentaView({
     }
     setDevolucionBuscando(true);
     try {
-      const { data: factura, error: facturaError } = await supabase
-        .from("facturas")
+      // Buscar la venta original en la tabla ventas
+      const { data: venta, error: ventaError } = await supabase
+        .from("ventas")
         .select("*")
         .eq("factura", devolucionFactura.trim())
         .eq("cajero_id", usuarioActual?.id)
+        .neq("tipo", "DEVOLUCION")
         .single();
 
-      if (facturaError || !factura) {
+      if (ventaError || !venta) {
         setShowDevolucionError(true);
         setDevolucionData(null);
         return;
@@ -2242,11 +2251,10 @@ export default function PuntoDeVentaView({
 
       // Verificar si ya existe una devolución para esta factura
       const { data: devolucionExistente } = await supabase
-        .from("facturas")
+        .from("ventas")
         .select("id")
-        .eq("factura", devolucionFactura.trim())
+        .eq("factura", "DEV-" + devolucionFactura.trim())
         .eq("cajero_id", usuarioActual?.id)
-        .like("cliente", "%(DEVOLUCIÓN)%")
         .limit(1);
 
       if (devolucionExistente && devolucionExistente.length > 0) {
@@ -2256,41 +2264,24 @@ export default function PuntoDeVentaView({
         return;
       }
 
-      // Buscar el registro de pago de esta factura en pagosf
-      const { data: pagosfDev, error: pagosError } = await supabase
-        .from("pagosf")
-        .select("*")
-        .eq("factura", devolucionFactura.trim())
-        .maybeSingle();
-
-      if (pagosError) {
-        console.error("Error buscando pagos:", pagosError);
-      }
-
-      // Normalizar pagosf a formato multi-tipo para la UI de devolución
+      // Normalizar datos de pago (ahora están directamente en ventas)
       const pagosNorm: any[] = [];
-      if (pagosfDev) {
-        if (parseFloat(pagosfDev.efectivo || 0) > 0)
-          pagosNorm.push({ tipo: "efectivo", monto: pagosfDev.efectivo });
-        if (parseFloat(pagosfDev.tarjeta || 0) > 0)
-          pagosNorm.push({ tipo: "tarjeta", monto: pagosfDev.tarjeta });
-        if (parseFloat(pagosfDev.transferencia || 0) > 0)
-          pagosNorm.push({
-            tipo: "transferencia",
-            monto: pagosfDev.transferencia,
-          });
-        if (parseFloat(pagosfDev.dolares || 0) > 0)
-          pagosNorm.push({
-            tipo: "dolares",
-            monto: pagosfDev.dolares,
-            usd_monto: pagosfDev.dolares_usd,
-          });
-      }
+      if (parseFloat(venta.efectivo || 0) > 0)
+        pagosNorm.push({ tipo: "efectivo", monto: venta.efectivo });
+      if (parseFloat(venta.tarjeta || 0) > 0)
+        pagosNorm.push({ tipo: "tarjeta", monto: venta.tarjeta });
+      if (parseFloat(venta.transferencia || 0) > 0)
+        pagosNorm.push({ tipo: "transferencia", monto: venta.transferencia });
+      if (parseFloat(venta.dolares || 0) > 0)
+        pagosNorm.push({
+          tipo: "dolares",
+          monto: venta.dolares,
+          usd_monto: venta.dolares_usd,
+        });
 
       setDevolucionData({
-        factura,
+        factura: venta,
         pagos: pagosNorm,
-        pagosfRow: pagosfDev || null,
       });
     } catch (err) {
       console.error("Error buscando factura:", err);
@@ -2307,71 +2298,51 @@ export default function PuntoDeVentaView({
 
     setDevolucionProcesando(true);
     try {
-      const { factura, pagosfRow } = devolucionData;
+      const { factura } = devolucionData;
       const fechaHoraActual = formatToHondurasLocal();
 
-      // 1. Insertar factura con montos negativos
-      const facturaDevolucion = {
+      // Insertar en ventas con tipo DEVOLUCION y montos negativos (fusión factura + pago)
+      const ventaDevolucion = {
         fecha_hora: fechaHoraActual,
         cajero: usuarioActual?.nombre || "",
         cajero_id: usuarioActual?.id || null,
-        caja: caiInfo?.caja_asignada || "",
+        caja: caiInfo?.caja_asignada || factura.caja || "",
         cai: factura.cai || "",
-        factura: "DEV-" + factura.factura, // ← prefijo para evitar constraint uq_facturas_numero_cajero
+        factura: "DEV-" + factura.factura,
         cliente: factura.cliente + " (DEVOLUCIÓN)",
+        tipo: "DEVOLUCION",
+        tipo_orden: factura.tipo_orden || "",
+        operation_id: crypto.randomUUID(),
         productos: factura.productos,
         sub_total: (-parseFloat(factura.sub_total || 0)).toFixed(2),
         isv_15: (-parseFloat(factura.isv_15 || 0)).toFixed(2),
         isv_18: (-parseFloat(factura.isv_18 || 0)).toFixed(2),
+        descuento: factura.descuento ? -parseFloat(factura.descuento) : null,
         total: (-parseFloat(factura.total || 0)).toFixed(2),
+        es_donacion: null,
+        // Campos de pago negados
+        efectivo: -parseFloat(factura.efectivo || 0),
+        tarjeta: -parseFloat(factura.tarjeta || 0),
+        transferencia: -parseFloat(factura.transferencia || 0),
+        dolares: -parseFloat(factura.dolares || 0),
+        dolares_usd: -parseFloat(factura.dolares_usd || 0),
+        delivery: -parseFloat(factura.delivery || 0),
+        total_recibido: -parseFloat(factura.total_recibido || 0),
+        cambio: -parseFloat(factura.cambio || 0),
+        banco: factura.banco || null,
+        tarjeta_num: factura.tarjeta_num || null,
+        autorizacion: factura.autorizacion || null,
+        ref_transferencia: factura.ref_transferencia || null,
       };
 
-      const { error: facturaError } = await supabase
-        .from("facturas")
-        .insert([facturaDevolucion]);
+      const { error: ventaError } = await supabase
+        .from("ventas")
+        .insert([ventaDevolucion]);
 
-      if (facturaError) {
-        console.error("Error insertando factura de devolución:", facturaError);
-        alert(
-          "Error al registrar la devolución en facturas: " +
-            facturaError.message,
-        );
+      if (ventaError) {
+        console.error("Error insertando devolución en ventas:", ventaError);
+        alert("Error al registrar la devolución: " + ventaError.message);
         return;
-      }
-
-      // 2. Insertar registro de pago en pagosf con montos negativos
-      if (pagosfRow) {
-        const pagoFDevolucion = {
-          factura: "DEV-" + factura.factura,
-          efectivo: -parseFloat(pagosfRow.efectivo || 0),
-          tarjeta: -parseFloat(pagosfRow.tarjeta || 0),
-          transferencia: -parseFloat(pagosfRow.transferencia || 0),
-          dolares: -parseFloat(pagosfRow.dolares || 0),
-          dolares_usd: -parseFloat(pagosfRow.dolares_usd || 0),
-          delivery: -parseFloat(pagosfRow.delivery || 0),
-          total_recibido: -parseFloat(pagosfRow.total_recibido || 0),
-          cambio: -parseFloat(pagosfRow.cambio || 0), // cambio debe ser negativo en devoluciones
-          banco: pagosfRow.banco || null,
-          tarjeta_num: pagosfRow.tarjeta_num || null,
-          autorizacion: pagosfRow.autorizacion || null,
-          ref_transferencia: pagosfRow.ref_transferencia || null,
-          cajero: usuarioActual?.nombre || "",
-          cajero_id: usuarioActual?.id || null,
-          cliente: factura.cliente + " (DEVOLUCIÓN)",
-          fecha_hora: fechaHoraActual,
-        };
-
-        const { error: pagosError } = await supabase
-          .from("pagosf")
-          .upsert([pagoFDevolucion], { onConflict: "factura" });
-
-        if (pagosError) {
-          console.error("Error insertando pagos de devolución:", pagosError);
-          alert(
-            "Error al registrar los pagos de devolución: " + pagosError.message,
-          );
-          return;
-        }
       }
 
       // Éxito
@@ -3363,248 +3334,148 @@ export default function PuntoDeVentaView({
           }
           isSubmittingRef.current = true;
 
-          // ── Resolver número correcto de factura ANTES de cualquier operación
-          // Consulta la última fila en 'facturas' y el contador en 'cai_facturas',
-          // toma el MAYOR de los tres valores (estado local, BD real, contador CAI)
-          // y usa ese como número a emitir. Esto cubre el caso donde facturaActual
-          // está vacío/NaN (carga lenta) sin cancelar la venta.
-          let facturaResuelta = facturaActual;
-          if (
-            isOnline &&
-            usuarioActual?.id &&
-            facturaActual !== "Límite alcanzado"
-          ) {
+          // ── Obtener número de factura ATÓMICAMENTE mediante RPC ────────────────
+          // El RPC usa SELECT...FOR UPDATE garantizando unicidad con múltiples
+          // cajeros trabajando simultáneamente.
+          let facturaParaEstaVenta: string;
+          let usandoRpc = false;
+
+          if (isOnline && usuarioActual?.id) {
             try {
-              // Consultar en paralelo: última factura emitida + contador del CAI
-              const [ultimaFilaRes, caiRes] = await Promise.all([
-                supabase
-                  .from("facturas")
-                  .select("factura")
-                  .eq("cajero_id", usuarioActual.id)
-                  .order("id", { ascending: false })
-                  .limit(1)
-                  .maybeSingle(),
-                supabase
-                  .from("cai_facturas")
-                  .select("factura_actual, rango_hasta")
-                  .eq("cajero_id", usuarioActual.id)
-                  .maybeSingle(),
-              ]);
-
-              // Recopilar todos los candidatos como enteros válidos
-              const candidatos: number[] = [];
-              const numLocal = parseInt(facturaActual);
-              if (Number.isFinite(numLocal)) candidatos.push(numLocal);
-              if (ultimaFilaRes.data) {
-                const n = parseInt(ultimaFilaRes.data.factura);
-                // El último emitido en BD: el siguiente disponible es ese+1
-                if (Number.isFinite(n)) candidatos.push(n + 1);
-              }
-              if (caiRes.data?.factura_actual) {
-                const n = parseInt(caiRes.data.factura_actual);
-                if (Number.isFinite(n)) candidatos.push(n);
-              }
-
-              if (candidatos.length > 0) {
-                const maxCandidato = Math.max(...candidatos);
-                const rangoHasta = caiRes.data?.rango_hasta
-                  ? parseInt(caiRes.data.rango_hasta)
-                  : Infinity;
-
-                if (maxCandidato > rangoHasta) {
-                  // Límite de rango alcanzado
-                  setFacturaActual("Límite alcanzado");
-                  facturaResuelta = "Límite alcanzado";
-                } else if (maxCandidato.toString() !== facturaActual) {
-                  console.warn(
-                    `[facturar] Auto-resolver: local=${facturaActual}, max candidato=${maxCandidato}. Usando ${maxCandidato}.`,
-                  );
-                  // Solo actualizar la variable de resolución.
-                  // El bloque post-venta es el responsable ÚNICO de incrementar
-                  // estado y cai_facturas, evitando doble incremento.
-                  facturaResuelta = maxCandidato.toString();
-                }
-              }
-            } catch (err) {
-              console.error(
-                "[facturar] Error al resolver número de factura:",
-                err,
+              const { data: facturaRpc, error: rpcError } = await supabase.rpc(
+                "obtener_siguiente_factura",
+                { p_cajero_id: usuarioActual.id },
               );
+
+              if (
+                !rpcError &&
+                facturaRpc &&
+                facturaRpc !== "LIMITE_ALCANZADO" &&
+                facturaRpc !== null
+              ) {
+                facturaParaEstaVenta = facturaRpc as string;
+                usandoRpc = true;
+                // Actualizar display: el próximo será el actual + 1
+                const siguienteDisplay = (
+                  parseInt(facturaParaEstaVenta) + 1
+                ).toString();
+                setFacturaActual(siguienteDisplay);
+                try {
+                  const caiCacheRpc = await obtenerCaiCache(usuarioActual?.id);
+                  if (caiCacheRpc) {
+                    await guardarCaiCache({
+                      ...caiCacheRpc,
+                      factura_actual: siguienteDisplay,
+                    });
+                  }
+                } catch {
+                  /* non-critical */
+                }
+              } else if (facturaRpc === "LIMITE_ALCANZADO") {
+                setFacturaActual("Límite alcanzado");
+                isSubmittingRef.current = false;
+                alert("¡Se ha alcanzado el límite de facturas para este CAI!");
+                return;
+              } else {
+                console.warn(
+                  "[facturar] RPC devolvió error, usando valor local:",
+                  rpcError,
+                );
+                facturaParaEstaVenta =
+                  facturaActual &&
+                  Number.isFinite(parseInt(facturaActual)) &&
+                  facturaActual !== "Límite alcanzado"
+                    ? facturaActual
+                    : `OFFLINE-${Date.now()}`;
+              }
+            } catch (rpcErr) {
+              console.error("[facturar] Error al llamar RPC:", rpcErr);
+              facturaParaEstaVenta =
+                facturaActual &&
+                Number.isFinite(parseInt(facturaActual)) &&
+                facturaActual !== "Límite alcanzado"
+                  ? facturaActual
+                  : `OFFLINE-${Date.now()}`;
             }
+          } else {
+            // Sin conexión: usar contador local
+            facturaParaEstaVenta =
+              facturaActual &&
+              Number.isFinite(parseInt(facturaActual)) &&
+              facturaActual !== "Límite alcanzado"
+                ? facturaActual
+                : `OFFLINE-${Date.now()}`;
           }
 
-          // ── Snapshot inmutable: capturar TODOS los datos del formulario
-          // en este instante exacto antes de cualquier operación async.
-          // Evita que re-renders cambien valores durante el proceso.
+          // ── Snapshot inmutable: capturar TODOS los datos del formulario ────────
           const esDonacion = paymentData.esDonacion === true;
           const snap = {
             seleccionados: structuredClone(seleccionados),
             nombreCliente: nombreCliente,
-            facturaActual: facturaResuelta,
+            facturaActual: facturaParaEstaVenta,
             tipoOrden: tipoOrden,
             total: esDonacion ? 0 : total,
             totalConDescuento: esDonacion ? 0 : totalConDescuento,
             totalDescuento: totalDescuento,
           };
-          // Número definitivo para esta venta (fallback offline si no hay numero válido)
-          const facturaParaEstaVenta =
-            snap.facturaActual &&
-            snap.facturaActual !== "Límite alcanzado" &&
-            Number.isFinite(parseInt(snap.facturaActual))
-              ? snap.facturaActual
-              : `OFFLINE-${Date.now()}`;
+
           // ID único por operación de facturación
           const operationId = crypto.randomUUID();
           console.log(
-            `[facturar] Inicio op=${operationId} | factura=${snap.facturaActual} | cliente=${snap.nombreCliente} | ts=${new Date().toISOString()}`,
+            `[facturar] Inicio op=${operationId} | factura=${facturaParaEstaVenta} | cliente=${snap.nombreCliente} | usandoRpc=${usandoRpc} | ts=${new Date().toISOString()}`,
           );
 
-          // Guardar los pagos en la base de datos (tabla pagosf — 1 fila por factura)
-          try {
-            if (paymentData.pagos && paymentData.pagos.length > 0) {
-              const cambioValue = Math.max(
-                0,
-                paymentData.totalPaid - totalConDescuento,
-              );
+          // ── Capturar datos de pago (se guardarán junto con la factura en ventas) ─
+          let pagoDataCapturado = {
+            efectivo: 0,
+            tarjeta: 0,
+            transferencia: 0,
+            dolares: 0,
+            dolares_usd: 0,
+            delivery: 0,
+            total_recibido: 0,
+            cambio: 0,
+            banco: null as string | null,
+            tarjeta_num: null as string | null,
+            autorizacion: null as string | null,
+            ref_transferencia: null as string | null,
+          };
 
-              // ── Consolidar todos los métodos de pago en UNA sola fila ──
-              const efectivoMonto = paymentData.pagos
+          if (paymentData.pagos && paymentData.pagos.length > 0) {
+            const cambioCapturado = Math.max(
+              0,
+              paymentData.totalPaid - totalConDescuento,
+            );
+            const pagoTarjeta = paymentData.pagos.find(
+              (p) => p.tipo === "tarjeta",
+            );
+            const pagoTransf = paymentData.pagos.find(
+              (p) => p.tipo === "transferencia",
+            );
+            pagoDataCapturado = {
+              efectivo: paymentData.pagos
                 .filter((p) => p.tipo === "efectivo")
-                .reduce((s, p) => s + p.monto, 0);
-              const tarjetaMonto = paymentData.pagos
+                .reduce((s, p) => s + p.monto, 0),
+              tarjeta: paymentData.pagos
                 .filter((p) => p.tipo === "tarjeta")
-                .reduce((s, p) => s + p.monto, 0);
-              const transferenciaMonto = paymentData.pagos
+                .reduce((s, p) => s + p.monto, 0),
+              transferencia: paymentData.pagos
                 .filter((p) => p.tipo === "transferencia")
-                .reduce((s, p) => s + p.monto, 0);
-              const dolaresMonto = paymentData.pagos
+                .reduce((s, p) => s + p.monto, 0),
+              dolares: paymentData.pagos
                 .filter((p) => p.tipo === "dolares")
-                .reduce((s, p) => s + p.monto, 0);
-              const dolaresUsd = paymentData.pagos
+                .reduce((s, p) => s + p.monto, 0),
+              dolares_usd: paymentData.pagos
                 .filter((p) => p.tipo === "dolares")
-                .reduce((s, p) => s + (p.usd_monto || 0), 0);
-
-              const pagoTarjeta = paymentData.pagos.find(
-                (p) => p.tipo === "tarjeta",
-              );
-              const pagoTransf = paymentData.pagos.find(
-                (p) => p.tipo === "transferencia",
-              );
-
-              const pagoFila = {
-                factura: facturaParaEstaVenta,
-                efectivo: efectivoMonto,
-                tarjeta: tarjetaMonto,
-                transferencia: transferenciaMonto,
-                dolares: dolaresMonto,
-                dolares_usd: dolaresUsd,
-                delivery: 0,
-                total_recibido: paymentData.totalPaid,
-                cambio: cambioValue,
-                banco: pagoTarjeta?.banco || null,
-                tarjeta_num: pagoTarjeta?.tarjeta || null,
-                autorizacion: pagoTarjeta?.autorizador || null,
-                ref_transferencia: pagoTransf?.referencia || null,
-                cajero: usuarioActual?.nombre || "",
-                cajero_id: usuarioActual?.id || null,
-                cliente: snap.nombreCliente,
-                fecha_hora: formatToHondurasLocal(),
-              };
-
-              console.log("[pagosf] Guardando pago:", pagoFila);
-
-              if (isOnline) {
-                let guardadoEnSupabase = false;
-                try {
-                  const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-                  const { error: pagoError } = await supabase
-                    .from("pagosf")
-                    .upsert([pagoFila], { onConflict: "factura" })
-                    .abortSignal(controller.signal);
-
-                  clearTimeout(timeoutId);
-
-                  if (pagoError) {
-                    console.error(
-                      "[pagosf] Error al guardar en Supabase:",
-                      pagoError,
-                    );
-                  } else {
-                    console.log("[pagosf] ✓ Pago guardado en Supabase");
-                    guardadoEnSupabase = true;
-                  }
-                } catch (fetchError) {
-                  console.error(
-                    "[pagosf] Error de conexión/timeout:",
-                    fetchError,
-                  );
-                }
-
-                if (!guardadoEnSupabase) {
-                  await guardarPagoFLocal(pagoFila);
-                  console.log(
-                    "[pagosf] ⚠ Pago guardado en IndexedDB (fallo Supabase)",
-                  );
-                }
-              } else {
-                await guardarPagoFLocal(pagoFila);
-                console.log(
-                  "[pagosf] ✓ Pago guardado en IndexedDB (sin conexión)",
-                );
-              }
-            }
-          } catch (err) {
-            console.error("[pagosf] Error al procesar pagos:", err);
-            // Emergencia: guardar en IndexedDB
-            if (paymentData.pagos && paymentData.pagos.length > 0) {
-              try {
-                const pagoEmergencia = {
-                  factura: facturaParaEstaVenta,
-                  efectivo: paymentData.pagos
-                    .filter((p) => p.tipo === "efectivo")
-                    .reduce((s, p) => s + p.monto, 0),
-                  tarjeta: paymentData.pagos
-                    .filter((p) => p.tipo === "tarjeta")
-                    .reduce((s, p) => s + p.monto, 0),
-                  transferencia: paymentData.pagos
-                    .filter((p) => p.tipo === "transferencia")
-                    .reduce((s, p) => s + p.monto, 0),
-                  dolares: paymentData.pagos
-                    .filter((p) => p.tipo === "dolares")
-                    .reduce((s, p) => s + p.monto, 0),
-                  dolares_usd: paymentData.pagos
-                    .filter((p) => p.tipo === "dolares")
-                    .reduce((s, p) => s + (p.usd_monto || 0), 0),
-                  delivery: 0,
-                  total_recibido: paymentData.totalPaid,
-                  cambio: Math.max(0, paymentData.totalPaid - snap.total),
-                  banco: null,
-                  tarjeta_num: null,
-                  autorizacion: null,
-                  ref_transferencia: null,
-                  cajero: usuarioActual?.nombre || "",
-                  cajero_id: usuarioActual?.id || null,
-                  cliente: snap.nombreCliente,
-                  fecha_hora: formatToHondurasLocal(),
-                };
-                await guardarPagoFLocal(pagoEmergencia);
-                console.log(
-                  "[pagosf] 💾 Emergencia: pago guardado en IndexedDB",
-                );
-              } catch (emergErr) {
-                console.error(
-                  "[pagosf] Error crítico al guardar pagos:",
-                  emergErr,
-                );
-                alert(
-                  "Error crítico al procesar los pagos. Contacte al administrador.",
-                );
-              }
-            }
-            isSubmittingRef.current = false;
-            return;
+                .reduce((s, p) => s + (p.usd_monto || 0), 0),
+              delivery: 0,
+              total_recibido: paymentData.totalPaid,
+              cambio: cambioCapturado,
+              banco: pagoTarjeta?.banco || null,
+              tarjeta_num: pagoTarjeta?.tarjeta || null,
+              autorizacion: pagoTarjeta?.autorizador || null,
+              ref_transferencia: pagoTransf?.referencia || null,
+            };
           }
 
           setShowPagoModal(false);
@@ -4089,8 +3960,8 @@ export default function PuntoDeVentaView({
                 };
               }
             }
-            // Guardar venta en la tabla 'facturas' con nuevos campos
-            // Primero en IndexedDB, luego en Supabase
+            // Guardar venta en la tabla 'ventas' (factura + pago fusionados)
+            // Primero en Supabase; si falla → IndexedDB para sincronización posterior
             try {
               const subTotal = snap.seleccionados.reduce((sum, p) => {
                 if (p.tipo === "comida") {
@@ -4120,7 +3991,9 @@ export default function PuntoDeVentaView({
                 return;
               }
               const factura = facturaParaEstaVenta;
-              const venta = {
+              // Tipo SAR: CONTADO por defecto (créditos van por handleVentaCredito)
+              const tipoVenta: string = "CONTADO";
+              const ventaCompleta = {
                 fecha_hora: formatToHondurasLocal(),
                 cajero: usuarioActual?.nombre || "",
                 cajero_id: usuarioActual?.id || null,
@@ -4129,6 +4002,7 @@ export default function PuntoDeVentaView({
                 factura,
                 cliente: snap.nombreCliente,
                 tipo_orden: snap.tipoOrden,
+                tipo: tipoVenta,
                 operation_id: operationId,
                 productos: JSON.stringify(
                   snap.seleccionados.map((p) => ({
@@ -4150,147 +4024,189 @@ export default function PuntoDeVentaView({
                     : null,
                 total: snap.totalConDescuento.toFixed(2),
                 es_donacion: esDonacion ? true : null,
+                // Campos de pago (fusión con pagosf)
+                ...pagoDataCapturado,
               };
 
-              // LÓGICA MEJORADA: usar solo isOnline (que ya verifica conexión real)
               if (isOnline) {
-                // CON INTERNET: Intentar guardar en Supabase con timeout
                 let guardadoEnSupabase = false;
 
+                // Helper: obtener el siguiente número disponible consultando directamente
+                // el MAX de ventas (funciona incluso si el RPC tiene el contador desincronizado)
+                const obtenerSiguienteDisponible = async (): Promise<
+                  string | null
+                > => {
+                  // 1. Intentar primero con el RPC (correcto cuando el SQL está actualizado)
+                  const { data: rpcNum, error: rpcErr } = await supabase.rpc(
+                    "obtener_siguiente_factura",
+                    { p_cajero_id: usuarioActual?.id ?? "" },
+                  );
+                  if (!rpcErr && rpcNum && rpcNum !== "LIMITE_ALCANZADO") {
+                    // Verificar que el número sea realmente libre para ESTE cajero.
+                    // La constraint uq_ventas_factura_cajero es UNIQUE(factura, cajero_id).
+                    const { data: existe } = await supabase
+                      .from("ventas")
+                      .select("id")
+                      .eq("factura", rpcNum)
+                      .eq("cajero_id", usuarioActual?.id ?? "")
+                      .maybeSingle();
+                    if (!existe) return rpcNum as string;
+                  }
+                  // 2. Fallback: MAX del cajero actual (rangos son independientes por CAI/cajero)
+                  try {
+                    const { data: rows } = await supabase
+                      .from("ventas")
+                      .select("factura")
+                      .eq("cajero_id", usuarioActual?.id ?? "")
+                      .not("factura", "like", "DEV-%")
+                      .not("factura", "like", "OFFLINE-%");
+                    if (rows && rows.length > 0) {
+                      const maxNum = rows.reduce((max, r) => {
+                        const n = parseInt(r.factura);
+                        return Number.isFinite(n) ? Math.max(max, n) : max;
+                      }, 0);
+                      const siguiente = (maxNum + 1).toString();
+                      // Sincronizar el contador en cai_facturas
+                      await supabase
+                        .from("cai_facturas")
+                        .update({ factura_actual: (maxNum + 2).toString() })
+                        .eq("cajero_id", usuarioActual?.id ?? "");
+                      return siguiente;
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                  return null;
+                };
+
                 try {
-                  // Timeout de 5 segundos para evitar esperas largas
                   const controller = new AbortController();
                   const timeoutId = setTimeout(() => controller.abort(), 5000);
 
                   const { error: supabaseError } = await supabase
-                    .from("facturas")
-                    .insert([venta])
+                    .from("ventas")
+                    .insert([ventaCompleta])
                     .abortSignal(controller.signal);
 
                   clearTimeout(timeoutId);
 
                   if (supabaseError) {
                     console.error(
-                      "Error guardando factura en Supabase:",
+                      "Error guardando venta en Supabase:",
                       supabaseError,
                     );
                     if (
                       supabaseError.code === "23505" ||
                       (supabaseError as any).status === 409
                     ) {
-                      // 1º verificar si nuestro operation_id ya existe (doble submit)
-                      const { data: yaGuardada } = await supabase
-                        .from("facturas")
-                        .select("id")
-                        .eq("operation_id", operationId)
-                        .maybeSingle();
-                      if (yaGuardada) {
-                        console.log(
-                          `✓ Factura ya estaba en Supabase (mismo operation_id). Ignorando.`,
-                        );
-                        guardadoEnSupabase = true;
-                      } else {
-                        // Número de factura tomado por otra operación.
-                        // Consultar el último número real en la tabla facturas
-                        // y usar el siguiente disponible.
-                        try {
-                          const { data: maxRow } = await supabase
-                            .from("facturas")
-                            .select("factura")
-                            .eq("cajero_id", usuarioActual?.id || "")
-                            .order("id", { ascending: false })
-                            .limit(1)
-                            .maybeSingle();
-                          const maxNum = maxRow
-                            ? parseInt(maxRow.factura)
-                            : parseInt(snap.facturaActual);
-                          const nuevoNumero = (maxNum + 1).toString();
-                          const siguienteNum = (maxNum + 2).toString();
+                      const esConflictoFactura =
+                        supabaseError.message?.includes("ventas_factura_key");
+
+                      if (esConflictoFactura) {
+                        // Contador desincronizado: buscar siguiente número libre con loop
+                        let intentos = 0;
+                        while (!guardadoEnSupabase && intentos < 5) {
+                          intentos++;
                           console.warn(
-                            `⚠ [facturar] Número ${snap.facturaActual} ya tomado. Auto-corrigiendo → ${nuevoNumero}`,
+                            `⚠ Factura ${factura} ya existe. Buscando número libre (intento ${intentos})...`,
                           );
+                          const nuevoNum = await obtenerSiguienteDisponible();
+                          if (!nuevoNum) {
+                            console.error("No se pudo obtener número libre");
+                            break;
+                          }
                           const ventaCorregida = {
-                            ...venta,
-                            factura: nuevoNumero,
+                            ...ventaCompleta,
+                            factura: nuevoNum,
                           };
-                          const { error: retryError } = await supabase
-                            .from("facturas")
+                          const { error: retryErr } = await supabase
+                            .from("ventas")
                             .insert([ventaCorregida]);
-                          if (!retryError) {
-                            guardadoEnSupabase = true;
-                            // Corregir pagos que hayan caído en IndexedDB
-                            //    (si la red falló para el insert de pagos)
-                            await actualizarFacturaVentaEnPagosLocales(
-                              snap.facturaActual,
-                              nuevoNumero,
-                              usuarioActual?.id || "",
+                          if (!retryErr) {
+                            console.log(
+                              `✓ Venta guardada con factura corregida: ${nuevoNum}`,
                             );
-                            // 3. Actualizar contador en Supabase
-                            if (usuarioActual?.id) {
-                              await supabase
-                                .from("cai_facturas")
-                                .update({ factura_actual: siguienteNum })
-                                .eq("cajero_id", usuarioActual.id);
-                            }
-                            // Actualizar estado local y cache offline
-                            setFacturaActual(siguienteNum);
+                            guardadoEnSupabase = true;
+                            const siguienteDisplay = (
+                              parseInt(nuevoNum) + 1
+                            ).toString();
+                            setFacturaActual(siguienteDisplay);
                             try {
-                              const caiCache = await obtenerCaiCache();
-                              if (caiCache) {
+                              const caiC = await obtenerCaiCache(
+                                usuarioActual?.id,
+                              );
+                              if (caiC)
                                 await guardarCaiCache({
-                                  ...caiCache,
-                                  factura_actual: siguienteNum,
+                                  ...caiC,
+                                  factura_actual: siguienteDisplay,
                                 });
-                              }
                             } catch {
                               /* non-critical */
                             }
-                            console.log(
-                              `✓ [facturar] Factura corregida: ${snap.facturaActual} → ${nuevoNumero}. Próxima: ${siguienteNum}`,
+                          } else if (
+                            retryErr.code !== "23505" &&
+                            (retryErr as any).status !== 409
+                          ) {
+                            // Solo abortar si NO es conflicto de clave duplicada
+                            console.error(
+                              "Error no recuperable al guardar venta:",
+                              retryErr,
                             );
+                            break;
                           }
-                          // Si retryError: guardadoEnSupabase sigue false → va a IndexedDB
-                        } catch (corrErr) {
+                          // Si es 23505/409, el loop continúa con un número diferente
+                        }
+                      } else {
+                        // Verificar si es doble submit (mismo operation_id)
+                        const { data: yaGuardada } = await supabase
+                          .from("ventas")
+                          .select("id")
+                          .eq("operation_id", operationId)
+                          .maybeSingle();
+                        if (yaGuardada) {
+                          console.log(
+                            `✓ Venta ya estaba en Supabase (mismo operation_id). Ignorando.`,
+                          );
+                          guardadoEnSupabase = true;
+                        } else {
                           console.error(
-                            "Error al auto-corregir número de factura:",
-                            corrErr,
+                            `⚠ Conflicto inesperado al guardar venta (factura ${factura}).`,
                           );
                         }
                       }
                     }
                   } else {
                     console.log(
-                      `✓ Factura ${venta.factura} guardada en Supabase exitosamente`,
+                      `✓ Venta ${ventaCompleta.factura} guardada en Supabase exitosamente`,
                     );
                     guardadoEnSupabase = true;
                   }
                 } catch (supabaseErr) {
                   console.error(
-                    "Error de conexión/timeout al guardar factura:",
+                    "Error de conexión/timeout al guardar venta:",
                     supabaseErr,
                   );
                 }
 
                 // Si falló Supabase, guardar en IndexedDB como respaldo
                 if (!guardadoEnSupabase) {
-                  await guardarFacturaLocal(venta);
+                  await guardarVentaLocal(ventaCompleta);
                   console.log(
-                    "⚠ Fallo en Supabase. Factura guardada en IndexedDB para sincronización",
+                    "⚠ Fallo en Supabase. Venta guardada en IndexedDB para sincronización",
                   );
                 }
               } else {
-                // SIN INTERNET: Guardar solo en IndexedDB para sincronización posterior
-                await guardarFacturaLocal(venta);
+                // SIN INTERNET: guardar en IndexedDB para sincronización posterior
+                await guardarVentaLocal(ventaCompleta);
                 console.log(
-                  `✓ Factura ${venta.factura} guardada en IndexedDB (sin conexión)`,
+                  `✓ Venta ${ventaCompleta.factura} guardada en IndexedDB (sin conexión)`,
                 );
               }
 
-              // ── Incrementar contador de factura ────────────────────────────
-              // Fuente de verdad: facturaParaEstaVenta (número que se acaba de
-              // emitir). El siguiente será siempre ese número + 1.
-              // El resolver NO pre-actualiza estado/Supabase; este bloque es el
-              // ÚNICO lugar que lo hace, garantizando un solo incremento por venta.
+              // ── Actualizar estado local de factura ─────────────────────────
+              // Si se usó el RPC, el contador YA fue incrementado atómicamente
+              // en Supabase. Solo actualizamos la UI y el cache offline.
+              // Si no se usó el RPC (modo offline/fallback), incrementamos también en Supabase.
               if (
                 facturaParaEstaVenta &&
                 !facturaParaEstaVenta.startsWith("OFFLINE-")
@@ -4303,20 +4219,17 @@ export default function PuntoDeVentaView({
                   );
                 } else {
                   const nuevaFactura = (numUsado + 1).toString();
-
-                  // Actualizar estado local directo (isSubmittingRef garantiza
-                  // que no hay otra venta concurrente)
                   setFacturaActual(nuevaFactura);
 
-                  // Actualizar factura_actual en cai_facturas (Supabase)
-                  if (usuarioActual?.id) {
+                  if (!usandoRpc && usuarioActual?.id) {
+                    // Modo offline / fallback: actualizar Supabase manualmente
                     try {
                       await supabase
                         .from("cai_facturas")
                         .update({ factura_actual: nuevaFactura })
                         .eq("cajero_id", usuarioActual.id);
                       console.log(
-                        `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase`,
+                        `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase (sin RPC)`,
                       );
                     } catch (err) {
                       console.error(
@@ -4326,9 +4239,9 @@ export default function PuntoDeVentaView({
                     }
                   }
 
-                  // Actualizar también el cache de CAI para modo offline
+                  // Actualizar cache offline siempre
                   try {
-                    const caiCache = await obtenerCaiCache();
+                    const caiCache = await obtenerCaiCache(usuarioActual?.id);
                     if (caiCache) {
                       await guardarCaiCache({
                         ...caiCache,
@@ -7536,6 +7449,7 @@ export default function PuntoDeVentaView({
                                       factura: facturaActual,
                                       cliente: p.cliente || null,
                                       tipo_orden: "DELIVERY",
+                                      tipo: "CONTADO",
                                       operation_id: crypto.randomUUID(),
                                       productos: JSON.stringify([
                                         ...productos.map((pp: any) => ({
@@ -7619,15 +7533,34 @@ export default function PuntoDeVentaView({
                                       cliente: p.cliente || null,
                                     };
 
+                                    // Fusionar venta + pago en un solo objeto para la tabla ventas
+                                    const ventaDelivery = {
+                                      ...venta,
+                                      efectivo: pagoFDelivery.efectivo,
+                                      tarjeta: pagoFDelivery.tarjeta,
+                                      transferencia:
+                                        pagoFDelivery.transferencia,
+                                      dolares: pagoFDelivery.dolares,
+                                      dolares_usd: pagoFDelivery.dolares_usd,
+                                      delivery: pagoFDelivery.delivery,
+                                      total_recibido:
+                                        pagoFDelivery.total_recibido,
+                                      cambio: pagoFDelivery.cambio,
+                                      banco: pagoFDelivery.banco,
+                                      tarjeta_num: pagoFDelivery.tarjeta_num,
+                                      autorizacion: pagoFDelivery.autorizacion,
+                                      ref_transferencia:
+                                        pagoFDelivery.ref_transferencia,
+                                    };
+
                                     // PASO 1: Guardar primero en IndexedDB (siempre)
                                     console.log(
-                                      "💾 Guardando factura y pago en IndexedDB...",
+                                      "💾 Guardando venta delivery en IndexedDB...",
                                     );
-                                    const facturaIdLocal =
-                                      await guardarFacturaLocal(venta);
-                                    await guardarPagoFLocal(pagoFDelivery);
+                                    const ventaIdLocal =
+                                      await guardarVentaLocal(ventaDelivery);
                                     console.log(
-                                      `✓ Factura e pagosf guardados en IndexedDB (ID: ${facturaIdLocal})`,
+                                      `✓ Venta delivery guardada en IndexedDB (ID: ${ventaIdLocal})`,
                                     );
 
                                     // PASO 2: Si hay conexión, intentar guardar en Supabase
@@ -7635,54 +7568,35 @@ export default function PuntoDeVentaView({
                                     if (isOnline && estaConectado()) {
                                       try {
                                         console.log(
-                                          "🌐 Intentando guardar en Supabase...",
+                                          "🌐 Intentando guardar venta delivery en Supabase...",
                                         );
 
-                                        // Guardar factura en Supabase
-                                        const { error: errFact } =
+                                        const { error: errVenta } =
                                           await supabase
-                                            .from("facturas")
-                                            .insert([venta]);
+                                            .from("ventas")
+                                            .insert([ventaDelivery]);
 
-                                        if (errFact) {
+                                        if (errVenta) {
                                           console.error(
-                                            "Error guardando factura en Supabase:",
-                                            errFact,
+                                            "Error guardando venta delivery en Supabase:",
+                                            errVenta,
                                           );
-                                          throw errFact;
-                                        }
-
-                                        // Guardar pagosf en Supabase (upsert — no duplicados)
-                                        const { error: errPago } =
-                                          await supabase
-                                            .from("pagosf")
-                                            .upsert([pagoFDelivery], {
-                                              onConflict: "factura",
-                                            });
-
-                                        if (errPago) {
-                                          console.error(
-                                            "Error guardando pagosf en Supabase:",
-                                            errPago,
-                                          );
-                                          throw errPago;
+                                          throw errVenta;
                                         }
 
                                         console.log(
-                                          "✓ Factura y pagosf guardados en Supabase exitosamente",
+                                          "✓ Venta delivery guardada en Supabase exitosamente",
                                         );
                                         guardadoEnSupabase = true;
 
                                         // PASO 3: Si se guardó en Supabase, eliminar de IndexedDB
-                                        await eliminarFacturaLocal(
-                                          facturaIdLocal,
-                                        );
+                                        await eliminarVentaLocal(ventaIdLocal);
                                         console.log(
-                                          "✓ Factura eliminada de IndexedDB (sincronizada)",
+                                          "✓ Venta delivery eliminada de IndexedDB (sincronizada)",
                                         );
                                       } catch (supabaseErr) {
                                         console.error(
-                                          "Error al guardar en Supabase:",
+                                          "Error al guardar venta delivery en Supabase:",
                                           supabaseErr,
                                         );
                                         console.log(
@@ -7692,7 +7606,7 @@ export default function PuntoDeVentaView({
                                       }
                                     } else {
                                       console.log(
-                                        "⚠ Sin conexión. Datos guardados en IndexedDB para sincronización posterior",
+                                        "⚠ Sin conexión. Venta delivery guardada en IndexedDB para sincronización posterior",
                                       );
                                     }
 
@@ -10383,6 +10297,10 @@ export default function PuntoDeVentaView({
           await handleVentaCredito(cliente, saldo);
         }}
         theme={theme}
+        totalVenta={seleccionados.reduce(
+          (s, p) => s + p.precio * p.cantidad,
+          0,
+        )}
       />
       <PagoCreditoPOSModal
         isOpen={showPagoCreditoModal}
