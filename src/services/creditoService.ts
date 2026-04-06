@@ -163,7 +163,14 @@ export async function obtenerResumenCreditos(): Promise<CreditoResumen[]> {
     .order("saldo_actual", { ascending: false });
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as CreditoResumen[];
+  return (data ?? []).map((r: any) => ({
+    ...r,
+    saldo_actual: r.saldo_actual ?? 0,
+    total_facturado: r.total_facturado ?? 0,
+    total_pagado: r.total_pagado ?? 0,
+    facturas_pendientes: r.facturas_pendientes ?? 0,
+    facturas_vencidas: r.facturas_vencidas ?? 0,
+  })) as CreditoResumen[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -230,6 +237,12 @@ export async function obtenerFacturasCliente(
       typeof row.productos === "string"
         ? JSON.parse(row.productos)
         : row.productos,
+    total: row.total ?? 0,
+    saldo_anterior: row.saldo_anterior ?? 0,
+    nuevo_saldo: row.nuevo_saldo ?? 0,
+    sub_total: row.sub_total ?? 0,
+    isv_15: row.isv_15 ?? 0,
+    isv_18: row.isv_18 ?? 0,
   }));
 }
 
@@ -305,7 +318,12 @@ export async function obtenerPagosCliente(
     .order("fecha_hora", { ascending: false });
 
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return (data ?? []).map((row: any) => ({
+    ...row,
+    monto: row.monto ?? 0,
+    saldo_antes: row.saldo_antes ?? 0,
+    saldo_despues: row.saldo_despues ?? 0,
+  })) as PagoCredito[];
 }
 
 // ─────────────────────────────────────────────────────────────
