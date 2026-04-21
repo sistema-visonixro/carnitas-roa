@@ -2,6 +2,7 @@ import { useState } from "react";
 import FondoImagen from "./FondoImagen";
 import { supabase } from "./supabaseClient";
 import { getLocalDayRange, formatToHondurasLocal } from "./utils/fechas";
+import { obtenerAperturaLocalStorage, guardarAperturaLocalStorage } from "./utils/offlineSync";
 
 interface AperturaViewProps {
   usuarioActual: { id: string; nombre: string } | null;
@@ -26,6 +27,17 @@ export default function AperturaView({
         setLoading(false);
         return;
       }
+
+      // ── Capa rápida: localStorage (sin red, instantáneo) ──────────────────
+      const aperturaLS = obtenerAperturaLocalStorage();
+      if (aperturaLS && aperturaLS.cajero_id === usuarioActual?.id) {
+        console.log("✓ Apertura activa en localStorage → no se duplica");
+        window.location.href = "/punto-de-venta";
+        setLoading(false);
+        return;
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       const { start, end } = getLocalDayRange();
       // Verificar si ya hay apertura hoy
       const { data: aperturas, error: queryErr } = await supabase
@@ -48,7 +60,7 @@ export default function AperturaView({
         return;
       }
       // Registrar apertura (incluimos fecha en hora local de Honduras)
-      const { error: insertError } = await supabase.from("cierres").insert([
+      const { data: insertada, error: insertError } = await supabase.from("cierres").insert([
         {
           tipo_registro: "apertura",
           cajero: usuarioActual?.nombre,
@@ -64,28 +76,32 @@ export default function AperturaView({
           transferencias_registradas: 0,
           transferencias_dia: 0,
           diferencia: 0,
+          estado: "APERTURA",
         },
-      ]);
+      ]).select();
       setLoading(false);
       if (insertError) {
         console.error("Error insertando apertura:", insertError);
+        // Si el error es por constraint único (duplicado en BD), igual redirigir
+        if (insertError.code === "23505") {
+          console.log("⚠ Constraint único: apertura ya existe en BD → redirigiendo");
+          window.location.href = "/punto-de-venta";
+          return;
+        }
         setError(insertError.message || "Error al registrar apertura");
       } else {
-        // Verificar de nuevo y redirigir
-        const { data: aperturas2, error: q2Err } = await supabase
-          .from("cierres")
-          .select("*")
-          .eq("tipo_registro", "apertura")
-          .eq("cajero", usuarioActual?.nombre)
-          .eq("caja", caja)
-          .gte("fecha", start)
-          .lte("fecha", end);
-        if (q2Err) {
-          console.error("Error consultando aperturas después de insertar:", q2Err);
+        // Guardar en localStorage para prevenir futuros duplicados
+        if (insertada && insertada.length > 0) {
+          const ap = insertada[0];
+          guardarAperturaLocalStorage({
+            id: ap.id?.toString() ?? "",
+            cajero_id: ap.cajero_id ?? usuarioActual?.id ?? "",
+            caja: ap.caja ?? caja,
+            fecha: ap.fecha ?? "",
+            estado: ap.estado ?? "APERTURA",
+          });
         }
-        if (aperturas2 && aperturas2.length > 0) {
-          window.location.href = "/punto-de-venta";
-        }
+        window.location.href = "/punto-de-venta";
       }
     } catch (e: any) {
       console.error("Excepción en registrarApertura:", e);

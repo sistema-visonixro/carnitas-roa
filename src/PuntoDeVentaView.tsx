@@ -23,6 +23,9 @@ import {
   guardarAperturaCache,
   obtenerAperturaCache,
   limpiarAperturaCache,
+  obtenerAperturaLocalStorage,
+  guardarAperturaLocalStorage,
+  sincronizarAperturaPendiente,
   guardarCaiCache,
   obtenerCaiCache,
   guardarVentaLocal,
@@ -1845,6 +1848,23 @@ export default function PuntoDeVentaView({
       try {
         // Si hay conexión, verificar en Supabase
         if (isOnline) {
+          // ── PRIORIDAD: si hay apertura offline pendiente de sync, subirla ANTES
+          //    de consultar Supabase, para evitar que se limpie el cache erróneamente
+          const aperturaLS = obtenerAperturaLocalStorage();
+          if (aperturaLS?.pending_sync && aperturaLS.cajero_id === usuarioActual.id) {
+            console.log("🔄 Apertura offline detectada al reconectar → sincronizando con Supabase primero...");
+            const syncOk = await sincronizarAperturaPendiente();
+            if (syncOk) {
+              console.log("✓ Apertura offline sincronizada. Continuando verificación...");
+            } else {
+              // Si falla la sync pero la apertura existe localmente, dejarla activa
+              console.warn("⚠ Sync fallida. Manteniendo apertura local activa.");
+              setAperturaRegistrada(true);
+              setVerificandoApertura(false);
+              return;
+            }
+          }
+
           // Obtener caja asignada
           let cajaAsignada = caiInfo?.caja_asignada;
           if (!cajaAsignada) {
@@ -1901,25 +1921,44 @@ export default function PuntoDeVentaView({
             console.log("✓ Apertura guardada en cache");
           } else {
             console.log("⚠ No hay apertura en Supabase");
-            setAperturaRegistrada(false);
-            // Limpiar cache si no hay apertura
-            await limpiarAperturaCache();
+            // Guardia: no limpiar si aún hay una apertura offline pendiente de sync
+            const lsActual = obtenerAperturaLocalStorage();
+            if (lsActual?.pending_sync && lsActual.cajero_id === usuarioActual.id) {
+              console.warn("⚠ Apertura no encontrada en Supabase pero hay pending_sync local → manteniendo activa");
+              setAperturaRegistrada(true);
+            } else {
+              setAperturaRegistrada(false);
+              // Limpiar cache solo si no hay apertura pendiente
+              await limpiarAperturaCache();
+            }
           }
         } else {
-          // Si no hay conexión, intentar cargar desde cache
+          // Si no hay conexión, verificar por capas (localStorage → IndexedDB)
           console.log("⚠ Sin conexión. Verificando apertura desde cache...");
-          const aperturaCache = await obtenerAperturaCache();
 
-          if (aperturaCache) {
-            console.log(
-              "✓ Apertura activa encontrada en cache:",
-              aperturaCache,
-            );
-            // Si hay apertura en cache sin cierre, se considera vigente sin importar el día
+          // Capa rápida: localStorage (síncrono, sin await)
+          const aperturaLS = obtenerAperturaLocalStorage();
+          if (aperturaLS && aperturaLS.cajero_id === usuarioActual.id) {
+            console.log("✓ Apertura activa encontrada en localStorage:", aperturaLS);
             setAperturaRegistrada(true);
           } else {
-            console.warn("⚠ No hay apertura en cache");
-            setAperturaRegistrada(false);
+            // Capa IndexedDB
+            const aperturaCache = await obtenerAperturaCache();
+            if (aperturaCache) {
+              console.log("✓ Apertura activa encontrada en IndexedDB:", aperturaCache);
+              // Sincronizar localStorage con IndexedDB
+              guardarAperturaLocalStorage({
+                id: aperturaCache.id,
+                cajero_id: aperturaCache.cajero_id,
+                caja: aperturaCache.caja,
+                fecha: aperturaCache.fecha,
+                estado: aperturaCache.estado,
+              });
+              setAperturaRegistrada(true);
+            } else {
+              console.warn("⚠ No hay apertura en ningún cache");
+              setAperturaRegistrada(false);
+            }
           }
         }
       } catch (err: any) {
@@ -2456,18 +2495,96 @@ export default function PuntoDeVentaView({
     if (!usuarioActual) return;
     setRegistrandoApertura(true);
     try {
+      // ── Capa 1: verificar localStorage (más rápido, funciona sin red) ──
+      const aperturaLS = obtenerAperturaLocalStorage();
+      if (aperturaLS && aperturaLS.cajero_id === usuarioActual.id) {
+        console.log("✓ Apertura activa detectada en localStorage → no se crea duplicado");
+        setAperturaRegistrada(true);
+        setRegistrandoApertura(false);
+        return;
+      }
+
+      // ── Capa 2: verificar IndexedDB (offline) ──
+      const aperturaCache = await obtenerAperturaCache();
+      if (aperturaCache && aperturaCache.cajero_id === usuarioActual.id) {
+        console.log("✓ Apertura activa detectada en IndexedDB → no se crea duplicado");
+        setAperturaRegistrada(true);
+        setRegistrandoApertura(false);
+        return;
+      }
+
+      // ── Capa 3: verificar en Supabase (con red) ──
       // Obtener caja asignada
       let cajaAsignada = caiInfo?.caja_asignada;
       if (!cajaAsignada) {
-        const { data: caiData } = await supabase
-          .from("cai_facturas")
-          .select("caja_asignada")
-          .eq("cajero_id", usuarioActual.id)
-          .single();
-        cajaAsignada = caiData?.caja_asignada || "";
+        if (isOnline) {
+          const { data: caiData } = await supabase
+            .from("cai_facturas")
+            .select("caja_asignada")
+            .eq("cajero_id", usuarioActual.id)
+            .single();
+          cajaAsignada = caiData?.caja_asignada || "";
+        } else {
+          // Offline: intentar desde IndexedDB
+          const caiCacheData = await obtenerCaiCache(usuarioActual.id);
+          cajaAsignada = caiCacheData?.caja_asignada || "";
+        }
       }
       if (!cajaAsignada) {
         alert("No tienes caja asignada. Contacta al administrador.");
+        setRegistrandoApertura(false);
+        return;
+      }
+
+      // ── Modo OFFLINE: crear apertura local y sincronizar después ──
+      if (!isOnline) {
+        const fechaLocal = formatToHondurasLocal();
+        const tempId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await guardarAperturaCache({
+          id: tempId,
+          cajero_id: usuarioActual.id,
+          cajero: usuarioActual.nombre,
+          caja: cajaAsignada,
+          fecha: fechaLocal,
+          estado: "APERTURA",
+          pending_sync: true,
+        });
+        guardarAperturaLocalStorage({
+          id: tempId,
+          cajero_id: usuarioActual.id,
+          cajero: usuarioActual.nombre,
+          caja: cajaAsignada,
+          fecha: fechaLocal,
+          estado: "APERTURA",
+          pending_sync: true,
+        });
+        console.log("✓ Apertura offline creada localmente (se sincronizará al reconectar)");
+        setAperturaRegistrada(true);
+        setRegistrandoApertura(false);
+        return;
+      }
+
+      // ── Capa 4 (extra): verificar en Supabase si ya hay apertura activa ──
+      const { data: aperturaExistente } = await supabase
+        .from("cierres")
+        .select("id, cajero_id, caja, fecha, estado")
+        .eq("cajero_id", usuarioActual.id)
+        .eq("caja", cajaAsignada)
+        .eq("estado", "APERTURA")
+        .limit(1)
+        .maybeSingle();
+
+      if (aperturaExistente) {
+        console.log("✓ Apertura activa encontrada en Supabase → no se crea duplicado");
+        // Sincronizar cache con la apertura que ya existe
+        await guardarAperturaCache({
+          id: aperturaExistente.id.toString(),
+          cajero_id: aperturaExistente.cajero_id,
+          caja: aperturaExistente.caja,
+          fecha: aperturaExistente.fecha,
+          estado: aperturaExistente.estado,
+        });
+        setAperturaRegistrada(true);
         setRegistrandoApertura(false);
         return;
       }
@@ -5147,27 +5264,24 @@ export default function PuntoDeVentaView({
                 </p>
                 <button
                   onClick={registrarAperturaRapida}
-                  disabled={registrandoApertura || !isOnline}
+                  disabled={registrandoApertura}
                   style={{
                     padding: "12px 32px",
                     fontSize: 16,
                     fontWeight: 700,
-                    background: !isOnline ? "#999" : "#1976d2",
+                    background: !isOnline ? "#f57c00" : "#1976d2",
                     color: "#fff",
                     border: "none",
                     borderRadius: 10,
-                    cursor:
-                      registrandoApertura || !isOnline
-                        ? "not-allowed"
-                        : "pointer",
-                    opacity: registrandoApertura || !isOnline ? 0.6 : 1,
+                    cursor: registrandoApertura ? "not-allowed" : "pointer",
+                    opacity: registrandoApertura ? 0.6 : 1,
                     boxShadow: "0 4px 12px rgba(25, 118, 210, 0.3)",
                   }}
                 >
                   {registrandoApertura
                     ? "Registrando..."
                     : !isOnline
-                      ? "SIN CONEXIÓN"
+                      ? "REGISTRAR APERTURA (OFFLINE)"
                       : "REGISTRAR APERTURA"}
                 </button>
               </div>

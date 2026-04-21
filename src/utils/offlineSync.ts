@@ -182,9 +182,11 @@ export interface ProductoCache {
 export interface AperturaCache {
   id: string;
   cajero_id: string;
+  cajero?: string;         // nombre del cajero (necesario para sync offline)
   caja: string;
   fecha: string;
   estado: string;
+  pending_sync?: boolean;  // true = creada offline, pendiente de subir a Supabase
   timestamp: number;
 }
 
@@ -1553,12 +1555,67 @@ export async function precargarImagenesProductos(
   );
 }
 
+// ─── Helpers de localStorage para apertura (capa rápida, 100% offline) ─────
+const LS_APERTURA_KEY = "apertura_activa";
+
+export interface AperturaLocalStorage {
+  id: string;
+  cajero_id: string;
+  cajero?: string;         // nombre del cajero
+  caja: string;
+  fecha: string;
+  estado: string;
+  pending_sync?: boolean;  // true = creada offline, sin subir a Supabase aún
+  guardadoEn: number;
+}
+
+/** Guarda el flag de apertura activa en localStorage (instantáneo, sin red) */
+export function guardarAperturaLocalStorage(apertura: Omit<AperturaLocalStorage, "guardadoEn">): void {
+  try {
+    const data: AperturaLocalStorage = { ...apertura, guardadoEn: Date.now() };
+    localStorage.setItem(LS_APERTURA_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn("No se pudo guardar apertura en localStorage:", e);
+  }
+}
+
+/** Lee el flag de apertura activa desde localStorage */
+export function obtenerAperturaLocalStorage(): AperturaLocalStorage | null {
+  try {
+    const raw = localStorage.getItem(LS_APERTURA_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as AperturaLocalStorage;
+  } catch (e) {
+    console.warn("Error leyendo apertura de localStorage:", e);
+    return null;
+  }
+}
+
+/** Elimina el flag de apertura activa de localStorage */
+export function limpiarAperturaLocalStorage(): void {
+  try {
+    localStorage.removeItem(LS_APERTURA_KEY);
+  } catch (e) {
+    console.warn("Error limpiando apertura de localStorage:", e);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Guarda información de apertura de caja en cache
  */
 export async function guardarAperturaCache(
   apertura: Omit<AperturaCache, "timestamp">,
 ): Promise<void> {
+  // Capa rápida: también guardar en localStorage
+  guardarAperturaLocalStorage({
+    id: apertura.id,
+    cajero_id: apertura.cajero_id,
+    caja: apertura.caja,
+    fecha: apertura.fecha,
+    estado: apertura.estado,
+  });
+
   const database = await initIndexedDB();
 
   return new Promise((resolve, reject) => {
@@ -1622,9 +1679,12 @@ export async function obtenerAperturaCache(): Promise<AperturaCache | null> {
 }
 
 /**
- * Limpia el cache de apertura
+ * Limpia el cache de apertura (IndexedDB + localStorage)
  */
 export async function limpiarAperturaCache(): Promise<void> {
+  // Limpiar también localStorage
+  limpiarAperturaLocalStorage();
+
   const database = await initIndexedDB();
 
   return new Promise((resolve, reject) => {
@@ -1642,6 +1702,115 @@ export async function limpiarAperturaCache(): Promise<void> {
       reject(request.error);
     };
   });
+}
+
+/**
+ * Sincroniza una apertura que fue creada offline (pending_sync=true) con Supabase.
+ * Devuelve true si se sincronizó exitosamente o si no había nada pendiente.
+ */
+export async function sincronizarAperturaPendiente(): Promise<boolean> {
+  try {
+    const aperturaLS = obtenerAperturaLocalStorage();
+    if (!aperturaLS?.pending_sync) return true; // nada pendiente
+
+    console.log("🔄 Sincronizando apertura offline pendiente...", aperturaLS);
+
+    // Verificar primero si ya existe en Supabase (idempotente)
+    const { data: existente } = await supabase
+      .from("cierres")
+      .select("id, cajero_id, caja, fecha, estado")
+      .eq("cajero_id", aperturaLS.cajero_id)
+      .eq("caja", aperturaLS.caja)
+      .eq("estado", "APERTURA")
+      .limit(1)
+      .maybeSingle();
+
+    if (existente) {
+      // Ya existe en Supabase → actualizar cache con el ID real y quitar pending_sync
+      console.log("✓ Apertura ya existe en Supabase, actualizando cache local");
+      const actualizada: AperturaLocalStorage = {
+        ...aperturaLS,
+        id: existente.id.toString(),
+        pending_sync: false,
+        guardadoEn: Date.now(),
+      };
+      guardarAperturaLocalStorage(actualizada);
+      await guardarAperturaCache({
+        id: existente.id.toString(),
+        cajero_id: existente.cajero_id,
+        cajero: aperturaLS.cajero,
+        caja: existente.caja,
+        fecha: existente.fecha,
+        estado: existente.estado,
+        pending_sync: false,
+      });
+      return true;
+    }
+
+    // No existe → insertar en Supabase
+    const { data: insertada, error } = await supabase
+      .from("cierres")
+      .insert([{
+        tipo_registro: "apertura",
+        cajero: aperturaLS.cajero ?? "",
+        cajero_id: aperturaLS.cajero_id,
+        caja: aperturaLS.caja,
+        fecha: aperturaLS.fecha,
+        fondo_fijo_registrado: 0,
+        fondo_fijo: 0,
+        efectivo_registrado: 0,
+        efectivo_dia: 0,
+        monto_tarjeta_registrado: 0,
+        monto_tarjeta_dia: 0,
+        transferencias_registradas: 0,
+        transferencias_dia: 0,
+        dolares_registrado: 0,
+        dolares_dia: 0,
+        diferencia: 0,
+        estado: "APERTURA",
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      // Si es duplicado (constraint único), manejar igual que existente
+      if (error.code === "23505") {
+        console.warn("⚠ Constraint único al sincronizar: apertura ya existe");
+        const actualizada: AperturaLocalStorage = {
+          ...aperturaLS,
+          pending_sync: false,
+          guardadoEn: Date.now(),
+        };
+        guardarAperturaLocalStorage(actualizada);
+        return true;
+      }
+      console.error("Error sincronizando apertura offline:", error);
+      return false;
+    }
+
+    // Éxito → actualizar cache con el ID real de Supabase
+    console.log("✓ Apertura offline sincronizada con Supabase, id:", insertada.id);
+    const actualizada: AperturaLocalStorage = {
+      ...aperturaLS,
+      id: insertada.id.toString(),
+      pending_sync: false,
+      guardadoEn: Date.now(),
+    };
+    guardarAperturaLocalStorage(actualizada);
+    await guardarAperturaCache({
+      id: insertada.id.toString(),
+      cajero_id: insertada.cajero_id,
+      cajero: aperturaLS.cajero,
+      caja: insertada.caja,
+      fecha: insertada.fecha,
+      estado: insertada.estado,
+      pending_sync: false,
+    });
+    return true;
+  } catch (err) {
+    console.error("Excepción sincronizando apertura offline:", err);
+    return false;
+  }
 }
 
 /**
