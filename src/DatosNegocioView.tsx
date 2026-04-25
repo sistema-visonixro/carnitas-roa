@@ -594,6 +594,7 @@ const DatosNegocioView: FC<DatosNegocioViewProps> = ({ onBack }) => {
                         outline: "none",
                         boxSizing: "border-box",
                         background: "#f8fafc",
+                        color: "#1e293b",
                       }}
                       onFocus={(e) => {
                         e.target.style.borderColor = "#667eea";
@@ -648,6 +649,7 @@ const DatosNegocioView: FC<DatosNegocioViewProps> = ({ onBack }) => {
                         outline: "none",
                         boxSizing: "border-box",
                         background: "#f8fafc",
+                        color: "#1e293b",
                       }}
                       onFocus={(e) => {
                         e.target.style.borderColor = "#667eea";
@@ -702,6 +704,7 @@ const DatosNegocioView: FC<DatosNegocioViewProps> = ({ onBack }) => {
                         outline: "none",
                         boxSizing: "border-box",
                         background: "#f8fafc",
+                        color: "#1e293b",
                       }}
                       onFocus={(e) => {
                         e.target.style.borderColor = "#667eea";
@@ -756,6 +759,7 @@ const DatosNegocioView: FC<DatosNegocioViewProps> = ({ onBack }) => {
                         outline: "none",
                         boxSizing: "border-box",
                         background: "#f8fafc",
+                        color: "#1e293b",
                       }}
                       onFocus={(e) => {
                         e.target.style.borderColor = "#667eea";
@@ -812,6 +816,7 @@ const DatosNegocioView: FC<DatosNegocioViewProps> = ({ onBack }) => {
                         boxSizing: "border-box",
                         background: "#f8fafc",
                         lineHeight: 1.6,
+                        color: "#1e293b",
                       }}
                       onFocus={(e) => {
                         e.target.style.borderColor = "#667eea";

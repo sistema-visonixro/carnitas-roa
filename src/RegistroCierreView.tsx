@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
-import { getLocalDayRange, formatToHondurasLocal } from "./utils/fechas";
+import { formatToHondurasLocal } from "./utils/fechas";
 import { useDatosNegocio } from "./useDatosNegocio";
 interface UsuarioActual {
   nombre: string;
@@ -57,12 +57,9 @@ export default function RegistroCierreView({
     };
   }, [usuarioActual?.id, caja]);
 
-  // Calcular valores automáticos
+  // Calcular valores automáticos desde v_resumen_turnos
   async function obtenerValoresAutomaticos() {
-    const { end: dayEnd } = getLocalDayRange();
-
-    // Buscar la última apertura (estado='APERTURA') sin importar el día
-    // Esta será la apertura del turno actual
+    // 1. Fondo fijo: sigue leyendo desde cierres (no está en la vista)
     const { data: aperturaActual } = await supabase
       .from("cierres")
       .select("fondo_fijo_registrado, fecha, estado")
@@ -73,7 +70,6 @@ export default function RegistroCierreView({
       .limit(1)
       .maybeSingle();
 
-    // Si no hay apertura registrada, establecer valores en 0
     if (!aperturaActual) {
       setEfectivoSistema(0);
       setTarjetaSistema(0);
@@ -85,6 +81,7 @@ export default function RegistroCierreView({
         tarjetaDia: 0,
         transferenciasDia: 0,
         dolaresDia: 0,
+        gastosDia: 0,
         platillosDia: 0,
         bebidasDia: 0,
       };
@@ -94,168 +91,58 @@ export default function RegistroCierreView({
       aperturaActual.fondo_fijo_registrado || "0",
     );
 
-    // Usar la fecha EXACTA de apertura (con hora, minutos, segundos) como inicio
-    const desde = aperturaActual.fecha;
-    const hasta = dayEnd;
-
-    console.debug("Rango de cierre - desde apertura:", desde, "hasta:", hasta);
-
-    // ── Consulta única a ventas (una fila por factura, incluye datos de pago) ────────────────────
-    const { data: pagosfRows, error: pagosfError } = await supabase
-      .from("ventas")
+    // 2. Leer el turno actual desde v_resumen_turnos
+    const { data: turno, error: turnoError } = await supabase
+      .from("v_resumen_turnos")
       .select(
-        "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio",
+        "efectivo_neto, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, total_ventas",
       )
-      .eq("cajero_id", usuarioActual.id)
-      .neq("tipo", "CREDITO")
-      .gte("fecha_hora", desde)
-      .lte("fecha_hora", hasta);
+      .eq("cajero_id", usuarioActual?.id)
+      .eq("caja", caja)
+      .order("fecha_apertura", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (pagosfError) console.error("Error leyendo ventas:", pagosfError);
-
-    const rows = pagosfRows || [];
-
-    let efectivoBruto = 0;
-    let tarjetaDia = 0;
-    let transferenciasDia = 0;
-    let dolaresDia = 0; // USD
-    let cambioTotal = 0;
-
-    for (const r of rows) {
-      const ef = parseFloat(r.efectivo || 0);
-      const tk = parseFloat(r.tarjeta || 0);
-      const tr = parseFloat(r.transferencia || 0);
-      const dl = parseFloat(r.dolares || 0);
-      const dlU = parseFloat(r.dolares_usd || 0);
-      const cb = parseFloat(r.cambio || 0);
-      const dv = parseFloat(r.delivery || 0);
-
-      dolaresDia += dlU;
-      cambioTotal += cb;
-
-      if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
-        efectivoBruto += ef + dv;
-        tarjetaDia += tk;
-        transferenciasDia += tr;
-      } else if (tk > 0) {
-        efectivoBruto += ef;
-        tarjetaDia += tk + dv;
-        transferenciasDia += tr;
-      } else if (tr > 0) {
-        efectivoBruto += ef;
-        tarjetaDia += tk;
-        transferenciasDia += tr + dv;
-      } else {
-        efectivoBruto += ef + dv;
-        tarjetaDia += tk;
-        transferenciasDia += tr;
-      }
+    if (turnoError) {
+      console.error("Error leyendo v_resumen_turnos:", turnoError);
     }
 
-    // Efectivo que el cajero retiene = efectivo (+ delivery en efectivo) − cambio
-    const efectivoDia = efectivoBruto - cambioTotal;
-    console.debug(
-      "ventas rows:",
-      rows.length,
-      "efectivoBruto:",
-      efectivoBruto,
-      "cambio:",
-      cambioTotal,
-      "efectivoDia:",
+    const efectivoDia = parseFloat(turno?.efectivo_neto ?? 0);
+    const tarjetaDia = parseFloat(turno?.tarjeta ?? 0);
+    const transferenciasDia = parseFloat(turno?.transferencia ?? 0);
+    const dolaresDia = parseFloat(turno?.dolares_usd ?? 0);
+    const gastosDia = parseFloat(turno?.gastos ?? 0);
+    const platillosDia = parseFloat(turno?.platillos_vendidos ?? 0);
+    const bebidasDia = parseFloat(turno?.bebidas_vendidas ?? 0);
+    const totalVentasDia = parseFloat(turno?.total_ventas ?? 0);
+
+    console.debug("v_resumen_turnos →", {
       efectivoDia,
-      "tarjeta:",
-      tarjetaDia,
-      "trans:",
-      transferenciasDia,
-      "dolares USD:",
-      dolaresDia,
-    );
-
-    // ── Gastos del turno ─────────────────────────────────────────────────
-    let gastosDia = 0;
-    try {
-      const { data: gastosData } = await supabase
-        .from("gastos")
-        .select("monto")
-        .gte("fecha_hora", desde)
-        .lte("fecha_hora", hasta)
-        .eq("cajero_id", usuarioActual?.id)
-        .eq("caja", caja);
-      if (gastosData && Array.isArray(gastosData)) {
-        gastosDia = gastosData.reduce(
-          (s: number, g: any) => s + parseFloat(g.monto || 0),
-          0,
-        );
-      }
-    } catch (e) {
-      console.warn("No se pudieron obtener gastos:", e);
-    }
-    console.debug("gastosDia:", gastosDia);
-
-    // Efectivo neto = efectivo − cambio − gastos (puede ser negativo)
-    const efectivoDiaNet = efectivoDia - gastosDia;
-    console.debug("efectivoDiaNet:", efectivoDiaNet);
-
-    // Contar platillos (comidas) y bebidas vendidas en el turno
-    let platillosDia = 0;
-    let bebidasDia = 0;
-    try {
-      const facturasQuery = supabase
-        .from("ventas")
-        .select("productos, factura")
-        .eq("cajero_id", usuarioActual.id)
-        .gte("fecha_hora", desde)
-        .lte("fecha_hora", hasta);
-      const { data: facturasData } = await facturasQuery;
-      if (facturasData && Array.isArray(facturasData)) {
-        const facturasVistas = new Set<string>();
-        for (const fac of facturasData) {
-          try {
-            const numFac = String(fac.factura || "");
-            const esDevolucion =
-              typeof fac.factura === "string" && fac.factura.startsWith("DEV-");
-            if (!esDevolucion) {
-              if (facturasVistas.has(numFac)) continue;
-              facturasVistas.add(numFac);
-            }
-            const items =
-              typeof fac.productos === "string"
-                ? JSON.parse(fac.productos)
-                : fac.productos;
-            if (Array.isArray(items)) {
-              for (const item of items) {
-                const qty = parseFloat(item.cantidad || 1);
-                if (item.tipo === "comida") {
-                  platillosDia += esDevolucion ? -qty : qty;
-                } else if (item.tipo === "bebida") {
-                  bebidasDia += esDevolucion ? -qty : qty;
-                }
-              }
-            }
-          } catch (_) {
-            /* ignorar error de parse */
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("No se pudieron contar platillos/bebidas:", e);
-    }
-
-    // Actualizar estados del resumen
-    setEfectivoSistema(efectivoDiaNet);
-    setTarjetaSistema(tarjetaDia);
-    setTransferenciasSistema(transferenciasDia);
-    setDolaresSistema(dolaresDia);
-
-    return {
-      fondoFijoDia,
-      efectivoDia: efectivoDiaNet,
       tarjetaDia,
       transferenciasDia,
       dolaresDia,
       gastosDia,
       platillosDia,
       bebidasDia,
+      totalVentasDia,
+    });
+
+    setEfectivoSistema(efectivoDia);
+    setTarjetaSistema(tarjetaDia);
+    setTransferenciasSistema(transferenciasDia);
+    setDolaresSistema(dolaresDia);
+
+    return {
+      fondoFijoDia,
+      efectivoDia,
+      tarjetaDia,
+      transferenciasDia,
+      dolaresDia,
+      gastosDia,
+      platillosDia,
+      bebidasDia,
+      totalVentasDia,
+      fechaApertura: aperturaActual.fecha,
     };
   }
 
@@ -264,6 +151,8 @@ export default function RegistroCierreView({
     gastosDia: number,
     platillosDia = 0,
     bebidasDia = 0,
+    totalVentasDia = 0,
+    fechaApertura = "",
   ) => {
     const logoUrl = datosNegocio.logo_url || "/favicon.ico";
     const img = new Image();
@@ -273,126 +162,87 @@ export default function RegistroCierreView({
       const printWindow = window.open("", "_blank");
       if (!printWindow) return;
 
+      const diferencia = Number(registro.diferencia);
+      const difSign =
+        diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
+      const difAbs = Math.abs(diferencia).toFixed(2);
+
+      const fmtFecha = (d: string) => {
+        if (!d) return "—";
+        try {
+          const dt = new Date(d);
+          return (
+            dt.toLocaleDateString("es-HN") +
+            " " +
+            dt.toLocaleTimeString("es-HN")
+          );
+        } catch {
+          return d;
+        }
+      };
+
       const html = `
         <html>
           <head>
             <title>Reporte de Cierre</title>
             <style>
-              /* Make all text bold and keep monospace for alignment */
               body { font-family: 'Courier New', monospace; padding: 10px; width: 80mm; margin: 0 auto; color: #000; font-weight: 700; font-size: 16px; }
               .header { text-align: center; margin-bottom: 20px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
-              /* Increase logo 4x (from 120 -> 480) */
-              .logo { width: 480px; height: 480px; margin-bottom: 10px; }
               .title { font-size: 20px; margin: 10px 0; }
-              .info { font-size: 16px; margin-bottom: 15px; }
+              .info { font-size: 14px; margin-bottom: 15px; line-height: 1.6; }
               .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 16px; }
               .divider { border-top: 1px dashed #000; margin: 10px 0; }
-              .total { font-size: 18px; margin-top: 10px; }
               .footer { text-align: center; margin-top: 30px; font-size: 14px; }
             </style>
           </head>
           <body>
             <div class="header">
-             
               <div style="font-size: 18px;">${datosNegocio.nombre_negocio.toUpperCase()}</div>
-          
               <div class="title">REPORTE DE CIERRE DE CAJA</div>
             </div>
 
             <div class="info">
-              <div><strong>Número de Cierre:</strong> ${
-                registro.id || "N/A"
-              }</div>
-              <div><strong>Fecha:</strong> ${new Date().toLocaleDateString(
-                "es-HN",
-              )} ${new Date().toLocaleTimeString("es-HN")}</div>
+              <div><strong>N&#xba; de Cierre:</strong> ${registro.id || "N/A"}</div>
               <div><strong>Cajero:</strong> ${registro.cajero}</div>
               <div><strong>Caja:</strong> ${registro.caja}</div>
+              <div><strong>Apertura:</strong> ${fmtFecha(fechaApertura)}</div>
+              <div><strong>Cierre:</strong> ${fmtFecha(registro.fecha)}</div>
             </div>
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">RESUMEN DE VENTAS</div>
-            <div class="row">
-              <span>Platillos Vendidos:</span>
-              <span>${Math.round(platillosDia)}</span>
-            </div>
-            <div class="row">
-              <span>Bebidas Vendidas:</span>
-              <span>${Math.round(bebidasDia)}</span>
-            </div>
+            <div class="row"><span>Platillos Vendidos:</span><span>${Math.round(platillosDia)}</span></div>
+            <div class="row"><span>Bebidas Vendidas:</span><span>${Math.round(bebidasDia)}</span></div>
+
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
-            
-            <div class="row">
-              <span>Fondo Fijo:</span>
-              <span>L ${Number(registro.fondo_fijo).toFixed(2)}</span>
-            </div>
-            <div class="row">
-              <span>Ventas Efectivo (Neto):</span>
-              <span>L ${Number(registro.efectivo_dia).toFixed(2)}</span>
-            </div>
-            <div class="row">
-              <span>Ventas Tarjeta:</span>
-              <span>L ${Number(registro.monto_tarjeta_dia).toFixed(2)}</span>
-            </div>
-            <div class="row">
-              <span>Ventas Transf.:</span>
-              <span>L ${Number(registro.transferencias_dia).toFixed(2)}</span>
-            </div>
-            <div class="row">
-              <span>Dólares (USD):</span>
-              <span>$ ${Number(registro.dolares_dia).toFixed(2)}</span>
-            </div>
-             <div class="row">
-              <span>Gastos del Día:</span>
-              <span>L ${Number(gastosDia).toFixed(2)}</span>
-            </div>
+            <div class="row"><span>Fondo Fijo:</span><span>L ${Number(registro.fondo_fijo).toFixed(2)}</span></div>
+            <div class="row"><span>Efectivo (Neto):</span><span>L ${Number(registro.efectivo_dia).toFixed(2)}</span></div>
+            <div class="row"><span>Tarjeta:</span><span>L ${Number(registro.monto_tarjeta_dia).toFixed(2)}</span></div>
+            <div class="row"><span>Transferencia:</span><span>L ${Number(registro.transferencias_dia).toFixed(2)}</span></div>
+            <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(registro.dolares_dia).toFixed(2)}</span></div>
+            <div class="row"><span>Gastos:</span><span>L ${Number(gastosDia).toFixed(2)}</span></div>
 
             <div class="divider"></div>
             <div class="row" style="font-weight: bold;">
-              <span>EFECTIVO ESPERADO:</span>
-              <span>L ${(
-                Number(registro.fondo_fijo) + Number(registro.efectivo_dia)
-              ).toFixed(2)}</span>
+              <span>VENTA DEL D&#xcd;A:</span>
+              <span>L ${Number(totalVentasDia).toFixed(2)}</span>
             </div>
-            <div style="font-size: 11px; text-align: right; color: #666;">(Fondo + Ventas Efec. Neto)</div>
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">CONTEO (USUARIO)</div>
-
-            <div class="row">
-              <span>Fondo Fijo:</span>
-              <span>L ${Number(registro.fondo_fijo_registrado).toFixed(
-                2,
-              )}</span>
-            </div>
-            <div class="row">
-              <span>Efectivo:</span>
-              <span>L ${Number(registro.efectivo_registrado).toFixed(2)}</span>
-            </div>
-            <div class="row">
-              <span>Tarjeta:</span>
-              <span>L ${Number(registro.monto_tarjeta_registrado).toFixed(
-                2,
-              )}</span>
-            </div>
-            <div class="row">
-              <span>Transferencia:</span>
-              <span>L ${Number(registro.transferencias_registradas).toFixed(
-                2,
-              )}</span>
-            </div>
-            <div class="row">
-              <span>Dólares (USD):</span>
-              <span>$ ${Number(registro.dolares_registrado).toFixed(2)}</span>
-            </div>
+            <div class="row"><span>Fondo Fijo:</span><span>L ${Number(registro.fondo_fijo_registrado).toFixed(2)}</span></div>
+            <div class="row"><span>Efectivo:</span><span>L ${Number(registro.efectivo_registrado).toFixed(2)}</span></div>
+            <div class="row"><span>Tarjeta:</span><span>L ${Number(registro.monto_tarjeta_registrado).toFixed(2)}</span></div>
+            <div class="row"><span>Transferencia:</span><span>L ${Number(registro.transferencias_registradas).toFixed(2)}</span></div>
+            <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(registro.dolares_registrado).toFixed(2)}</span></div>
 
             <div class="divider"></div>
-            <div class="row" style="font-weight: bold; font-size: 16px;">
+            <div class="row" style="font-size: 16px;">
               <span>DIFERENCIA:</span>
-              <span>L ${Number(registro.diferencia).toFixed(2)}</span>
+              <span>L ${difAbs}</span>
             </div>
-          
+            <div style="text-align: right; font-size: 15px; font-weight: bold;">${difSign}</div>
 
             <div class="footer">
               <p>__________________________</p>
@@ -412,9 +262,7 @@ export default function RegistroCierreView({
     };
 
     img.onload = doPrint;
-    img.onerror = doPrint; // Print anyway if image fails
-
-    // Timeout fallback in case onload never fires
+    img.onerror = doPrint;
     setTimeout(() => {
       if (!img.complete) doPrint();
     }, 2000);
@@ -448,6 +296,8 @@ export default function RegistroCierreView({
         gastosDia,
         platillosDia,
         bebidasDia,
+        totalVentasDia,
+        fechaApertura,
       } = await obtenerValoresAutomaticos();
 
       // dolares_registrado: el cajero ingresa directamente el valor en USD
@@ -609,6 +459,8 @@ export default function RegistroCierreView({
             gastosDia || 0,
             platillosDia || 0,
             bebidasDia || 0,
+            totalVentasDia || 0,
+            fechaApertura || "",
           );
         }
 

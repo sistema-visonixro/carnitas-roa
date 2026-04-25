@@ -31,7 +31,11 @@ BEGIN
     SELECT factura_actual, rango_desde, rango_hasta
     INTO   v_factura_actual, v_rango_desde, v_rango_hasta
     FROM   public.cai_facturas
-    WHERE  cajero_id = p_cajero_id::UUID
+    WHERE  cajero_id        = p_cajero_id::UUID
+      AND  tipo_comprobante = 'RECIBO'
+      AND  activo           = TRUE
+    ORDER BY creado_en DESC
+    LIMIT 1
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -71,7 +75,9 @@ BEGIN
     -- Guardar el SIGUIENTE a usar (v_num + 1) en el contador
     UPDATE public.cai_facturas
     SET    factura_actual = (v_num + 1)::TEXT
-    WHERE  cajero_id = p_cajero_id::UUID;
+    WHERE  cajero_id        = p_cajero_id::UUID
+      AND  tipo_comprobante = 'RECIBO'
+      AND  activo           = TRUE;
 
     RETURN v_num::TEXT;
 END;
@@ -98,7 +104,11 @@ BEGIN
     SELECT factura_actual, rango_desde, rango_hasta
     INTO   v_factura_actual, v_rango_desde, v_rango_hasta
     FROM   public.cai_facturas
-    WHERE  cajero_id = p_cajero_id::UUID;
+    WHERE  cajero_id        = p_cajero_id::UUID
+      AND  tipo_comprobante = 'RECIBO'
+      AND  activo           = TRUE
+    ORDER BY creado_en DESC
+    LIMIT 1;
 
     IF NOT FOUND THEN
         RETURN NULL;

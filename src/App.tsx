@@ -474,6 +474,7 @@ function App() {
         <ResultadosView
           onBack={() => setView("admin")}
           onVerFacturasEmitidas={() => setView("facturasEmitidas")}
+          onVerGastos={() => setView("gastos")}
         />
         <VersionComponent />
         <div style={{ textAlign: "center", marginTop: 20 }}></div>

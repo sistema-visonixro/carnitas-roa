@@ -210,9 +210,10 @@ export default function PuntoDeVentaView({
 
           if (caiRecibo) {
             const actual = parseInt(caiRecibo.factura_actual || "0");
-            const siguiente = (
-              actual >= caiRecibo.rango_desde ? actual + 1 : caiRecibo.rango_desde
-            );
+            const siguiente =
+              actual >= caiRecibo.rango_desde
+                ? actual + 1
+                : caiRecibo.rango_desde;
             if (siguiente <= caiRecibo.rango_hasta) {
               // Verificar que no esté en uso
               const { data: existe } = await supabase
@@ -231,7 +232,9 @@ export default function PuntoDeVentaView({
               }
             }
           }
-        } catch (_) { /* si falla, continuar a fallback */ }
+        } catch (_) {
+          /* si falla, continuar a fallback */
+        }
 
         // 2. RPC general (prefiere RECIBO cuando el patch está aplicado)
         const { data: rpcNum, error: rpcErr } = await supabase.rpc(
@@ -259,7 +262,8 @@ export default function PuntoDeVentaView({
             await supabase
               .from("cai_facturas")
               .update({ factura_actual: (maxNum + 2).toString() })
-              .eq("cajero_id", usuarioActual?.id ?? "");
+              .eq("cajero_id", usuarioActual?.id ?? "")
+              .eq("tipo_comprobante", "RECIBO");
             return siguiente;
           }
         }
@@ -475,7 +479,8 @@ export default function PuntoDeVentaView({
             await supabase
               .from("cai_facturas")
               .update({ factura_actual: nuevaFactura })
-              .eq("cajero_id", usuarioActual.id);
+              .eq("cajero_id", usuarioActual.id)
+              .eq("tipo_comprobante", "RECIBO");
           } catch (err) {
             console.error(
               "Error actualizando factura_actual tras venta a crédito:",
@@ -519,7 +524,9 @@ export default function PuntoDeVentaView({
           .from("cai_facturas")
           .select("caja_asignada")
           .eq("cajero_id", usuarioActual?.id)
-          .single();
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle();
         cajaAsignada = caiData?.caja_asignada || "";
       }
 
@@ -563,7 +570,7 @@ export default function PuntoDeVentaView({
         supabase
           .from("ventas")
           .select(
-            "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, cajero_id, fecha_hora",
+            "efectivo, tarjeta, transferencia, dolares, dolares_usd, delivery, cambio, tipo, cajero_id, fecha_hora",
           )
           .eq("cajero_id", usuarioActual?.id)
           .neq("tipo", "CREDITO")
@@ -643,9 +650,8 @@ export default function PuntoDeVentaView({
       let cambioSum = 0;
       let deliverySum = 0;
 
-      // Distribuir delivery al método de pago principal de cada factura.
-      // Si la factura tiene efectivo, el delivery entra a efectivo (cobrado en mano).
-      // Si solo tiene tarjeta/transferencia/dólares, el delivery entra en ese método.
+      // Sumar cada método de pago directamente desde los campos de la DB.
+      // No redistribuir delivery — se muestra por separado para no distorsionar el efectivo.
       for (const r of pagosfRows) {
         const ef = parseFloat(r.efectivo || 0);
         const tk = parseFloat(r.tarjeta || 0);
@@ -654,36 +660,19 @@ export default function PuntoDeVentaView({
         const dlU = parseFloat(r.dolares_usd || 0);
         const cb = parseFloat(r.cambio || 0);
         const dv = parseFloat(r.delivery || 0);
+        const esDevolucion = r.tipo === "DEVOLUCION";
 
+        efectivoSumBruto += ef;
+        tarjetaSum += tk;
+        transSum += tr;
         dolaresSum += dl;
         dolaresSumUsd += dlU;
-        cambioSum += cb; // el cambio siempre sale del cajón de efectivo
+        // El cambio solo aplica a ventas normales (no devoluciones)
+        if (!esDevolucion) cambioSum += cb;
         deliverySum += dv;
-
-        if (ef > 0 || (tk === 0 && tr === 0 && dl === 0)) {
-          // Pagó en efectivo (o no hay otro método) → delivery va a efectivo
-          efectivoSumBruto += ef + dv;
-          tarjetaSum += tk;
-          transSum += tr;
-        } else if (tk > 0) {
-          // Pagó solo con tarjeta → delivery va a tarjeta
-          efectivoSumBruto += ef;
-          tarjetaSum += tk + dv;
-          transSum += tr;
-        } else if (tr > 0) {
-          // Pagó solo con transferencia → delivery va a transferencia
-          efectivoSumBruto += ef;
-          tarjetaSum += tk;
-          transSum += tr + dv;
-        } else {
-          // Pagó en dólares (u otro) → delivery va a efectivo por defecto
-          efectivoSumBruto += ef + dv;
-          tarjetaSum += tk;
-          transSum += tr;
-        }
       }
 
-      // Efectivo neto = bruto (+ delivery efectivo ya incluido) − cambio
+      // Efectivo neto = bruto − cambio (delivery NO se incluye, sigue en su campo separado)
       const efectivoSum = Number((efectivoSumBruto - cambioSum).toFixed(2));
 
       // obtener tasa del dolar (singleton)
@@ -794,7 +783,9 @@ export default function PuntoDeVentaView({
           .from("cai_facturas")
           .select("caja_asignada")
           .eq("cajero_id", usuarioActual?.id)
-          .single();
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle();
         cajaAsignada = caiData?.caja_asignada || "";
       }
       const { data: aperturaActual } = await supabase
@@ -885,7 +876,9 @@ export default function PuntoDeVentaView({
           .from("cai_facturas")
           .select("caja_asignada")
           .eq("cajero_id", usuarioActual?.id)
-          .single();
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle();
         cajaAsignada = caiData?.caja_asignada || "";
       }
       const { data: aperturaActual } = await supabase
@@ -1657,6 +1650,10 @@ export default function PuntoDeVentaView({
     null,
   );
 
+  // Estados conteo del turno (chips del header)
+  const [platillosTurno, setPlatillosTurno] = useState(0);
+  const [bebidasTurno, setBebidasTurno] = useState(0);
+
   // Estados para control de apertura
   const [aperturaRegistrada, setAperturaRegistrada] = useState<boolean | null>(
     null,
@@ -1665,7 +1662,57 @@ export default function PuntoDeVentaView({
   const [registrandoApertura, setRegistrandoApertura] = useState(false);
 
   // Estado para contador de cierres sin aclarar
-  const [cierresSinAclarar, setCierresSinAclarar] = useState<number>(0);
+  const [_cierresSinAclarar, setCierresSinAclarar] = useState<number>(0);
+
+  // Cargar conteo de platillos/bebidas del turno actual
+  const fetchConteoTurno = async () => {
+    try {
+      if (!estaConectado() || !usuarioActual?.id) return;
+      const { data: apertura } = await supabase
+        .from("cierres")
+        .select("fecha")
+        .eq("cajero_id", usuarioActual.id)
+        .eq("estado", "APERTURA")
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!apertura?.fecha) return;
+      const { data: ventas } = await supabase
+        .from("ventas")
+        .select("productos, factura")
+        .eq("cajero_id", usuarioActual.id)
+        .or("es_donacion.is.null,es_donacion.eq.false")
+        .neq("tipo", "DEVOLUCION")
+        .gte("fecha_hora", apertura.fecha);
+      let plat = 0;
+      let beb = 0;
+      const vistas = new Set<string>();
+      for (const v of ventas || []) {
+        const numFac = String(v.factura || "");
+        if (vistas.has(numFac)) continue;
+        vistas.add(numFac);
+        try {
+          const items =
+            typeof v.productos === "string"
+              ? JSON.parse(v.productos)
+              : v.productos;
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              const qty = parseFloat(item.cantidad || 1);
+              if (item.tipo === "comida") plat += qty;
+              else if (item.tipo === "bebida") beb += qty;
+            }
+          }
+        } catch (_) {}
+      }
+      setPlatillosTurno(plat);
+      setBebidasTurno(beb);
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (aperturaRegistrada) fetchConteoTurno();
+  }, [aperturaRegistrada]);
 
   // Obtener datos de CAI y el número de factura correcto
   // ─ Online  : lee cai_facturas para los meta-datos y llama al RPC ver_factura_actual
@@ -1851,14 +1898,23 @@ export default function PuntoDeVentaView({
           // ── PRIORIDAD: si hay apertura offline pendiente de sync, subirla ANTES
           //    de consultar Supabase, para evitar que se limpie el cache erróneamente
           const aperturaLS = obtenerAperturaLocalStorage();
-          if (aperturaLS?.pending_sync && aperturaLS.cajero_id === usuarioActual.id) {
-            console.log("🔄 Apertura offline detectada al reconectar → sincronizando con Supabase primero...");
+          if (
+            aperturaLS?.pending_sync &&
+            aperturaLS.cajero_id === usuarioActual.id
+          ) {
+            console.log(
+              "🔄 Apertura offline detectada al reconectar → sincronizando con Supabase primero...",
+            );
             const syncOk = await sincronizarAperturaPendiente();
             if (syncOk) {
-              console.log("✓ Apertura offline sincronizada. Continuando verificación...");
+              console.log(
+                "✓ Apertura offline sincronizada. Continuando verificación...",
+              );
             } else {
               // Si falla la sync pero la apertura existe localmente, dejarla activa
-              console.warn("⚠ Sync fallida. Manteniendo apertura local activa.");
+              console.warn(
+                "⚠ Sync fallida. Manteniendo apertura local activa.",
+              );
               setAperturaRegistrada(true);
               setVerificandoApertura(false);
               return;
@@ -1872,7 +1928,9 @@ export default function PuntoDeVentaView({
               .from("cai_facturas")
               .select("caja_asignada")
               .eq("cajero_id", usuarioActual.id)
-              .single();
+              .order("id", { ascending: false })
+              .limit(1)
+              .maybeSingle();
 
             // Si hay error de conexión, ir directo a cache
             if (caiError) {
@@ -1923,8 +1981,13 @@ export default function PuntoDeVentaView({
             console.log("⚠ No hay apertura en Supabase");
             // Guardia: no limpiar si aún hay una apertura offline pendiente de sync
             const lsActual = obtenerAperturaLocalStorage();
-            if (lsActual?.pending_sync && lsActual.cajero_id === usuarioActual.id) {
-              console.warn("⚠ Apertura no encontrada en Supabase pero hay pending_sync local → manteniendo activa");
+            if (
+              lsActual?.pending_sync &&
+              lsActual.cajero_id === usuarioActual.id
+            ) {
+              console.warn(
+                "⚠ Apertura no encontrada en Supabase pero hay pending_sync local → manteniendo activa",
+              );
               setAperturaRegistrada(true);
             } else {
               setAperturaRegistrada(false);
@@ -1939,13 +2002,19 @@ export default function PuntoDeVentaView({
           // Capa rápida: localStorage (síncrono, sin await)
           const aperturaLS = obtenerAperturaLocalStorage();
           if (aperturaLS && aperturaLS.cajero_id === usuarioActual.id) {
-            console.log("✓ Apertura activa encontrada en localStorage:", aperturaLS);
+            console.log(
+              "✓ Apertura activa encontrada en localStorage:",
+              aperturaLS,
+            );
             setAperturaRegistrada(true);
           } else {
             // Capa IndexedDB
             const aperturaCache = await obtenerAperturaCache();
             if (aperturaCache) {
-              console.log("✓ Apertura activa encontrada en IndexedDB:", aperturaCache);
+              console.log(
+                "✓ Apertura activa encontrada en IndexedDB:",
+                aperturaCache,
+              );
               // Sincronizar localStorage con IndexedDB
               guardarAperturaLocalStorage({
                 id: aperturaCache.id,
@@ -2498,7 +2567,9 @@ export default function PuntoDeVentaView({
       // ── Capa 1: verificar localStorage (más rápido, funciona sin red) ──
       const aperturaLS = obtenerAperturaLocalStorage();
       if (aperturaLS && aperturaLS.cajero_id === usuarioActual.id) {
-        console.log("✓ Apertura activa detectada en localStorage → no se crea duplicado");
+        console.log(
+          "✓ Apertura activa detectada en localStorage → no se crea duplicado",
+        );
         setAperturaRegistrada(true);
         setRegistrandoApertura(false);
         return;
@@ -2507,7 +2578,9 @@ export default function PuntoDeVentaView({
       // ── Capa 2: verificar IndexedDB (offline) ──
       const aperturaCache = await obtenerAperturaCache();
       if (aperturaCache && aperturaCache.cajero_id === usuarioActual.id) {
-        console.log("✓ Apertura activa detectada en IndexedDB → no se crea duplicado");
+        console.log(
+          "✓ Apertura activa detectada en IndexedDB → no se crea duplicado",
+        );
         setAperturaRegistrada(true);
         setRegistrandoApertura(false);
         return;
@@ -2558,7 +2631,9 @@ export default function PuntoDeVentaView({
           estado: "APERTURA",
           pending_sync: true,
         });
-        console.log("✓ Apertura offline creada localmente (se sincronizará al reconectar)");
+        console.log(
+          "✓ Apertura offline creada localmente (se sincronizará al reconectar)",
+        );
         setAperturaRegistrada(true);
         setRegistrandoApertura(false);
         return;
@@ -2575,7 +2650,9 @@ export default function PuntoDeVentaView({
         .maybeSingle();
 
       if (aperturaExistente) {
-        console.log("✓ Apertura activa encontrada en Supabase → no se crea duplicado");
+        console.log(
+          "✓ Apertura activa encontrada en Supabase → no se crea duplicado",
+        );
         // Sincronizar cache con la apertura que ya existe
         await guardarAperturaCache({
           id: aperturaExistente.id.toString(),
@@ -2844,70 +2921,10 @@ export default function PuntoDeVentaView({
               </>
             )}
 
-            {/* Botón Aclaraciones - solo visible si hay 1 o más cierres sin aclarar */}
-            {cierresSinAclarar >= 1 && (
-              <button
-                onClick={() => {
-                  if (setView) setView("resultadosCaja");
-                }}
-                style={{
-                  fontSize: 12,
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  background: "#f57c00",
-                  color: "#fff",
-                  fontWeight: 600,
-                  border: "none",
-                  cursor: "pointer",
-                  position: "relative",
-                }}
-                title={`Hay ${cierresSinAclarar} cierre(s) sin aclarar este mes`}
-              >
-                📝 Aclaraciones
-                <span
-                  style={{
-                    position: "absolute",
-                    top: -6,
-                    right: -6,
-                    background: "#d32f2f",
-                    color: "#fff",
-                    borderRadius: "50%",
-                    width: 20,
-                    height: 20,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
-                  }}
-                >
-                  {cierresSinAclarar}
-                </span>
-              </button>
-            )}
-
             {/* Botones principales: el botón de Cierre ahora está dentro del menú central */}
           </div>
         </div>
         {/* fin primera fila */}
-        {/* Segunda fila: conteo de pedidos a domicilio pendientes */}
-        {pedidosPendientesCount > 0 && (
-          <div
-            style={{
-              marginLeft: 12,
-              fontSize: 16,
-              fontWeight: 700,
-              color: "#1239e7",
-              background: "rgba(255, 255, 254, 0.12)",
-              borderRadius: 6,
-              padding: "2px 8px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            📦 Pedidos a domicilio pendientes: {pedidosPendientesCount}
-          </div>
-        )}
         {/* QZ Tray indicators removed */}
       </div>
       {/* Modal de resumen de caja (fuera del header) */}
@@ -3502,6 +3519,55 @@ export default function PuntoDeVentaView({
         >
           ☰ Menú
         </button>
+        {/* Chips de conteo del turno */}
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            marginTop: 6,
+            justifyContent: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          {pedidosPendientesCount > 0 && (
+            <span
+              style={{
+                background: "#1239e7",
+                color: "#fff",
+                borderRadius: 12,
+                padding: "2px 10px",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              📦 {pedidosPendientesCount}
+            </span>
+          )}
+          <span
+            style={{
+              background: "#388e3c",
+              color: "#fff",
+              borderRadius: 12,
+              padding: "2px 10px",
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            🍽 {platillosTurno}
+          </span>
+          <span
+            style={{
+              background: "#1976d2",
+              color: "#fff",
+              borderRadius: 12,
+              padding: "2px 10px",
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            🥤 {bebidasTurno}
+          </span>
+        </div>
       </div>
 
       {/* Modal de pago (fuera del bloque del botón) */}
@@ -3724,31 +3790,9 @@ export default function PuntoDeVentaView({
                 pdTransferencia = paymentData.transferencia || 0;
               }
 
-              // CORRECCIÓN DELIVERY: las columnas de método deben guardar SOLO
-              // el monto de productos. El delivery se guarda aparte en la columna
-              // `delivery` y el código de lectura (resumen/reportes) lo vuelve a
-              // sumar al método activo. Si no lo descontamos aquí queda duplicado.
-              // Ejemplo: productos=75, delivery=114 → PagoModal cobra 189 en
-              // transferencia. Sin corrección se guarda transferencia=189 + delivery=114
-              // y al leer se suma → 303 (inflado). Con corrección: transferencia=75.
-              if (pdCostoEnvio > 0) {
-                let dvRestante = pdCostoEnvio;
-                // Descontar del delivery el monto absorbido en cada método (orden: efectivo → tarjeta → transferencia → dólares)
-                const dvEfectivo = parseFloat(Math.min(pdEfectivo, dvRestante).toFixed(2));
-                pdEfectivo = parseFloat((pdEfectivo - dvEfectivo).toFixed(2));
-                dvRestante = parseFloat((dvRestante - dvEfectivo).toFixed(2));
-
-                const dvTarjeta = parseFloat(Math.min(pdTarjeta, dvRestante).toFixed(2));
-                pdTarjeta = parseFloat((pdTarjeta - dvTarjeta).toFixed(2));
-                dvRestante = parseFloat((dvRestante - dvTarjeta).toFixed(2));
-
-                const dvTransferencia = parseFloat(Math.min(pdTransferencia, dvRestante).toFixed(2));
-                pdTransferencia = parseFloat((pdTransferencia - dvTransferencia).toFixed(2));
-                dvRestante = parseFloat((dvRestante - dvTransferencia).toFixed(2));
-
-                const dvDolares = parseFloat(Math.min(pdDolares, dvRestante).toFixed(2));
-                pdDolares = parseFloat((pdDolares - dvDolares).toFixed(2));
-              }
+              // El delivery ya está incluido como producto en el JSON de productos.
+              // Los métodos de pago se guardan tal cual los registró el cajero.
+              // La columna `delivery` de ventas siempre queda en 0.
 
               const pdCaiStr =
                 tipoDocumentoFiscal === "FACTURA"
@@ -3820,7 +3864,7 @@ export default function PuntoDeVentaView({
                 transferencia: pdTransferencia,
                 dolares: pdDolares,
                 dolares_usd: pdDolaresUsd,
-                delivery: pdCostoEnvio,
+                delivery: 0,
                 total_recibido: paymentData.totalPaid,
                 cambio: Math.max(
                   0,
@@ -4796,7 +4840,8 @@ export default function PuntoDeVentaView({
                       await supabase
                         .from("cai_facturas")
                         .update({ factura_actual: (maxNum + 2).toString() })
-                        .eq("cajero_id", usuarioActual?.id ?? "");
+                        .eq("cajero_id", usuarioActual?.id ?? "")
+                        .eq("tipo_comprobante", "RECIBO");
                       return siguiente;
                     }
                   } catch {
@@ -4960,7 +5005,8 @@ export default function PuntoDeVentaView({
                       await supabase
                         .from("cai_facturas")
                         .update({ factura_actual: nuevaFactura })
-                        .eq("cajero_id", usuarioActual.id);
+                        .eq("cajero_id", usuarioActual.id)
+                        .eq("tipo_comprobante", "RECIBO");
                       console.log(
                         `[facturar] op=${operationId} → factura_actual actualizada a ${nuevaFactura} en Supabase (sin RPC)`,
                       );

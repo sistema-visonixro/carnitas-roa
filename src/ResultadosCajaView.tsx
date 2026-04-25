@@ -22,12 +22,31 @@ export default function ResultadosCajaView() {
   // Helper: obtener rango ISO para el mes con offset
   const getMonthRange = (offset: number) => {
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() + offset, 1, 0, 0, 0, 0);
-    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59, 999);
+    const start = new Date(
+      now.getFullYear(),
+      now.getMonth() + offset,
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+    const end = new Date(
+      start.getFullYear(),
+      start.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
     return {
       fechaInicio: start.toISOString(),
       fechaFin: end.toISOString(),
-      label: start.toLocaleDateString("es-HN", { year: "numeric", month: "long" }),
+      label: start.toLocaleDateString("es-HN", {
+        year: "numeric",
+        month: "long",
+      }),
     };
   };
 
@@ -208,22 +227,29 @@ export default function ResultadosCajaView() {
       const printWindow = window.open("", "_blank");
       if (!printWindow) return;
 
-      const efectivoDiff = (
-        (parseFloat(cierre.efectivo_registrado) || 0) -
-        (parseFloat(cierre.efectivo_dia) || 0)
-      ).toFixed(2);
-      const tarjetaDiff = (
-        (parseFloat(cierre.monto_tarjeta_registrado) || 0) -
-        (parseFloat(cierre.monto_tarjeta_dia) || 0)
-      ).toFixed(2);
-      const transDiff = (
-        (parseFloat(cierre.transferencias_registradas) || 0) -
-        (parseFloat(cierre.transferencias_dia) || 0)
-      ).toFixed(2);
-      const dolaresDiff = (
-        (parseFloat(cierre.dolares_registrado) || 0) -
-        (parseFloat(cierre.dolares_dia) || 0)
-      ).toFixed(2);
+      const diferencia = Number(cierre.diferencia || 0);
+      const difSign =
+        diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
+      const difAbs = Math.abs(diferencia).toFixed(2);
+
+      const totalVentasDia =
+        Number(cierre.efectivo_dia || 0) +
+        Number(cierre.monto_tarjeta_dia || 0) +
+        Number(cierre.transferencias_dia || 0);
+
+      const fmtFecha = (d: string) => {
+        if (!d) return "—";
+        try {
+          const dt = new Date(d);
+          return (
+            dt.toLocaleDateString("es-HN") +
+            " " +
+            dt.toLocaleTimeString("es-HN")
+          );
+        } catch {
+          return d;
+        }
+      };
 
       const html = `
         <html>
@@ -233,7 +259,7 @@ export default function ResultadosCajaView() {
               body { font-family: 'Courier New', monospace; padding: 10px; width: 80mm; margin: 0 auto; color: #000; font-weight: 700; font-size: 16px; }
               .header { text-align: center; margin-bottom: 20px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
               .title { font-size: 20px; margin: 10px 0; }
-              .info { font-size: 16px; margin-bottom: 15px; }
+              .info { font-size: 14px; margin-bottom: 15px; line-height: 1.6; }
               .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 16px; }
               .divider { border-top: 1px dashed #000; margin: 10px 0; }
               .footer { text-align: center; margin-top: 30px; font-size: 14px; }
@@ -243,41 +269,41 @@ export default function ResultadosCajaView() {
             <div class="header">
               <div style="font-size: 18px;">${datosNegocio.nombre_negocio.toUpperCase()}</div>
               <div class="title">REPORTE DE CIERRE DE CAJA</div>
-              <div style="font-size: 13px; color: #555;">(REIMPRESIÓN)</div>
+              <div style="font-size: 13px;">(REIMPRESI&#xd3;N)</div>
             </div>
             <div class="info">
-              <div><strong>Número de Cierre:</strong> ${cierre.id || "N/A"}</div>
-              <div><strong>Fecha cierre:</strong> ${new Date(cierre.fecha).toLocaleDateString("es-HN")} ${new Date(cierre.fecha).toLocaleTimeString("es-HN")}</div>
+              <div><strong>N&#xba; de Cierre:</strong> ${cierre.id || "N/A"}</div>
               <div><strong>Cajero:</strong> ${cierre.cajero}</div>
               <div><strong>Caja:</strong> ${cierre.caja}</div>
+              <div><strong>Cierre:</strong> ${fmtFecha(cierre.fecha)}</div>
             </div>
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
             <div class="row"><span>Fondo Fijo:</span><span>L ${Number(cierre.fondo_fijo || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Ventas Efectivo (Neto):</span><span>L ${Number(cierre.efectivo_dia || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Ventas Tarjeta:</span><span>L ${Number(cierre.monto_tarjeta_dia || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Ventas Transf.:</span><span>L ${Number(cierre.transferencias_dia || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Dólares (USD):</span><span>$ ${Number(cierre.dolares_dia || 0).toFixed(2)}</span></div>
+            <div class="row"><span>Efectivo (Neto):</span><span>L ${Number(cierre.efectivo_dia || 0).toFixed(2)}</span></div>
+            <div class="row"><span>Tarjeta:</span><span>L ${Number(cierre.monto_tarjeta_dia || 0).toFixed(2)}</span></div>
+            <div class="row"><span>Transferencia:</span><span>L ${Number(cierre.transferencias_dia || 0).toFixed(2)}</span></div>
+            <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(cierre.dolares_dia || 0).toFixed(2)}</span></div>
+            <div class="divider"></div>
+            <div class="row" style="font-weight: bold;">
+              <span>VENTA DEL D&#xcd;A:</span>
+              <span>L ${totalVentasDia.toFixed(2)}</span>
+            </div>
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">CONTEO (USUARIO)</div>
             <div class="row"><span>Fondo Fijo:</span><span>L ${Number(cierre.fondo_fijo_registrado || 0).toFixed(2)}</span></div>
             <div class="row"><span>Efectivo:</span><span>L ${Number(cierre.efectivo_registrado || 0).toFixed(2)}</span></div>
             <div class="row"><span>Tarjeta:</span><span>L ${Number(cierre.monto_tarjeta_registrado || 0).toFixed(2)}</span></div>
             <div class="row"><span>Transferencia:</span><span>L ${Number(cierre.transferencias_registradas || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Dólares (USD):</span><span>$ ${Number(cierre.dolares_registrado || 0).toFixed(2)}</span></div>
+            <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(cierre.dolares_registrado || 0).toFixed(2)}</span></div>
             <div class="divider"></div>
-            <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">DIFERENCIAS</div>
-            <div class="row"><span>Efectivo:</span><span>L ${efectivoDiff}</span></div>
-            <div class="row"><span>Tarjeta:</span><span>L ${tarjetaDiff}</span></div>
-            <div class="row"><span>Transferencia:</span><span>L ${transDiff}</span></div>
-            <div class="row"><span>Dólares:</span><span>$ ${dolaresDiff}</span></div>
-            <div class="divider"></div>
-            <div class="row" style="font-weight: bold; font-size: 16px;">
-              <span>DIFERENCIA TOTAL:</span>
-              <span>L ${Number(cierre.diferencia || 0).toFixed(2)}</span>
+            <div class="row" style="font-size: 16px;">
+              <span>DIFERENCIA:</span>
+              <span>L ${difAbs}</span>
             </div>
-            ${cierre.observacion ? `<div class="row"><span>Observación:</span><span>${cierre.observacion}</span></div>` : ""}
-            ${cierre.referencia_aclaracion ? `<div class="row"><span>Referencia:</span><span>${cierre.referencia_aclaracion}</span></div>` : ""}
+            <div style="text-align: right; font-size: 15px; font-weight: bold;">${difSign}</div>
+            ${cierre.observacion ? `<div class="row" style="font-size:13px"><span>Obs:</span><span>${cierre.observacion}</span></div>` : ""}
+            ${cierre.referencia_aclaracion ? `<div class="row" style="font-size:13px"><span>Ref:</span><span>${cierre.referencia_aclaracion}</span></div>` : ""}
             <div class="footer">
               <p>__________________________</p>
               <p>Firma Cajero</p>
@@ -377,17 +403,36 @@ export default function ResultadosCajaView() {
               })()}
             </h1>
             {/* Controles de navegación de mes */}
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12 }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
               <button
                 onClick={() => setMonthOffset((m) => m - 1)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "none", cursor: "pointer" }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "none",
+                  cursor: "pointer",
+                }}
                 title="Mes anterior"
               >
                 ◀ Mes anterior
               </button>
               <button
                 onClick={() => setMonthOffset(0)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#fff", cursor: "pointer" }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "transparent",
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
                 title="Mes actual"
               >
                 Mes actual
@@ -395,7 +440,13 @@ export default function ResultadosCajaView() {
               <button
                 onClick={() => setMonthOffset((m) => Math.min(m + 1, 0))}
                 disabled={monthOffset === 0}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "none", cursor: monthOffset === 0 ? "not-allowed" : "pointer", opacity: monthOffset === 0 ? 0.5 : 1 }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "none",
+                  cursor: monthOffset === 0 ? "not-allowed" : "pointer",
+                  opacity: monthOffset === 0 ? 0.5 : 1,
+                }}
                 title="Mes siguiente"
               >
                 Mes siguiente ▶

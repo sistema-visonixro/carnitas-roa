@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { getLocalDayRange } from "./utils/fechas";
 import { supabase } from "./supabaseClient";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
+
 import { useDatosNegocio } from "./useDatosNegocio";
 
 // use centralized supabase client from src/supabaseClient.ts
@@ -17,11 +9,13 @@ import { useDatosNegocio } from "./useDatosNegocio";
 interface ResultadosViewProps {
   onBack?: () => void;
   onVerFacturasEmitidas?: () => void;
+  onVerGastos?: () => void;
 }
 
 export default function ResultadosView({
   onBack,
   onVerFacturasEmitidas,
+  onVerGastos,
 }: ResultadosViewProps) {
   // Obtener datos del negocio desde la base de datos
   const { datos: datosNegocio } = useDatosNegocio();
@@ -33,7 +27,7 @@ export default function ResultadosView({
   const [facturas, setFacturas] = useState<any[]>([]);
   const [gastos, setGastos] = useState<any[]>([]);
   const [balance, setBalance] = useState(0);
-  const [ventasPorDia, setVentasPorDia] = useState<any[]>([]);
+  const [_ventasPorDia, setVentasPorDia] = useState<any[]>([]);
   const [pagosTotales, setPagosTotales] = useState<{
     efectivo: number;
     tarjeta: number;
@@ -48,7 +42,7 @@ export default function ResultadosView({
     dolares_usd: 0,
   });
   const [pagos, setPagos] = useState<any[]>([]);
-  const [filtroTipoPago, setFiltroTipoPago] = useState<string | null>(null);
+  const [filtroTipoPago, _setFiltroTipoPago] = useState<string | null>(null);
   const [cajeros, setCajeros] = useState<any[]>([]);
   const [cajeroFiltro, setCajeroFiltro] = useState("");
   // Estados para modal de resumen admin
@@ -74,6 +68,8 @@ export default function ResultadosView({
     platillos_donados?: number;
     bebidas_donadas?: number;
   } | null>(null);
+  const [turnosResumen, setTurnosResumen] = useState<any[]>([]);
+  const [turnosLoading, setTurnosLoading] = useState(false);
   // Obtener usuario actual de localStorage
   const usuarioActual = (() => {
     try {
@@ -88,6 +84,25 @@ export default function ResultadosView({
     fetchDatos();
     fetchCajeros();
   }, [desde, hasta, cajeroFiltro]);
+
+  useEffect(() => {
+    fetchTurnosResumen();
+  }, []);
+
+  async function fetchTurnosResumen() {
+    setTurnosLoading(true);
+    try {
+      const { data } = await supabase
+        .from("v_resumen_turnos")
+        .select("*")
+        .limit(20);
+      setTurnosResumen(data || []);
+    } catch (e) {
+      console.warn("v_resumen_turnos no disponible:", e);
+    } finally {
+      setTurnosLoading(false);
+    }
+  }
 
   async function fetchCajeros() {
     try {
@@ -2615,10 +2630,7 @@ export default function ResultadosView({
             return tipos.has(filtroTipoPago);
           });
 
-  // Total de facturas delivery
-  const deliveryTotal = facturas
-    .filter((f: any) => (f.tipo_orden || "").toUpperCase() === "DELIVERY")
-    .reduce((s: number, f: any) => s + parseFloat(String(f.total || 0)), 0);
+
 
   const gastosFiltrados = gastos;
 
@@ -3060,19 +3072,360 @@ export default function ResultadosView({
           >
             💳 Reporte Pagos
           </button>
-          <button
-            className="btn-filter"
-            onClick={() => {
-              setResumenAdminStep("select");
-              setCajeroResumenId("");
-              setResumenAdminData(null);
-              setShowResumenAdmin(true);
+        </div>
+
+        {/* Turnos activos desde v_resumen_turnos */}
+        <div
+          style={{
+            margin: "20px 0 16px",
+            background: "#ffffff",
+            borderRadius: 12,
+            boxShadow: "0 1px 8px rgba(0,0,0,0.07)",
+            border: "1px solid #e2e8f0",
+            overflow: "hidden",
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 18px",
+              borderBottom: "1px solid #e2e8f0",
+              background: "#f8fafc",
             }}
-            title="Ver resumen de caja de un cajero"
-            style={{ marginLeft: 8, background: "#7c3aed", color: "#fff" }}
           >
-            📊 Resumen por cajero
-          </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 18 }}>🏦</span>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
+                Resumen de Caja — Turnos
+              </span>
+            </div>
+            <button
+              onClick={fetchTurnosResumen}
+              style={{
+                fontSize: 12,
+                padding: "5px 14px",
+                borderRadius: 7,
+                border: "1.5px solid #cbd5e1",
+                background: "#ffffff",
+                cursor: "pointer",
+                color: "#334155",
+                fontWeight: 600,
+              }}
+            >
+              {turnosLoading ? "⏳ Cargando..." : "↺ Actualizar"}
+            </button>
+          </div>
+          {/* Tabla */}
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: 13,
+                minWidth: 900,
+              }}
+            >
+              <thead>
+                <tr style={{ background: "#f1f5f9" }}>
+                  {[
+                    { label: "Cajero", align: "left" as const },
+                    { label: "Caja", align: "left" as const },
+                    { label: "Apertura", align: "left" as const },
+                    { label: "Ef. Neto", align: "right" as const },
+                    { label: "Tarjeta", align: "right" as const },
+                    { label: "Transfer.", align: "right" as const },
+                    { label: "$ USD", align: "right" as const },
+                    { label: "Total Ventas", align: "right" as const },
+                    { label: "Gastos", align: "right" as const },
+                    { label: "🍽 Plat.", align: "center" as const },
+                    { label: "🥤 Beb.", align: "center" as const },
+                  ].map(({ label, align }) => (
+                    <th
+                      key={label}
+                      style={{
+                        padding: "9px 14px",
+                        fontWeight: 700,
+                        fontSize: 11,
+                        textTransform: "uppercase" as const,
+                        letterSpacing: "0.05em",
+                        color: "#475569",
+                        whiteSpace: "nowrap",
+                        borderBottom: "2px solid #e2e8f0",
+                        textAlign: align,
+                      }}
+                    >
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {turnosLoading ? (
+                  <tr>
+                    <td
+                      colSpan={11}
+                      style={{
+                        padding: 18,
+                        textAlign: "center",
+                        color: "#64748b",
+                        fontSize: 14,
+                      }}
+                    >
+                      ⏳ Cargando turnos...
+                    </td>
+                  </tr>
+                ) : turnosResumen.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={11}
+                      style={{
+                        padding: 18,
+                        textAlign: "center",
+                        color: "#64748b",
+                        fontSize: 14,
+                      }}
+                    >
+                      Sin turnos registrados
+                    </td>
+                  </tr>
+                ) : (
+                  turnosResumen.map((t, idx) => {
+                    const estaAbierto =
+                      !t.fecha_cierre ||
+                      new Date(t.fecha_cierre) > new Date(Date.now() + 60000);
+                    const fmtDate = (d: string) => {
+                      if (!d)
+                        return <span style={{ color: "#94a3b8" }}>—</span>;
+                      const clean = d.replace("T", " ").slice(0, 16);
+                      const [dp, tp] = clean.split(" ");
+                      return (
+                        <>
+                          <span style={{ color: "#1e293b", fontWeight: 600 }}>
+                            {dp}
+                          </span>
+                          <span
+                            style={{
+                              color: "#64748b",
+                              fontSize: 11,
+                              marginLeft: 4,
+                            }}
+                          >
+                            {tp}
+                          </span>
+                        </>
+                      );
+                    };
+                    const fmtL = (v: any, color = "#1e293b") => (
+                      <span style={{ color, fontWeight: 600 }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "#94a3b8",
+                            marginRight: 2,
+                          }}
+                        >
+                          L
+                        </span>
+                        {parseFloat(v || 0).toLocaleString("de-DE", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </span>
+                    );
+                    return (
+                      <tr
+                        key={t.apertura_id}
+                        style={{
+                          background: estaAbierto
+                            ? "#f0fdf4"
+                            : idx % 2 === 0
+                              ? "#ffffff"
+                              : "#fafafa",
+                          borderBottom: "1px solid #f1f5f9",
+                        }}
+                      >
+                        {/* Cajero */}
+                        <td style={{ padding: "10px 14px" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: "50%",
+                                background: "#e0e7ff",
+                                color: "#4338ca",
+                                fontWeight: 800,
+                                fontSize: 12,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {(t.nombre_cajero || "?").charAt(0).toUpperCase()}
+                            </span>
+                            <span
+                              style={{
+                                fontWeight: 700,
+                                color: "#1e293b",
+                                fontSize: 13,
+                              }}
+                            >
+                              {t.nombre_cajero}
+                            </span>
+                          </div>
+                        </td>
+                        {/* Caja */}
+                        <td style={{ padding: "10px 14px" }}>
+                          <span
+                            style={{
+                              background: "#e2e8f0",
+                              color: "#334155",
+                              borderRadius: 6,
+                              padding: "2px 9px",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {t.caja}
+                          </span>
+                        </td>
+                        {/* Apertura */}
+                        <td
+                          style={{ padding: "10px 14px", whiteSpace: "nowrap" }}
+                        >
+                          {fmtDate(t.fecha_apertura)}
+                        </td>
+                        {/* Ef. Neto */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          <span
+                            style={{
+                              background: "#f0fdf4",
+                              border: "1px solid #bbf7d0",
+                              borderRadius: 7,
+                              padding: "3px 9px",
+                              fontWeight: 700,
+                              color: "#15803d",
+                              fontSize: 13,
+                            }}
+                          >
+                            L{" "}
+                            {parseFloat(t.efectivo_neto || 0).toLocaleString(
+                              "de-DE",
+                              { minimumFractionDigits: 2 },
+                            )}
+                          </span>
+                        </td>
+                        {/* Tarjeta */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          {fmtL(t.tarjeta, "#1d4ed8")}
+                        </td>
+                        {/* Transferencia */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          {fmtL(t.transferencia, "#6d28d9")}
+                        </td>
+                        {/* $ USD */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          <span
+                            style={{
+                              background: "#fffbeb",
+                              border: "1px solid #fde68a",
+                              borderRadius: 7,
+                              padding: "3px 9px",
+                              fontWeight: 600,
+                              color: "#92400e",
+                              fontSize: 13,
+                            }}
+                          >
+                            $ {parseFloat(t.dolares_usd || 0).toFixed(2)}
+                          </span>
+                        </td>
+                        {/* Total Ventas */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          <span
+                            style={{
+                              fontWeight: 800,
+                              color: "#0f172a",
+                              fontSize: 14,
+                            }}
+                          >
+                            L{" "}
+                            {parseFloat(t.total_ventas || 0).toLocaleString(
+                              "de-DE",
+                              { minimumFractionDigits: 2 },
+                            )}
+                          </span>
+                        </td>
+                        {/* Gastos */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "right" }}
+                        >
+                          <span style={{ color: "#dc2626", fontWeight: 600 }}>
+                            L{" "}
+                            {parseFloat(t.gastos || 0).toLocaleString("de-DE", {
+                              minimumFractionDigits: 2,
+                            })}
+                          </span>
+                        </td>
+                        {/* Platillos */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "center" }}
+                        >
+                          <span
+                            style={{
+                              background: "#f0fdf4",
+                              color: "#166534",
+                              borderRadius: 20,
+                              padding: "3px 11px",
+                              fontWeight: 700,
+                              fontSize: 13,
+                            }}
+                          >
+                            {Math.round(parseFloat(t.total_platillos || 0))}
+                          </span>
+                        </td>
+                        {/* Bebidas */}
+                        <td
+                          style={{ padding: "10px 14px", textAlign: "center" }}
+                        >
+                          <span
+                            style={{
+                              background: "#eff6ff",
+                              color: "#1e40af",
+                              borderRadius: 20,
+                              padding: "3px 11px",
+                              fontWeight: 700,
+                              fontSize: 13,
+                            }}
+                          >
+                            {Math.round(parseFloat(t.total_bebidas || 0))}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* KPIs */}
@@ -3184,338 +3537,90 @@ export default function ResultadosView({
           </div>
         </div>
 
-        {/* Tablas */}
+        {/* Accesos rápidos */}
         <div className="content-grid">
+          {/* Botón acceso rápido a Facturas Emitidas */}
           <div className="table-container">
-            <div className="table-card">
-              <div className="table-header">
-                <h3 className="table-title">
-                  📋 Historial de Ventas
-                  {filtroTipoPago && (
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        fontSize: "0.8rem",
-                        fontWeight: 500,
-                        color: "#64748b",
-                      }}
-                    >
-                      — {facturasFiltradas.length} resultado
-                      {facturasFiltradas.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </h3>
-                {onVerFacturasEmitidas && (
-                  <button
-                    className="btn-secondary"
-                    onClick={onVerFacturasEmitidas}
-                  >
-                    Ver todas
-                  </button>
-                )}
+            <div
+              className="table-card"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 32,
+                gap: 14,
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 36 }}>📄</div>
+              <div style={{ fontWeight: 700, fontSize: 17 }}>
+                Facturas Emitidas
               </div>
-              {/* Filtros por tipo de pago */}
               <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  padding: "10px 0 6px",
-                  borderBottom: "1px solid var(--border, #e2e8f0)",
-                  marginBottom: 8,
-                }}
+                style={{ fontSize: 13, color: "var(--text-secondary,#64748b)" }}
               >
-                {(
-                  [
-                    {
-                      key: null,
-                      label: "Todas",
-                      icon: "🔄",
-                      color: "#64748b",
-                      total: null,
-                    },
-                    {
-                      key: "efectivo",
-                      label: "Efectivo",
-                      icon: "💵",
-                      color: "#10b981",
-                      total: pagosTotales.efectivo,
-                    },
-                    {
-                      key: "tarjeta",
-                      label: "Tarjeta",
-                      icon: "💳",
-                      color: "#3b82f6",
-                      total: pagosTotales.tarjeta,
-                    },
-                    {
-                      key: "transferencia",
-                      label: "Transferencia",
-                      icon: "🏦",
-                      color: "#8b5cf6",
-                      total: pagosTotales.transferencia,
-                    },
-                    {
-                      key: "dolares",
-                      label: "Dólares",
-                      icon: "💱",
-                      color: "#f59e0b",
-                      total: pagosTotales.dolares_lps,
-                    },
-                    {
-                      key: "delivery",
-                      label: "Delivery",
-                      icon: "🛵",
-                      color: "#f43f5e",
-                      total: deliveryTotal,
-                    },
-                  ] as const
-                ).map(({ key, label, icon, color, total }) => {
-                  const isActive = filtroTipoPago === key;
-                  return (
-                    <button
-                      key={String(key)}
-                      onClick={() => setFiltroTipoPago(key as string | null)}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        gap: 1,
-                        padding: "5px 12px",
-                        border: `2px solid ${isActive ? color : "var(--border, #e2e8f0)"}`,
-                        borderRadius: 20,
-                        background: isActive ? color : "transparent",
-                        color: isActive ? "#fff" : color,
-                        cursor: "pointer",
-                        fontWeight: isActive ? 700 : 500,
-                        fontSize: "0.75rem",
-                        lineHeight: 1.3,
-                        transition: "all 0.18s",
-                        minWidth: 72,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <span style={{ fontSize: "1rem" }}>
-                        {icon} {label}
-                      </span>
-                      {total !== null && (
-                        <span style={{ fontSize: "0.7rem", opacity: 0.85 }}>
-                          L{" "}
-                          {total.toLocaleString("de-DE", {
-                            minimumFractionDigits: 2,
-                          })}
-                        </span>
-                      )}
-                      {key === null && (
-                        <span style={{ fontSize: "0.7rem", opacity: 0.85 }}>
-                          {facturas.length} fact.
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                Ver el detalle completo de facturas por método de pago con
+                totales y neto
               </div>
-              <div style={{ maxHeight: "400px", overflowY: "auto" }}>
-                <div className="table-responsive">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Hora de venta</th>
-                        <th>Cajero</th>
-                        <th>Factura</th>
-                        <th>Cliente</th>
-                        <th>Tipo Pago</th>
-                        <th>Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {facturasFiltradas
-                        .slice(0, filtroTipoPago ? 500 : 10)
-                        .map((f) => {
-                          // Extraer hora en formato 12h
-                          let horaVenta = "";
-                          if (f.fecha_hora) {
-                            try {
-                              const fechaCompleta = f.fecha_hora.includes("T")
-                                ? f.fecha_hora
-                                : f.fecha_hora.replace(" ", "T");
-                              const fecha = new Date(fechaCompleta);
-                              let horas = fecha.getHours();
-                              const minutos = fecha
-                                .getMinutes()
-                                .toString()
-                                .padStart(2, "0");
-                              const ampm = horas >= 12 ? "PM" : "AM";
-                              horas = horas % 12 || 12;
-                              horaVenta = `${horas}:${minutos} ${ampm}`;
-                            } catch (e) {
-                              horaVenta = f.fecha_hora.slice(11, 16) || "";
-                            }
-                          }
-
-                          // Tipos de pago de esta factura
-                          const tiposFactura = pagosPorFacturaMap.get(
-                            String(f.factura || ""),
-                          );
-                          const tipoIcons: Record<
-                            string,
-                            { icon: string; color: string }
-                          > = {
-                            efectivo: { icon: "💵", color: "#10b981" },
-                            tarjeta: { icon: "💳", color: "#3b82f6" },
-                            transferencia: { icon: "🏦", color: "#8b5cf6" },
-                            transferencias: { icon: "🏦", color: "#8b5cf6" },
-                            dolares: { icon: "💱", color: "#f59e0b" },
-                            dólares: { icon: "💱", color: "#f59e0b" },
-                          };
-                          // Si es delivery, también mostrar etiqueta
-                          const esDelivery =
-                            (f.tipo_orden || "").toUpperCase() === "DELIVERY";
-
-                          return (
-                            <tr key={f.id}>
-                              <td data-label="Fecha">
-                                {f.fecha_hora?.slice(0, 10)}
-                              </td>
-                              <td data-label="Hora de venta">{horaVenta}</td>
-                              <td data-label="Cajero">{f.cajero}</td>
-                              <td data-label="Factura">{f.factura}</td>
-                              <td data-label="Cliente">{f.cliente}</td>
-                              <td
-                                data-label="Tipo Pago"
-                                style={{ whiteSpace: "nowrap" }}
-                              >
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    flexWrap: "wrap",
-                                    gap: 3,
-                                  }}
-                                >
-                                  {esDelivery && (
-                                    <span
-                                      style={{
-                                        background: "#fef2f2",
-                                        color: "#f43f5e",
-                                        border: "1px solid #fecdd3",
-                                        borderRadius: 10,
-                                        padding: "1px 7px",
-                                        fontSize: "0.68rem",
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      🛵 Delivery
-                                    </span>
-                                  )}
-                                  {tiposFactura &&
-                                    Array.from(tiposFactura).map((t) => {
-                                      const ti = tipoIcons[t];
-                                      if (!ti) return null;
-                                      const label =
-                                        t === "transferencia" ||
-                                        t === "transferencias"
-                                          ? "Transf."
-                                          : t === "dolares" || t === "dólares"
-                                            ? "Dólares"
-                                            : t.charAt(0).toUpperCase() +
-                                              t.slice(1);
-                                      return (
-                                        <span
-                                          key={t}
-                                          style={{
-                                            background: ti.color + "18",
-                                            color: ti.color,
-                                            border: `1px solid ${ti.color}44`,
-                                            borderRadius: 10,
-                                            padding: "1px 7px",
-                                            fontSize: "0.68rem",
-                                            fontWeight: 600,
-                                          }}
-                                        >
-                                          {ti.icon} {label}
-                                        </span>
-                                      );
-                                    })}
-                                </div>
-                              </td>
-                              <td
-                                data-label="Total"
-                                style={{ color: "var(--success)" }}
-                              >
-                                L {parseFloat(f.total || 0).toFixed(2)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="table-container">
-            <div className="table-card">
-              <div className="table-header">
-                <h3 className="table-title">💸 Gastos</h3>
-              </div>
-              <div style={{ maxHeight: "400px", overflowY: "auto" }}>
-                <div className="table-responsive">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Monto</th>
-                        <th>Motivo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {gastosFiltrados.slice(0, 10).map((g) => (
-                        <tr key={g.id}>
-                          <td data-label="Fecha">{g.fecha}</td>
-                          <td
-                            data-label="Monto"
-                            style={{ color: "var(--danger)" }}
-                          >
-                            L {parseFloat(g.monto || 0).toFixed(2)}
-                          </td>
-                          <td data-label="Motivo">{g.motivo}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Gráficas */}
-        <div className="charts-container">
-          {/* Gráfica de ventas por día */}
-          <h3 className="charts-title" style={{ marginTop: 32 }}>
-            🗓️ Ventas por Día
-          </h3>
-          <div style={{ width: "100%", maxWidth: 900, margin: "0 auto" }}>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart
-                data={ventasPorDia}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke={"var(--border)"} />
-                <XAxis dataKey="fecha" stroke={"var(--text-secondary)"} />
-                <YAxis stroke={"var(--text-secondary)"} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(26,26,46,0.95)",
-                    border: "1px solid var(--border)",
-                    color: "var(--text-primary)",
+              {onVerFacturasEmitidas && (
+                <button
+                  className="btn-primary"
+                  onClick={onVerFacturasEmitidas}
+                  style={{
+                    padding: "10px 24px",
+                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 14,
                   }}
-                />
-                <Bar dataKey="total" fill="var(--success)" name="Ventas" />
-              </BarChart>
-            </ResponsiveContainer>
+                >
+                  📄 Ver Facturas Emitidas
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Botón acceso rápido a Gastos */}
+          <div className="table-container">
+            <div
+              className="table-card"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 32,
+                gap: 14,
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 36 }}>💸</div>
+              <div style={{ fontWeight: 700, fontSize: 17 }}>
+                Gastos del Período
+              </div>
+              <div
+                style={{ fontSize: 13, color: "var(--text-secondary,#64748b)" }}
+              >
+                Consultar y registrar gastos filtrados por intervalo de fechas
+              </div>
+              {onVerGastos && (
+                <button
+                  onClick={onVerGastos}
+                  style={{
+                    padding: "10px 24px",
+                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    background: "#ef4444",
+                    color: "#fff",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  💸 Ver Gastos
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </main>
