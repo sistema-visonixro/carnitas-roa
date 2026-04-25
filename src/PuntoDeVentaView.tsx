@@ -1342,8 +1342,6 @@ export default function PuntoDeVentaView({
   const [pedidosProcessingId, setPedidosProcessingId] = useState<string | null>(
     null,
   );
-  const [editPagoRowId, setEditPagoRowId] = useState<string | null>(null);
-  const [editPagoTipo, setEditPagoTipo] = useState<string>("efectivo");
   const [gastoMonto, setGastoMonto] = useState<string>("");
   const [gastoMotivo, setGastoMotivo] = useState<string>("");
   const [gastoFactura, setGastoFactura] = useState<string>("");
@@ -4870,8 +4868,15 @@ export default function PuntoDeVentaView({
                       supabaseError.code === "23505" ||
                       (supabaseError as any).status === 409
                     ) {
+                      // Detectar conflicto de factura con cualquier nombre de constraint
+                      const msg = supabaseError.message ?? "";
                       const esConflictoFactura =
-                        supabaseError.message?.includes("ventas_factura_key");
+                        msg.includes("ventas_factura_key") ||
+                        msg.includes("uq_ventas_factura") ||
+                        msg.includes("factura") ||
+                        // Si no hay mensaje claro, asumir que es conflicto de factura
+                        // (único único constraint que puede fallar en insert de ventas)
+                        true;
 
                       if (esConflictoFactura) {
                         // Contador desincronizado: buscar siguiente número libre con loop
@@ -5283,49 +5288,89 @@ export default function PuntoDeVentaView({
             </div>
           )}
 
+          {/* Modal obligatorio: sin apertura de caja */}
           {aperturaRegistrada === false && !verificandoApertura && (
             <div
               style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 9999,
+                backdropFilter: "blur(6px)",
+                WebkitBackdropFilter: "blur(6px)",
+                background: "rgba(0,0,0,0.55)",
                 display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
-                padding: "40px 20px",
-                background: theme === "lite" ? "#fff3cd" : "#3a2e1c",
-                borderRadius: 16,
-                marginBottom: 20,
-                border: `2px solid ${theme === "lite" ? "#ffc107" : "#ff9800"}`,
               }}
             >
-              <div style={{ textAlign: "center" }}>
-                <p
+              <div
+                style={{
+                  background: theme === "lite" ? "#fffbe6" : "#1e1a0e",
+                  border: `2px solid ${theme === "lite" ? "#ffc107" : "#ff9800"}`,
+                  borderRadius: 20,
+                  padding: "48px 40px",
+                  maxWidth: 420,
+                  width: "90%",
+                  textAlign: "center",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+                }}
+              >
+                {datosNegocio?.logo_url ? (
+                  <img
+                    src={datosNegocio.logo_url}
+                    alt="Logo"
+                    style={{
+                      width: 100,
+                      height: 100,
+                      objectFit: "contain",
+                      borderRadius: 16,
+                      marginBottom: 16,
+                    }}
+                  />
+                ) : (
+                  <div style={{ fontSize: 56, marginBottom: 16 }}>🔒</div>
+                )}
+                <h2
                   style={{
-                    margin: "0 0 16px 0",
-                    fontSize: 16,
-                    fontWeight: 600,
-                    color: theme === "lite" ? "#856404" : "#ffb74d",
+                    margin: "0 0 12px 0",
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: theme === "lite" ? "#7c5200" : "#ffb74d",
                   }}
                 >
-                  No hay apertura de caja activa. Registra una apertura para
-                  continuar.
+                  Caja sin apertura
+                </h2>
+                <p
+                  style={{
+                    margin: "0 0 28px 0",
+                    fontSize: 15,
+                    color: theme === "lite" ? "#856404" : "#ffe082",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  No hay apertura de caja activa.
+                  <br />
+                  Registra una apertura para continuar.
                 </p>
                 <button
                   onClick={registrarAperturaRapida}
                   disabled={registrandoApertura}
                   style={{
-                    padding: "12px 32px",
-                    fontSize: 16,
+                    padding: "14px 40px",
+                    fontSize: 17,
                     fontWeight: 700,
                     background: !isOnline ? "#f57c00" : "#1976d2",
                     color: "#fff",
                     border: "none",
-                    borderRadius: 10,
+                    borderRadius: 12,
                     cursor: registrandoApertura ? "not-allowed" : "pointer",
                     opacity: registrandoApertura ? 0.6 : 1,
-                    boxShadow: "0 4px 12px rgba(25, 118, 210, 0.3)",
+                    boxShadow: "0 6px 20px rgba(25,118,210,0.4)",
+                    width: "100%",
                   }}
                 >
                   {registrandoApertura
-                    ? "Registrando..."
+                    ? "⏳ Registrando..."
                     : !isOnline
                       ? "REGISTRAR APERTURA (OFFLINE)"
                       : "REGISTRAR APERTURA"}
@@ -7244,11 +7289,19 @@ export default function PuntoDeVentaView({
                           tipo_pago: tipoPagoNormalizado,
                         };
 
-                        // PASO 1: Guardar primero en IndexedDB
-                        const envioIdLocal = await guardarEnvioLocal(registro);
-                        console.log(
-                          `✓ Envío guardado en IndexedDB (ID: ${envioIdLocal})`,
-                        );
+                        // PASO 1: Intentar guardar en IndexedDB (no crítico)
+                        let envioIdLocal: number | null = null;
+                        try {
+                          envioIdLocal = await guardarEnvioLocal(registro);
+                          console.log(
+                            `✓ Envío guardado en IndexedDB (ID: ${envioIdLocal})`,
+                          );
+                        } catch (idbErr) {
+                          console.warn(
+                            "⚠ No se pudo guardar en IndexedDB (continuando con Supabase):",
+                            idbErr,
+                          );
+                        }
 
                         // PASO 2: Intentar guardar en Supabase
                         try {
@@ -7266,10 +7319,12 @@ export default function PuntoDeVentaView({
                             );
                           } else {
                             // Si se guardó exitosamente en Supabase, eliminar de IndexedDB
-                            await eliminarEnvioLocal(envioIdLocal);
-                            console.log(
-                              "✓ Envío sincronizado y eliminado de IndexedDB",
-                            );
+                            if (envioIdLocal !== null) {
+                              await eliminarEnvioLocal(envioIdLocal).catch(
+                                () => {},
+                              );
+                            }
+                            console.log("✓ Envío sincronizado con Supabase");
                           }
                         } catch (supabaseErr) {
                           console.error(
@@ -8227,15 +8282,6 @@ export default function PuntoDeVentaView({
                             fontWeight: 600,
                           }}
                         >
-                          Pago
-                        </th>
-                        <th
-                          style={{
-                            padding: "12px 16px",
-                            textAlign: "center",
-                            fontWeight: 600,
-                          }}
-                        >
                           Acciones
                         </th>
                       </tr>
@@ -8283,64 +8329,6 @@ export default function PuntoDeVentaView({
                             }}
                           >
                             L {Number(p.costo_envio || 0).toFixed(2)}
-                          </td>
-                          <td
-                            style={{
-                              padding: "12px 16px",
-                              textAlign: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 12,
-                                fontSize: 12,
-                                background:
-                                  p.tipo_pago === "efectivo" ||
-                                  p.tipo_pago === "Efectivo"
-                                    ? "#e8f5e9"
-                                    : p.tipo_pago === "tarjeta" ||
-                                        p.tipo_pago === "Tarjeta"
-                                      ? "#e3f2fd"
-                                      : p.tipo_pago === "transferencia" ||
-                                          p.tipo_pago === "Transferencia"
-                                        ? "#f3e8ff"
-                                        : p.tipo_pago === "dolares" ||
-                                            p.tipo_pago === "Dolares"
-                                          ? "#fef9c3"
-                                          : "#f3f4f6",
-                                color:
-                                  p.tipo_pago === "efectivo" ||
-                                  p.tipo_pago === "Efectivo"
-                                    ? "#2e7d32"
-                                    : p.tipo_pago === "tarjeta" ||
-                                        p.tipo_pago === "Tarjeta"
-                                      ? "#1565c0"
-                                      : p.tipo_pago === "transferencia" ||
-                                          p.tipo_pago === "Transferencia"
-                                        ? "#7c3aed"
-                                        : p.tipo_pago === "dolares" ||
-                                            p.tipo_pago === "Dolares"
-                                          ? "#d97706"
-                                          : "#6b7280",
-                                border: "1px solid transparent",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {p.tipo_pago === "efectivo" ||
-                              p.tipo_pago === "Efectivo"
-                                ? "💵 Efectivo"
-                                : p.tipo_pago === "tarjeta" ||
-                                    p.tipo_pago === "Tarjeta"
-                                  ? "💳 Tarjeta"
-                                  : p.tipo_pago === "transferencia" ||
-                                      p.tipo_pago === "Transferencia"
-                                    ? "🏦 Transferencia"
-                                    : p.tipo_pago === "dolares" ||
-                                        p.tipo_pago === "Dolares"
-                                      ? "💱 Dólares"
-                                      : p.tipo_pago}
-                            </span>
                           </td>
                           <td
                             style={{
@@ -8448,166 +8436,7 @@ export default function PuntoDeVentaView({
                               >
                                 Entregado
                               </button>
-                              {/* Cambiar método de pago */}
-                              <button
-                                onClick={() => {
-                                  const key = String(
-                                    p.id || p.local_id || `row-${index}`,
-                                  );
-                                  if (editPagoRowId === key) {
-                                    setEditPagoRowId(null);
-                                  } else {
-                                    setEditPagoRowId(key);
-                                    setEditPagoTipo(
-                                      (p.tipo_pago || "efectivo").toLowerCase(),
-                                    );
-                                  }
-                                }}
-                                style={{
-                                  background:
-                                    editPagoRowId ===
-                                    String(p.id || p.local_id || `row-${index}`)
-                                      ? "#1976d2"
-                                      : "#e3f2fd",
-                                  color:
-                                    editPagoRowId ===
-                                    String(p.id || p.local_id || `row-${index}`)
-                                      ? "#fff"
-                                      : "#1976d2",
-                                  border: "1px solid #90caf9",
-                                  padding: "6px 10px",
-                                  borderRadius: 6,
-                                  cursor: "pointer",
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                }}
-                              >
-                                💳 Cambiar pago
-                              </button>
                             </div>
-                            {/* Panel inline para cambiar método de pago */}
-                            {editPagoRowId ===
-                              String(p.id || p.local_id || `row-${index}`) && (
-                              <div
-                                style={{
-                                  marginTop: 8,
-                                  padding: "10px 12px",
-                                  background: "#f0f7ff",
-                                  borderRadius: 8,
-                                  border: "1.5px solid #90caf9",
-                                  display: "flex",
-                                  flexWrap: "wrap",
-                                  gap: 6,
-                                  alignItems: "center",
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    color: "#1976d2",
-                                    marginRight: 4,
-                                  }}
-                                >
-                                  Nuevo método:
-                                </span>
-                                {[
-                                  {
-                                    value: "efectivo",
-                                    label: "💵 Efectivo",
-                                    color: "#16a34a",
-                                  },
-                                  {
-                                    value: "tarjeta",
-                                    label: "💳 Tarjeta",
-                                    color: "#1976d2",
-                                  },
-                                  {
-                                    value: "transferencia",
-                                    label: "🏦 Transf.",
-                                    color: "#7c3aed",
-                                  },
-                                ].map((opt) => (
-                                  <button
-                                    key={opt.value}
-                                    onClick={() => setEditPagoTipo(opt.value)}
-                                    style={{
-                                      background:
-                                        editPagoTipo === opt.value
-                                          ? opt.color
-                                          : "#fff",
-                                      color:
-                                        editPagoTipo === opt.value
-                                          ? "#fff"
-                                          : opt.color,
-                                      border: `1.5px solid ${opt.color}`,
-                                      borderRadius: 6,
-                                      padding: "4px 10px",
-                                      fontSize: 12,
-                                      fontWeight: 700,
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                ))}
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      if (p.__localPending) {
-                                        // Actualizar en IndexedDB si es local
-                                      } else {
-                                        const { error } = await supabase
-                                          .from("pedidos_envio")
-                                          .update({ tipo_pago: editPagoTipo })
-                                          .eq("id", p.id);
-                                        if (error) throw error;
-                                      }
-                                      // Actualizar localmente
-                                      setPedidosList((prev) =>
-                                        prev.map((x) =>
-                                          String(x.id || x.local_id) ===
-                                          String(p.id || p.local_id)
-                                            ? { ...x, tipo_pago: editPagoTipo }
-                                            : x,
-                                        ),
-                                      );
-                                      setEditPagoRowId(null);
-                                    } catch (err) {
-                                      alert("Error al cambiar método de pago");
-                                    }
-                                  }}
-                                  style={{
-                                    background: "#1976d2",
-                                    color: "#fff",
-                                    border: "none",
-                                    borderRadius: 6,
-                                    padding: "4px 14px",
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                    marginLeft: 4,
-                                  }}
-                                >
-                                  ✓ Guardar
-                                </button>
-                                <button
-                                  onClick={() => setEditPagoRowId(null)}
-                                  style={{
-                                    background: "#f3f4f6",
-                                    color: "#6b7280",
-                                    border: "1px solid #d1d5db",
-                                    borderRadius: 6,
-                                    padding: "4px 10px",
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            )}
                           </td>
                         </tr>
                       ))}

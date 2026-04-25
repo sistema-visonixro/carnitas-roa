@@ -2630,8 +2630,6 @@ export default function ResultadosView({
             return tipos.has(filtroTipoPago);
           });
 
-
-
   const gastosFiltrados = gastos;
 
   // Calcular total de ventas desde el balance (que ya usa pagos)
