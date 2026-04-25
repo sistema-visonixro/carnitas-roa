@@ -95,7 +95,7 @@ export default function RegistroCierreView({
     const { data: turno, error: turnoError } = await supabase
       .from("v_resumen_turnos")
       .select(
-        "efectivo_neto, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, total_ventas",
+        "efectivo_neto, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas, total_platillos, total_bebidas, total_ventas",
       )
       .eq("cajero_id", usuarioActual?.id)
       .eq("caja", caja)
@@ -112,8 +112,8 @@ export default function RegistroCierreView({
     const transferenciasDia = parseFloat(turno?.transferencia ?? 0);
     const dolaresDia = parseFloat(turno?.dolares_usd ?? 0);
     const gastosDia = parseFloat(turno?.gastos ?? 0);
-    const platillosDia = parseFloat(turno?.platillos_vendidos ?? 0);
-    const bebidasDia = parseFloat(turno?.bebidas_vendidas ?? 0);
+    const platillosDia = parseFloat(turno?.total_platillos ?? turno?.platillos_vendidos ?? 0);
+    const bebidasDia = parseFloat(turno?.total_bebidas ?? turno?.bebidas_vendidas ?? 0);
     const totalVentasDia = parseFloat(turno?.total_ventas ?? 0);
 
     console.debug("v_resumen_turnos →", {
@@ -211,8 +211,8 @@ export default function RegistroCierreView({
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">RESUMEN DE VENTAS</div>
-            <div class="row"><span>Platillos Vendidos:</span><span>${Math.round(platillosDia)}</span></div>
-            <div class="row"><span>Bebidas Vendidas:</span><span>${Math.round(bebidasDia)}</span></div>
+            <div class="row"><span>Platillos:</span><span>${Math.round(platillosDia)}</span></div>
+            <div class="row"><span>Bebidas:</span><span>${Math.round(bebidasDia)}</span></div>
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
