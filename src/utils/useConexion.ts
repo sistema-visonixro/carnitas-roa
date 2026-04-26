@@ -13,6 +13,14 @@ let ultimaVerificacionReal = {
 
 const CACHE_DURATION = 2000; // 2 segundos de cache
 
+function obtenerConfigSupabase() {
+  const supabaseUrl =
+    (import.meta as any).env?.VITE_SUPABASE_URL ||
+    "https://qxrdbsgktnyhigduhzcw.supabase.co";
+  const anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "";
+  return { supabaseUrl, anonKey };
+}
+
 /**
  * Verifica conexión real haciendo ping al endpoint de Supabase.
  * Solo se llama cuando navigator.onLine es true (para detectar "WiFi sin internet").
@@ -33,26 +41,31 @@ async function verificarConexionRealConTimeout(): Promise<boolean> {
   }
 
   try {
-    const supabaseUrl =
-      (import.meta as any).env?.VITE_SUPABASE_URL ||
-      "https://qxrdbsgktnyhigduhzcw.supabase.co";
-
+    const { supabaseUrl, anonKey } = obtenerConfigSupabase();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-    // Timestamp en URL para evitar cache HTTP del navegador
-    await fetch(`${supabaseUrl}/rest/v1/?_ts=${ahora}`, {
-      method: "HEAD",
-      mode: "no-cors",
+    // Usar endpoint de salud para no depender de autenticación de tablas REST.
+    const res = await fetch(`${supabaseUrl}/auth/v1/health?_ts=${ahora}`, {
+      method: "GET",
       signal: controller.signal,
       cache: "no-store",
+      headers: anonKey ? { apikey: anonKey } : undefined,
     });
 
     clearTimeout(timeoutId);
-    ultimaVerificacionReal = { timestamp: ahora, conectado: true };
-    return true;
+
+    // 2xx/3xx/401/403 significan que hay red y el host responde.
+    const conectado =
+      res.ok ||
+      res.status === 401 ||
+      res.status === 403 ||
+      (res.status >= 300 && res.status < 400);
+
+    ultimaVerificacionReal = { timestamp: ahora, conectado };
+    return conectado;
   } catch (_) {
-    // Cualquier error (NetworkError, AbortError/timeout) = sin internet real
+    // Cualquier error de red real (NetworkError, AbortError/timeout) = sin internet real
     ultimaVerificacionReal = { timestamp: Date.now(), conectado: false };
     return false;
   }
@@ -156,24 +169,29 @@ export function verificarConexion(): boolean {
  * Intenta hacer un ping a Supabase para verificar conexión real
  */
 export async function verificarConexionReal(
-  supabaseUrl: string,
+  supabaseUrl?: string,
 ): Promise<boolean> {
   if (!navigator.onLine) {
     return false;
   }
 
   try {
+    const { supabaseUrl: defaultUrl, anonKey } = obtenerConfigSupabase();
+    const base = supabaseUrl || defaultUrl;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-    await fetch(supabaseUrl, {
-      method: "HEAD",
+    const res = await fetch(`${base}/auth/v1/health?_ts=${Date.now()}`, {
+      method: "GET",
       signal: controller.signal,
       cache: "no-store",
+      headers: anonKey ? { apikey: anonKey } : undefined,
     });
 
     clearTimeout(timeoutId);
-    return true;
+    return (
+      res.ok || res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)
+    );
   } catch (error) {
     return false;
   }

@@ -1553,7 +1553,7 @@ export default function PuntoDeVentaView({
 
     // Sincronización automática en segundo plano cada 60 segundos (solo cuando hay conexión)
     const syncInterval = setInterval(async () => {
-      if (isOnline && estaConectado()) {
+      if (estaConectado()) {
         try {
           const resultado = await sincronizarTodo();
           const total =
@@ -1630,6 +1630,30 @@ export default function PuntoDeVentaView({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
+
+  // Disparo inmediato de sincronización al recuperar internet real
+  useEffect(() => {
+    if (!isOnline || !estaConectado()) return;
+
+    (async () => {
+      try {
+        const resultado = await sincronizarTodo();
+        const total =
+          resultado.facturas.exitosas +
+          resultado.pagos.exitosos +
+          resultado.gastos.exitosos +
+          resultado.envios.exitosos;
+
+        if (total > 0) {
+          console.log(
+            `🔄 Sincronización por reconexión: ${resultado.facturas.exitosas} facturas, ${resultado.pagos.exitosos} pagos, ${resultado.gastos.exitosos} gastos, ${resultado.envios.exitosos} envíos`,
+          );
+        }
+      } catch (error) {
+        console.error("Error sincronizando al reconectar:", error);
+      }
+    })();
+  }, [isOnline]);
 
   // Función para sincronizar manualmente
   // const sincronizarManualmente = async () => {
