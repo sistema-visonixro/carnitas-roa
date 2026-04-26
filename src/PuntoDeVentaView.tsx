@@ -1369,6 +1369,66 @@ export default function PuntoDeVentaView({
   const [rtnCliente, setRtnCliente] = useState("");
   const [nombreClienteFiscal, setNombreClienteFiscal] = useState("");
   const TIPO_RECIBO = "RECIBO" as const;
+  const TIPO_FACTURA = "FACTURA" as const;
+
+  const parseSecuencialDocumento = (documento: string): number | null => {
+    const m = String(documento || "").match(/(\d+)$/);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const formatearNumeroSar = (caiRow: any, secuencial: number): string => {
+    const est = String(caiRow?.numero_establecimiento || "001").padStart(
+      3,
+      "0",
+    );
+    const pto = String(caiRow?.punto_emision || "001").padStart(3, "0");
+    const tdoc = String(caiRow?.tipo_documento || "01").padStart(2, "0");
+    const corr = String(secuencial).padStart(8, "0");
+    return `${est}-${pto}-${tdoc}-${corr}`;
+  };
+
+  const persistirFacturaActualOffline = async (
+    secuencialSiguiente: number,
+    caiFactura?: any,
+  ) => {
+    if (!usuarioActual?.id || !Number.isFinite(secuencialSiguiente)) return;
+
+    const caiRows = await getAll<any>(STORE.CAI_FACTURAS);
+    const caiFact =
+      caiFactura ||
+      caiRows.find(
+        (row) =>
+          row.cajero_id === usuarioActual.id &&
+          row.tipo_comprobante === TIPO_FACTURA &&
+          row.activo !== false,
+      );
+
+    if (!caiFact) return;
+
+    const secStr = String(secuencialSiguiente);
+    await upsertOne(STORE.CAI_FACTURAS, {
+      ...caiFact,
+      factura_actual: secStr,
+    });
+
+    try {
+      await guardarCaiCache({
+        id: String(caiFact.id),
+        cajero_id: caiFact.cajero_id,
+        tipo_comprobante: TIPO_FACTURA,
+        caja_asignada: caiFact.caja_asignada,
+        cai: caiFact.cai,
+        factura_desde: caiFact.rango_desde,
+        factura_hasta: caiFact.rango_hasta,
+        factura_actual: secStr,
+        nombre_cajero: usuarioActual?.nombre || "",
+      });
+    } catch {
+      /* non-critical */
+    }
+  };
 
   const guardarReciboActualEnCache = async (nuevaFactura: string) => {
     const caiCache = await obtenerCaiCache(usuarioActual?.id, TIPO_RECIBO);
@@ -4009,10 +4069,35 @@ export default function PuntoDeVentaView({
                     "[facturar] SAR RPC devolvió error, usando valor local:",
                     sarError,
                   );
+                  let facturaOfflineSar: string | null = null;
+                  try {
+                    const caiRows = await getAll<any>(STORE.CAI_FACTURAS);
+                    const caiFact = caiRows.find(
+                      (r) =>
+                        r.cajero_id === usuarioActual?.id &&
+                        r.tipo_comprobante === TIPO_FACTURA &&
+                        r.activo !== false,
+                    );
+                    if (caiFact) {
+                      const actual = parseInt(
+                        caiFact.factura_actual || caiFact.rango_desde || "0",
+                        10,
+                      );
+                      if (Number.isFinite(actual) && actual > 0) {
+                        facturaOfflineSar = formatearNumeroSar(caiFact, actual);
+                        sarNumeroSecuencial = actual;
+                        sarCaiFactura = caiFact.cai || "";
+                        sarFechaLimiteEmision = caiFact.fecha_limite_emision;
+                        sarRangoDesde = Number(caiFact.rango_desde || 0) || null;
+                        sarRangoHasta = Number(caiFact.rango_hasta || 0) || null;
+                      }
+                    }
+                  } catch {
+                    /* non-critical */
+                  }
+
                   facturaParaEstaVenta =
-                    facturaActual && facturaActual !== "Límite alcanzado"
-                      ? facturaActual
-                      : `OFFLINE-${Date.now()}`;
+                    facturaOfflineSar ?? `OFFLINE-${Date.now()}`;
                 }
               } else {
                 // ── Ruta RECIBO: RPC antiguo, correlativo numérico ────────────────
@@ -4061,45 +4146,107 @@ export default function PuntoDeVentaView({
               }
             } catch (rpcErr) {
               console.error("[facturar] Error al llamar RPC:", rpcErr);
-              facturaParaEstaVenta =
-                facturaActual &&
-                Number.isFinite(parseInt(facturaActual)) &&
-                facturaActual !== "Límite alcanzado"
-                  ? facturaActual
-                  : `OFFLINE-${Date.now()}`;
+              if (tipoDocumentoFiscal === TIPO_FACTURA && usuarioActual?.id) {
+                let facturaOfflineSar: string | null = null;
+                try {
+                  const caiRows = await getAll<any>(STORE.CAI_FACTURAS);
+                  const caiFact = caiRows.find(
+                    (r) =>
+                      r.cajero_id === usuarioActual?.id &&
+                      r.tipo_comprobante === TIPO_FACTURA &&
+                      r.activo !== false,
+                  );
+                  if (caiFact) {
+                    const actual = parseInt(
+                      caiFact.factura_actual || caiFact.rango_desde || "0",
+                      10,
+                    );
+                    if (Number.isFinite(actual) && actual > 0) {
+                      facturaOfflineSar = formatearNumeroSar(caiFact, actual);
+                      sarNumeroSecuencial = actual;
+                      sarCaiFactura = caiFact.cai || "";
+                      sarFechaLimiteEmision = caiFact.fecha_limite_emision;
+                      sarRangoDesde = Number(caiFact.rango_desde || 0) || null;
+                      sarRangoHasta = Number(caiFact.rango_hasta || 0) || null;
+                    }
+                  }
+                } catch {
+                  /* non-critical */
+                }
+                facturaParaEstaVenta =
+                  facturaOfflineSar ?? `OFFLINE-${Date.now()}`;
+              } else {
+                facturaParaEstaVenta =
+                  facturaActual &&
+                  Number.isFinite(parseInt(facturaActual)) &&
+                  facturaActual !== "Límite alcanzado"
+                    ? facturaActual
+                    : `OFFLINE-${Date.now()}`;
+              }
             }
           } else {
             // Sin conexión: usar contador local
-            let facturaOffline: string | null =
-              facturaActual &&
-              Number.isFinite(parseInt(facturaActual)) &&
-              facturaActual !== "Límite alcanzado"
-                ? facturaActual
-                : null;
-
-            if (!facturaOffline && usuarioActual?.id) {
+            if (tipoDocumentoFiscal === TIPO_FACTURA && usuarioActual?.id) {
+              let facturaOfflineSar: string | null = null;
               try {
                 const caiRows = await getAll<any>(STORE.CAI_FACTURAS);
-                const caiRecibo = caiRows.find(
+                const caiFact = caiRows.find(
                   (r) =>
                     r.cajero_id === usuarioActual.id &&
-                    r.tipo_comprobante === TIPO_RECIBO &&
+                    r.tipo_comprobante === TIPO_FACTURA &&
                     r.activo !== false,
                 );
-                if (caiRecibo) {
-                  const base = parseInt(
-                    caiRecibo.factura_actual || caiRecibo.rango_desde || "0",
+                if (caiFact) {
+                  const actual = parseInt(
+                    caiFact.factura_actual || caiFact.rango_desde || "0",
+                    10,
                   );
-                  if (Number.isFinite(base) && base > 0) {
-                    facturaOffline = String(base);
+                  if (Number.isFinite(actual) && actual > 0) {
+                    facturaOfflineSar = formatearNumeroSar(caiFact, actual);
+                    sarNumeroSecuencial = actual;
+                    sarCaiFactura = caiFact.cai || "";
+                    sarFechaLimiteEmision = caiFact.fecha_limite_emision;
+                    sarRangoDesde = Number(caiFact.rango_desde || 0) || null;
+                    sarRangoHasta = Number(caiFact.rango_hasta || 0) || null;
                   }
                 }
               } catch {
                 /* non-critical */
               }
-            }
+              facturaParaEstaVenta =
+                facturaOfflineSar ?? `OFFLINE-${Date.now()}`;
+            } else {
+              let facturaOffline: string | null =
+                facturaActual &&
+                Number.isFinite(parseInt(facturaActual)) &&
+                facturaActual !== "Límite alcanzado"
+                  ? facturaActual
+                  : null;
 
-            facturaParaEstaVenta = facturaOffline ?? `OFFLINE-${Date.now()}`;
+              if (!facturaOffline && usuarioActual?.id) {
+                try {
+                  const caiRows = await getAll<any>(STORE.CAI_FACTURAS);
+                  const caiRecibo = caiRows.find(
+                    (r) =>
+                      r.cajero_id === usuarioActual.id &&
+                      r.tipo_comprobante === TIPO_RECIBO &&
+                      r.activo !== false,
+                  );
+                  if (caiRecibo) {
+                    const base = parseInt(
+                      caiRecibo.factura_actual || caiRecibo.rango_desde || "0",
+                    );
+                    if (Number.isFinite(base) && base > 0) {
+                      facturaOffline = String(base);
+                    }
+                  }
+                } catch {
+                  /* non-critical */
+                }
+              }
+
+              facturaParaEstaVenta = facturaOffline ?? `OFFLINE-${Date.now()}`;
+            }
           }
 
           // ── BIFURCACIÓN DELIVERY: si hay pedido pendiente de entrega, procesarlo y retornar ──
@@ -5426,6 +5573,23 @@ export default function PuntoDeVentaView({
                   } catch (err) {
                     console.error(
                       "Error actualizando factura_actual de RECIBO:",
+                      err,
+                    );
+                  }
+                }
+              }
+
+              if (tipoDocumentoFiscal === TIPO_FACTURA && facturaParaEstaVenta) {
+                const secuencialUsado =
+                  sarNumeroSecuencial ??
+                  parseSecuencialDocumento(facturaParaEstaVenta);
+                if (secuencialUsado && Number.isFinite(secuencialUsado)) {
+                  const siguiente = secuencialUsado + 1;
+                  try {
+                    await persistirFacturaActualOffline(siguiente);
+                  } catch (err) {
+                    console.error(
+                      "Error actualizando factura_actual de FACTURA en IDB:",
                       err,
                     );
                   }
@@ -10201,7 +10365,7 @@ export default function PuntoDeVentaView({
                         const caiLocal = caiRows.find(
                           (r) =>
                             r.cajero_id === usuarioActual?.id &&
-                            r.tipo_comprobante === "RECIBO" &&
+                            r.tipo_comprobante === "FACTURA" &&
                             r.activo !== false,
                         );
                         if (caiLocal) {
@@ -10212,7 +10376,7 @@ export default function PuntoDeVentaView({
                             .from("cai_facturas")
                             .select("*")
                             .eq("cajero_id", usuarioActual?.id)
-                            .eq("tipo_comprobante", "RECIBO")
+                            .eq("tipo_comprobante", "FACTURA")
                             .eq("activo", true)
                             .order("id", { ascending: false })
                             .limit(1)
@@ -11378,7 +11542,7 @@ export default function PuntoDeVentaView({
                 {[
                   { label: "CAI", value: caiFactData.cai, mono: true },
                   {
-                    label: "No. Recibo Actual",
+                    label: "No. Factura Actual",
                     value: caiFactData.factura_actual,
                   },
                   { label: "Rango Desde", value: caiFactData.rango_desde },
