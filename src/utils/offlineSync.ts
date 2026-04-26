@@ -872,7 +872,7 @@ export async function guardarGastoLocal(
 ): Promise<number> {
   const database = await initIndexedDB();
 
-  return new Promise((resolve, reject) => {
+  const localId = await new Promise<number>((resolve, reject) => {
     const transaction = database.transaction([GASTOS_STORE], "readwrite");
     const store = transaction.objectStore(GASTOS_STORE);
 
@@ -894,6 +894,19 @@ export async function guardarGastoLocal(
       reject(request.error);
     };
   });
+
+  // Guardar también en STORE.GASTOS (fuente primaria para resumen/historial offline)
+  try {
+    const tempId =
+      typeof (gasto as any).id === "number"
+        ? (gasto as any).id
+        : -Math.abs(localId);
+    await upsertOne(STORE.GASTOS, { ...gasto, id: tempId });
+  } catch (e) {
+    console.error("[offlineSync] No se pudo guardar gasto en STORE.GASTOS:", e);
+  }
+
+  return localId;
 }
 
 /**

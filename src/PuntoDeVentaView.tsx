@@ -697,9 +697,7 @@ export default function PuntoDeVentaView({
           const ventasTurno = todasVentas
             .filter((v) => {
               const ts = toTs(v.fecha_hora);
-              return (
-                ts >= tsAp && v.tipo !== "CREDITO" && v.tipo !== "DEVOLUCION"
-              );
+              return ts >= tsAp && v.tipo !== "CREDITO";
             })
             .sort(
               (a, b) =>
