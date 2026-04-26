@@ -410,6 +410,7 @@ export default function RegistroCierreView({
             diferencia: registro.diferencia,
             observacion: registro.observacion,
             estado: "CIERRE",
+            pending_sync: true,
           };
           await upsertOne(STORE.CIERRES, cierreIdb);
           registroId = aperturaIdb.id;
@@ -420,6 +421,7 @@ export default function RegistroCierreView({
             ...registro,
             id: tempId,
             estado: "CIERRE",
+            pending_sync: true,
           });
           registroId = tempId;
         }
@@ -468,6 +470,17 @@ export default function RegistroCierreView({
               .eq("id", aperturaDelDia.id);
             if (updateError) throw updateError;
             registroId = aperturaDelDia.id;
+
+            try {
+              await upsertOne(STORE.CIERRES, {
+                ...registro,
+                id: aperturaDelDia.id,
+                estado: "CIERRE",
+                pending_sync: false,
+              });
+            } catch (e) {
+              console.warn("[RegistroCierre] No se pudo limpiar pending_sync local:", e);
+            }
           } else {
             // No hay apertura en Supabase, insertar cierre directo
             const { data: insertData, error: insertError } = await supabase
@@ -477,6 +490,22 @@ export default function RegistroCierreView({
               .single();
             if (insertError) throw insertError;
             if (insertData?.id) registroId = insertData.id;
+
+            if (insertData?.id) {
+              try {
+                await upsertOne(STORE.CIERRES, {
+                  ...registro,
+                  id: insertData.id,
+                  estado: "CIERRE",
+                  pending_sync: false,
+                });
+              } catch (e) {
+                console.warn(
+                  "[RegistroCierre] No se pudo actualizar id/estado de sync en IDB:",
+                  e,
+                );
+              }
+            }
           }
         } catch (sbErr: any) {
           console.warn(

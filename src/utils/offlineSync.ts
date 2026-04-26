@@ -4,7 +4,7 @@
  */
 
 import { supabase } from "../supabaseClient";
-import { upsertOne, getByIndex, STORE } from "./localDB";
+import { upsertOne, getByIndex, getAll, deleteById, STORE } from "./localDB";
 
 // Nombre de la base de datos
 const DB_NAME = "PuntoVentaOfflineDB";
@@ -1259,6 +1259,108 @@ export async function sincronizarEnvios(): Promise<{
  */
 let _isSyncing = false;
 
+export async function obtenerCierresPendientesSync(): Promise<any[]> {
+  try {
+    const cierres = await getAll<any>(STORE.CIERRES);
+    return cierres.filter(
+      (c) =>
+        (c?.estado === "CIERRE" || c?.tipo_registro === "cierre") &&
+        c?.pending_sync === true,
+    );
+  } catch (e) {
+    console.error("[cierres] Error obteniendo cierres pendientes:", e);
+    return [];
+  }
+}
+
+export async function sincronizarCierresPendientes(): Promise<{
+  exitosos: number;
+  fallidos: number;
+}> {
+  const pendientes = await obtenerCierresPendientesSync();
+  if (pendientes.length === 0) return { exitosos: 0, fallidos: 0 };
+
+  let exitosos = 0;
+  let fallidos = 0;
+
+  for (const cierre of pendientes) {
+    const payload = {
+      tipo_registro: "cierre",
+      cajero: cierre.cajero ?? "",
+      cajero_id: cierre.cajero_id ?? null,
+      caja: cierre.caja ?? "",
+      fecha: cierre.fecha,
+      fondo_fijo_registrado: Number(cierre.fondo_fijo_registrado ?? 0),
+      fondo_fijo: Number(cierre.fondo_fijo ?? 0),
+      efectivo_registrado: Number(cierre.efectivo_registrado ?? 0),
+      efectivo_dia: Number(cierre.efectivo_dia ?? 0),
+      monto_tarjeta_registrado: Number(cierre.monto_tarjeta_registrado ?? 0),
+      monto_tarjeta_dia: Number(cierre.monto_tarjeta_dia ?? 0),
+      transferencias_registradas: Number(cierre.transferencias_registradas ?? 0),
+      transferencias_dia: Number(cierre.transferencias_dia ?? 0),
+      dolares_registrado: Number(cierre.dolares_registrado ?? 0),
+      dolares_dia: Number(cierre.dolares_dia ?? 0),
+      diferencia: Number(cierre.diferencia ?? 0),
+      observacion: cierre.observacion ?? "",
+      estado: "CIERRE",
+    };
+
+    try {
+      const cierreId = Number(cierre.id);
+      let syncedId: number | null = null;
+
+      if (Number.isFinite(cierreId) && cierreId > 0) {
+        const { data: updData, error: updErr } = await supabase
+          .from("cierres")
+          .update(payload)
+          .eq("id", cierreId)
+          .select("id")
+          .maybeSingle();
+
+        if (updErr) throw updErr;
+        syncedId = updData?.id ?? null;
+      }
+
+      if (!syncedId) {
+        const { data: insData, error: insErr } = await supabase
+          .from("cierres")
+          .insert([payload])
+          .select("id")
+          .single();
+
+        if (insErr) throw insErr;
+        syncedId = insData?.id ?? null;
+      }
+
+      if (!syncedId) throw new Error("No se obtuvo id sincronizado de cierre");
+
+      const cierreLimpio = {
+        ...cierre,
+        id: syncedId,
+        tipo_registro: "cierre",
+        estado: "CIERRE",
+        pending_sync: false,
+      };
+
+      if (Number(cierre.id) !== syncedId) {
+        try {
+          await deleteById(STORE.CIERRES, cierre.id);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      await upsertOne(STORE.CIERRES, cierreLimpio);
+      exitosos++;
+    } catch (error) {
+      console.error("[cierres] Error sincronizando cierre pendiente:", error);
+      fallidos++;
+    }
+  }
+
+  return { exitosos, fallidos };
+}
+
 /**
  * Sincroniza todos los datos pendientes (facturas, pagos, gastos y envíos)
  */
@@ -1289,12 +1391,13 @@ export async function sincronizarTodo(): Promise<{
     const pagos = await sincronizarPagos(); // legado
     await sincronizarPagosF(); // abonos crédito
     const ventasResult = await sincronizarVentas(); // nueva tabla ventas
+    const cierresResult = await sincronizarCierresPendientes();
     const gastos = await sincronizarGastos();
     const envios = await sincronizarEnvios();
 
     console.log(
       `[sync] Completa: ${facturas.exitosas} facturas (legado), ${pagos.exitosos} pagos (legado), ` +
-        `${ventasResult.exitosas} ventas, ${gastos.exitosos} gastos, ${envios.exitosos} envíos.`,
+        `${ventasResult.exitosas} ventas, ${cierresResult.exitosos} cierres, ${gastos.exitosos} gastos, ${envios.exitosos} envíos.`,
     );
 
     return { facturas, pagos, gastos, envios };
@@ -1312,12 +1415,14 @@ export async function obtenerContadorPendientes(): Promise<{
   gastos: number;
   envios: number;
   ventas: number;
+  cierres: number;
 }> {
   const facturas = await obtenerFacturasPendientes();
   const pagos = await obtenerPagosPendientes();
   const gastos = await obtenerGastosPendientes();
   const envios = await obtenerEnviosPendientes();
   const ventas = await obtenerVentasPendientes();
+  const cierres = await obtenerCierresPendientesSync();
 
   return {
     facturas: facturas.length,
@@ -1325,6 +1430,7 @@ export async function obtenerContadorPendientes(): Promise<{
     gastos: gastos.length,
     envios: envios.length,
     ventas: ventas.length,
+    cierres: cierres.length,
   };
 }
 
@@ -1340,7 +1446,9 @@ export function configurarSincronizacionAutomatica(): void {
         pendientes.facturas +
         pendientes.pagos +
         pendientes.gastos +
-        pendientes.envios;
+        pendientes.envios +
+        pendientes.ventas +
+        pendientes.cierres;
       if (total > 0) {
         console.log("Sincronización automática iniciada...");
         await sincronizarTodo();
@@ -2140,6 +2248,89 @@ export async function eliminarVentaLocal(id: number): Promise<void> {
   });
 }
 
+function inferirTipoComprobanteVenta(venta: VentaPendiente): TipoComprobanteFiscal {
+  const tipo = String((venta as any).tipo_documento_fiscal || "").toUpperCase();
+  if (tipo === "FACTURA" || tipo === "RECIBO") {
+    return tipo as TipoComprobanteFiscal;
+  }
+
+  // Fallback defensivo: FACTURA SAR viene formateada 000-000-00-00000000.
+  return String(venta.factura || "").includes("-") ? "FACTURA" : "RECIBO";
+}
+
+function extraerSecuencialVenta(
+  venta: VentaPendiente,
+  facturaFinal?: string,
+): number | null {
+  const tipoComprobante = inferirTipoComprobanteVenta(venta);
+
+  if (tipoComprobante === "FACTURA") {
+    const raw = (venta as any).numero_secuencial ?? facturaFinal ?? venta.factura;
+    const match = String(raw ?? "").match(/(\d+)$/);
+    if (!match) return null;
+    const sec = parseInt(match[1], 10);
+    return Number.isFinite(sec) ? sec : null;
+  }
+
+  const n = parseInt(String(facturaFinal ?? venta.factura ?? ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function sincronizarCorrelativosCai(
+  correlativos: Map<
+    string,
+    { cajeroId: string; tipoComprobante: TipoComprobanteFiscal; siguiente: number }
+  >,
+): Promise<void> {
+  if (correlativos.size === 0) return;
+
+  for (const item of correlativos.values()) {
+    try {
+      const { data: caiRow, error: caiErr } = await supabase
+        .from("cai_facturas")
+        .select("id, factura_actual")
+        .eq("cajero_id", item.cajeroId)
+        .eq("tipo_comprobante", item.tipoComprobante)
+        .maybeSingle();
+
+      if (caiErr || !caiRow?.id) {
+        console.warn(
+          `[ventas] No se encontró CAI para sincronizar correlativo (${item.tipoComprobante}) del cajero ${item.cajeroId}`,
+        );
+        continue;
+      }
+
+      const remMatch = String(caiRow.factura_actual ?? "").match(/(\d+)$/);
+      const remotoActual = remMatch ? parseInt(remMatch[1], 10) : 0;
+      const nuevoActual = Math.max(
+        Number.isFinite(remotoActual) ? remotoActual : 0,
+        item.siguiente,
+      );
+
+      if (!Number.isFinite(nuevoActual) || nuevoActual <= 0) continue;
+      if (remotoActual === nuevoActual) continue;
+
+      const { error: updErr } = await supabase
+        .from("cai_facturas")
+        .update({ factura_actual: String(nuevoActual) })
+        .eq("id", caiRow.id);
+
+      if (updErr) {
+        console.error(
+          `[ventas] Error sincronizando correlativo ${item.tipoComprobante} (${item.cajeroId}):`,
+          updErr,
+        );
+      } else {
+        console.log(
+          `✓ [ventas] Correlativo ${item.tipoComprobante} actualizado a ${nuevoActual} para cajero ${item.cajeroId}`,
+        );
+      }
+    } catch (err) {
+      console.error("[ventas] Error inesperado sincronizando correlativo:", err);
+    }
+  }
+}
+
 /**
  * Sincroniza las ventas pendientes con Supabase.
  * Usa upsert con onConflict="operation_id" para evitar duplicados.
@@ -2148,7 +2339,9 @@ export async function sincronizarVentas(): Promise<{
   exitosas: number;
   fallidas: number;
 }> {
-  const pendientes = await obtenerVentasPendientes();
+  const pendientes = (await obtenerVentasPendientes()).sort(
+    (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+  );
   if (pendientes.length === 0) return { exitosas: 0, fallidas: 0 };
 
   console.log(
@@ -2156,6 +2349,33 @@ export async function sincronizarVentas(): Promise<{
   );
   let exitosas = 0;
   let fallidas = 0;
+  const correlativosPorSincronizar = new Map<
+    string,
+    { cajeroId: string; tipoComprobante: TipoComprobanteFiscal; siguiente: number }
+  >();
+
+  const registrarCorrelativoSincronizado = (
+    ventaSincronizada: VentaPendiente,
+    facturaFinal?: string,
+  ) => {
+    if (!ventaSincronizada.cajero_id) return;
+
+    const secuencial = extraerSecuencialVenta(ventaSincronizada, facturaFinal);
+    if (secuencial === null) return;
+
+    const tipoComprobante = inferirTipoComprobanteVenta(ventaSincronizada);
+    const siguiente = secuencial + 1;
+    const key = `${ventaSincronizada.cajero_id}::${tipoComprobante}`;
+    const existente = correlativosPorSincronizar.get(key);
+
+    if (!existente || siguiente > existente.siguiente) {
+      correlativosPorSincronizar.set(key, {
+        cajeroId: ventaSincronizada.cajero_id,
+        tipoComprobante,
+        siguiente,
+      });
+    }
+  };
 
   for (const venta of pendientes) {
     try {
@@ -2163,11 +2383,37 @@ export async function sincronizarVentas(): Promise<{
 
       const { error } = await supabase.from("ventas").upsert([ventaData], {
         onConflict: "operation_id",
-        ignoreDuplicates: true,
+        ignoreDuplicates: false,
       });
 
       if (error) {
         if (error.code === "23505") {
+          // Si existe una fila con mismo factura+cajero, priorizar el registro local (IDB)
+          // porque representa la operación pendiente más reciente en este dispositivo.
+          const { data: existenteFactura } = await supabase
+            .from("ventas")
+            .select("id")
+            .eq("factura", venta.factura)
+            .eq("cajero_id", venta.cajero_id ?? "")
+            .maybeSingle();
+
+          if (existenteFactura?.id) {
+            const { error: updateErr } = await supabase
+              .from("ventas")
+              .update(ventaData)
+              .eq("id", existenteFactura.id);
+
+            if (!updateErr) {
+              await eliminarVentaLocal(venta.id!);
+              registrarCorrelativoSincronizado(venta);
+              console.log(
+                `✓ [ventas] Registro remoto reemplazado con versión local para factura ${venta.factura}`,
+              );
+              exitosas++;
+              continue;
+            }
+          }
+
           // Verificar si es nuestro propio operation_id (doble submit)
           const { data: existe } = await supabase
             .from("ventas")
@@ -2258,6 +2504,7 @@ export async function sincronizarVentas(): Promise<{
                   .insert([ventaCorregida]);
                 if (!retryError) {
                   await eliminarVentaLocal(venta.id!);
+                  registrarCorrelativoSincronizado(venta, nuevoNumero);
                   console.log(
                     `✓ [ventas] Corregida: ${venta.factura} → ${nuevoNumero}`,
                   );
@@ -2302,6 +2549,7 @@ export async function sincronizarVentas(): Promise<{
         }
       } else {
         await eliminarVentaLocal(venta.id!);
+        registrarCorrelativoSincronizado(venta);
         console.log(`✓ [ventas] Venta ${venta.factura} sincronizada`);
         exitosas++;
       }
@@ -2310,6 +2558,8 @@ export async function sincronizarVentas(): Promise<{
       fallidas++;
     }
   }
+
+  await sincronizarCorrelativosCai(correlativosPorSincronizar);
 
   return { exitosas, fallidas };
 }
@@ -2329,11 +2579,13 @@ export async function inicializarSistemaOffline(): Promise<void> {
         pendientes.facturas +
         pendientes.pagos +
         pendientes.gastos +
-        pendientes.envios;
+        pendientes.envios +
+        pendientes.ventas +
+        pendientes.cierres;
 
       if (total > 0) {
         console.log(
-          `Hay ${pendientes.facturas} facturas, ${pendientes.pagos} pagos, ${pendientes.gastos} gastos y ${pendientes.envios} envíos pendientes de sincronización`,
+          `Hay ${pendientes.facturas} facturas, ${pendientes.pagos} pagos, ${pendientes.gastos} gastos, ${pendientes.envios} envíos, ${pendientes.ventas} ventas y ${pendientes.cierres} cierres pendientes de sincronización`,
         );
         await sincronizarTodo();
       }
