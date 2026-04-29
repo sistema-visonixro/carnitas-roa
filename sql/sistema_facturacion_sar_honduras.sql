@@ -368,6 +368,7 @@ BEGIN
   FROM   public.cai_facturas cf
   WHERE  cf.cajero_id          = p_cajero_id
     AND  cf.activo             = TRUE
+    AND  UPPER(COALESCE(cf.tipo_comprobante, '')) = 'FACTURA'
     AND  (cf.fecha_limite_emision IS NULL OR cf.fecha_limite_emision >= CURRENT_DATE)
   ORDER  BY cf.creado_en DESC
   LIMIT  1

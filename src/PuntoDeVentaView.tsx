@@ -5643,31 +5643,74 @@ export default function PuntoDeVentaView({
                       const esConflictoFactura =
                         msg.includes("ventas_factura_key") ||
                         msg.includes("uq_ventas_factura") ||
-                        msg.includes("factura") ||
-                        // Si no hay mensaje claro, asumir que es conflicto de factura
-                        // (único único constraint que puede fallar en insert de ventas)
-                        true;
+                        msg.includes("factura");
 
                       if (esConflictoFactura) {
-                        // Contador desincronizado: buscar siguiente número libre con loop
-                        // Llamar obtenerSiguienteDisponible UNA sola vez; luego incrementar en cada conflicto
-                        const numBase = await obtenerSiguienteDisponible();
-                        let numActual = numBase ? parseInt(numBase) : null;
                         let intentos = 0;
                         while (!guardadoEnSupabase && intentos < 10) {
                           intentos++;
-                          if (numActual === null) {
-                            console.error("No se pudo obtener número libre");
-                            break;
+                          let ventaCorregida = { ...ventaCompleta } as any;
+                          let nuevoNum = "";
+
+                          if (tipoDocumentoFiscal === "FACTURA") {
+                            const { data: sarRetry, error: sarRetryErr } =
+                              await supabase.rpc(
+                                "siguiente_numero_factura_sar",
+                                {
+                                  p_cajero_id: usuarioActual?.id ?? "",
+                                },
+                              );
+
+                            if (
+                              sarRetryErr ||
+                              !sarRetry ||
+                              sarRetry.length === 0
+                            ) {
+                              console.error(
+                                "No se pudo obtener nuevo correlativo SAR en reintento:",
+                                sarRetryErr,
+                              );
+                              break;
+                            }
+
+                            const sarRowRetry = sarRetry[0];
+                            nuevoNum =
+                              sarRowRetry.numero_factura_formado as string;
+                            ventaCorregida = {
+                              ...ventaCompleta,
+                              factura: nuevoNum,
+                              numero_secuencial:
+                                (sarRowRetry.numero_secuencial as number) ??
+                                ventaCompleta.numero_secuencial,
+                              fecha_limite_emision_cai:
+                                (sarRowRetry.fecha_limite_emision as string) ??
+                                ventaCompleta.fecha_limite_emision_cai,
+                              cai:
+                                (sarRowRetry.cai as string) ||
+                                ventaCompleta.cai,
+                            };
+                          } else {
+                            // RECIBO: buscar siguiente número libre en su secuencia
+                            const numBase = await obtenerSiguienteDisponible();
+                            const numActual = numBase
+                              ? parseInt(numBase)
+                              : null;
+                            if (numActual === null) {
+                              console.error(
+                                "No se pudo obtener número libre para RECIBO",
+                              );
+                              break;
+                            }
+                            nuevoNum = numActual.toString();
+                            ventaCorregida = {
+                              ...ventaCompleta,
+                              factura: nuevoNum,
+                            };
                           }
-                          const nuevoNum = numActual.toString();
+
                           console.warn(
                             `⚠ Factura ${factura} ya existe. Buscando número libre (intento ${intentos})... → ${nuevoNum}`,
                           );
-                          const ventaCorregida = {
-                            ...ventaCompleta,
-                            factura: nuevoNum,
-                          };
                           const { error: retryErr } = await supabase
                             .from("ventas")
                             .insert([ventaCorregida]);
@@ -5701,8 +5744,7 @@ export default function PuntoDeVentaView({
                             retryErr.code === "23505" ||
                             (retryErr as any).status === 409
                           ) {
-                            // Número tomado → incrementar y reintentar
-                            numActual++;
+                            // Número tomado → volver a solicitar en siguiente iteración
                           } else {
                             // Error no recuperable
                             console.error(
