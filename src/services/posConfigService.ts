@@ -10,6 +10,8 @@ export interface PosConfig {
   complementos_habilitado: boolean;
   descuento_habilitado: boolean;
   menu_bloqueado: boolean;
+  pedidos_telefono_cobro_automatico: boolean;
+  cobrar_delivery_en_pedidos: boolean;
   tipo_venta: TipoVentaConfig;
   updated_at?: string | null;
 }
@@ -27,6 +29,8 @@ export const DEFAULT_POS_CONFIG: PosConfig = {
   complementos_habilitado: true,
   descuento_habilitado: true,
   menu_bloqueado: false,
+  pedidos_telefono_cobro_automatico: false,
+  cobrar_delivery_en_pedidos: true,
   tipo_venta: "ambos",
 };
 
@@ -60,6 +64,9 @@ export const normalizarPosConfig = (raw: any): PosConfig => {
     complementos_habilitado: data.complementos_habilitado !== false,
     descuento_habilitado: data.descuento_habilitado !== false,
     menu_bloqueado: data.menu_bloqueado === true,
+    pedidos_telefono_cobro_automatico:
+      data.pedidos_telefono_cobro_automatico === true,
+    cobrar_delivery_en_pedidos: data.cobrar_delivery_en_pedidos !== false,
     tipo_venta: normalizarTipoVenta(data.tipo_venta),
     updated_at: data.updated_at ?? null,
   };

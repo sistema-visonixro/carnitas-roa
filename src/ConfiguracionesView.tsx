@@ -471,6 +471,36 @@ export default function ConfiguracionesView({
 
       <div style={cardStyle}>
         <div>
+          <strong>Pedidos por teléfono cobro automático</strong>
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            Al marcar “Entregado” registra la venta automáticamente sin abrir
+            “Registrar Pago”
+          </div>
+        </div>
+        <Switch
+          checked={config.pedidos_telefono_cobro_automatico}
+          onChange={() => toggle("pedidos_telefono_cobro_automatico")}
+          label="Pedidos por teléfono cobro automático"
+        />
+      </div>
+
+      <div style={cardStyle}>
+        <div>
+          <strong>Cobrar el delivery en pedidos</strong>
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            Si está activo suma envío al total de la factura; si no, solo cobra
+            productos
+          </div>
+        </div>
+        <Switch
+          checked={config.cobrar_delivery_en_pedidos}
+          onChange={() => toggle("cobrar_delivery_en_pedidos")}
+          label="Cobrar el delivery en pedidos"
+        />
+      </div>
+
+      <div style={cardStyle}>
+        <div>
           <strong>Tipo de venta</strong>
           <div style={{ fontSize: 12, color: "#64748b" }}>
             Ambos, solo recibo o solo factura

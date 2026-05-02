@@ -1524,7 +1524,7 @@ export default function PuntoDeVentaView({
   const [envioCliente, setEnvioCliente] = useState("");
   const [envioCelular, setEnvioCelular] = useState("");
   const [envioTipoPago, setEnvioTipoPago] = useState<
-    "Efectivo" | "Tarjeta" | "Transferencia"
+    "Efectivo" | "Tarjeta" | "Transferencia" | "Dolares"
   >("Efectivo");
   const [envioCosto, setEnvioCosto] = useState<string>("0");
   const [savingEnvio, setSavingEnvio] = useState(false);
@@ -1755,6 +1755,233 @@ export default function PuntoDeVentaView({
     setEnvioCelular("");
     setEnvioTipoPago("Efectivo");
     setEnvioCosto("0");
+  };
+
+  const normalizarTipoPagoPedido = (tipo: any): string => {
+    const value = String(tipo || "efectivo")
+      .trim()
+      .toLowerCase();
+    if (value === "tarjeta") return "tarjeta";
+    if (value === "transferencia" || value === "transferencias")
+      return "transferencia";
+    if (value === "dolares" || value === "dólares" || value === "usd")
+      return "dolares";
+    return "efectivo";
+  };
+
+  const calcularTotalCobroPedido = (pedido: any): number => {
+    const totalProductos = Number(pedido?.total || 0);
+    const costoEnvio = Number.parseFloat(String(pedido?.costo_envio ?? "0"));
+    const includeDelivery = posConfig.cobrar_delivery_en_pedidos !== false;
+    return (
+      totalProductos +
+      (includeDelivery ? (Number.isFinite(costoEnvio) ? costoEnvio : 0) : 0)
+    );
+  };
+
+  const registrarPedidoEntregadoAutomatico = async (pedido: any) => {
+    const pedidoKey = String(pedido.id || pedido.local_id || "");
+    setPedidosProcessingId(pedidoKey);
+
+    try {
+      const fechaVenta = formatToHondurasLocal();
+      const includeDelivery = posConfig.cobrar_delivery_en_pedidos !== false;
+      const totalProductos = Number(pedido.total || 0);
+      const costoEnvioReal = Number.parseFloat(
+        String(pedido.costo_envio ?? "0"),
+      );
+      const costoEnvioCobrado = includeDelivery
+        ? Number.isFinite(costoEnvioReal)
+          ? costoEnvioReal
+          : 0
+        : 0;
+      const totalCobro = totalProductos + costoEnvioCobrado;
+
+      const tipoPago = normalizarTipoPagoPedido(pedido.tipo_pago);
+      const tasa = (await getPrecioDolarLocal()) || tasaCambio || 1;
+
+      let montoEfectivo = 0;
+      let montoTarjeta = 0;
+      let montoTransferencia = 0;
+      let montoDolaresLps = 0;
+      let montoDolaresUsd = 0;
+
+      if (tipoPago === "tarjeta") {
+        montoTarjeta = totalCobro;
+      } else if (tipoPago === "transferencia") {
+        montoTransferencia = totalCobro;
+      } else if (tipoPago === "dolares") {
+        montoDolaresLps = totalCobro;
+        montoDolaresUsd = Number((totalCobro / (tasa || 1)).toFixed(2));
+      } else {
+        montoEfectivo = totalCobro;
+      }
+
+      let facturaParaEstaVenta =
+        facturaActual && Number.isFinite(parseInt(facturaActual))
+          ? facturaActual
+          : `OFFLINE-${Date.now()}`;
+
+      if (isOnline && usuarioActual?.id) {
+        try {
+          const { data: facturaRpc, error: rpcError } = await supabase.rpc(
+            "obtener_siguiente_factura",
+            { p_cajero_id: usuarioActual.id },
+          );
+          if (
+            !rpcError &&
+            facturaRpc &&
+            facturaRpc !== "LIMITE_ALCANZADO" &&
+            facturaRpc !== null
+          ) {
+            facturaParaEstaVenta = String(facturaRpc);
+          }
+        } catch {
+          // fallback local
+        }
+      }
+
+      const productosPedido = Array.isArray(pedido.productos)
+        ? pedido.productos
+        : (() => {
+            try {
+              return JSON.parse(String(pedido.productos || "[]"));
+            } catch {
+              return [];
+            }
+          })();
+
+      const productosVenta = [
+        ...productosPedido.map((pp: any) => ({
+          id: pp.id,
+          nombre: pp.nombre,
+          precio: pp.precio,
+          cantidad: pp.cantidad,
+          tipo: pp.tipo || "comida",
+          tipo_impuesto: String(obtenerTasaImpuesto(pp.tipo_impuesto, pp.tipo)),
+          tasa_impuesto: obtenerTasaImpuesto(pp.tipo_impuesto, pp.tipo),
+          complementos: pp.complementos ?? [],
+          piezas: pp.piezas ?? null,
+        })),
+        ...(costoEnvioCobrado > 0
+          ? [
+              {
+                id: "delivery",
+                nombre: "Delivery",
+                precio: costoEnvioCobrado,
+                cantidad: 1,
+                tipo: "delivery",
+                complementos: [],
+                piezas: null,
+              },
+            ]
+          : []),
+      ];
+
+      const venta = {
+        fecha_hora: fechaVenta,
+        cajero: usuarioActual?.nombre || "",
+        cajero_id: usuarioActual?.id || null,
+        caja: pedido.caja || caiInfo?.caja_asignada || "",
+        cai: caiInfo?.cai || "",
+        factura: facturaParaEstaVenta,
+        cliente: pedido.cliente || null,
+        tipo_orden: "DELIVERY",
+        tipo: "CONTADO",
+        operation_id: crypto.randomUUID(),
+        productos: JSON.stringify(productosVenta),
+        sub_total: Number(totalProductos || 0).toFixed(2),
+        isv_15: "0.00",
+        isv_18: "0.00",
+        total: Number(totalCobro || 0).toFixed(2),
+        tipo_documento_fiscal: "RECIBO",
+        rtn_cliente: null,
+        nombre_cliente_fiscal: null,
+        numero_secuencial: null,
+        fecha_limite_emision_cai: null,
+        efectivo: montoEfectivo,
+        tarjeta: montoTarjeta,
+        transferencia: montoTransferencia,
+        dolares: montoDolaresLps,
+        dolares_usd: montoDolaresUsd,
+        delivery: 0,
+        total_recibido: totalCobro,
+        cambio: 0,
+      };
+
+      const ventaIdLocal = await guardarVentaLocal(venta);
+
+      if (isOnline && estaConectado()) {
+        try {
+          const { error } = await supabase.from("ventas").insert([venta]);
+          if (!error) await eliminarVentaLocal(ventaIdLocal);
+        } catch {
+          // queda en cola local
+        }
+      }
+
+      if (costoEnvioCobrado > 0 && isOnline && estaConectado()) {
+        try {
+          await supabase.from("costo_delivery").insert([
+            {
+              pedido_id:
+                pedido.id && !String(pedido.id).startsWith("local-")
+                  ? Number(pedido.id)
+                  : null,
+              monto: costoEnvioCobrado,
+              fecha: pedido.fecha || fechaVenta,
+              cliente: pedido.cliente || null,
+              cajero_id: usuarioActual?.id || null,
+              caja: pedido.caja || caiInfo?.caja_asignada || null,
+              tipo_pago: tipoPago,
+            },
+          ]);
+        } catch {
+          // no crítico
+        }
+      }
+
+      try {
+        if (pedido.__localPending && pedido.local_id) {
+          await eliminarEnvioLocal(pedido.local_id);
+        } else if (
+          pedido.id &&
+          !String(pedido.id).startsWith("local-") &&
+          isOnline &&
+          estaConectado()
+        ) {
+          await supabase.from("pedidos_envio").delete().eq("id", pedido.id);
+        }
+      } catch {
+        // no crítico
+      }
+
+      if (Number.isFinite(parseInt(facturaParaEstaVenta))) {
+        const siguiente = (parseInt(facturaParaEstaVenta) + 1).toString();
+        try {
+          await persistirReciboActual(siguiente, {
+            actualizarSupabase: isOnline && Boolean(usuarioActual?.id),
+          });
+        } catch {
+          setFacturaActual(siguiente);
+        }
+      }
+
+      setPedidosList((prev) =>
+        prev.filter(
+          (x) =>
+            String(x.id || x.local_id || "") !==
+            String(pedido.id || pedido.local_id || ""),
+        ),
+      );
+      setShowPedidosModal(false);
+      alert("✅ Pedido entregado y facturado automáticamente");
+    } catch (err) {
+      console.error("Error en entrega automática del pedido:", err);
+      alert("Error al registrar el pedido entregado automáticamente");
+    } finally {
+      setPedidosProcessingId(null);
+    }
   };
 
   // Estados para modal de devolución
@@ -4204,8 +4431,7 @@ export default function PuntoDeVentaView({
         }}
         totalPedido={
           pedidoPendienteEntrega
-            ? Number(pedidoPendienteEntrega.total || 0) +
-              parseFloat(pedidoPendienteEntrega.costo_envio || "0")
+            ? calcularTotalCobroPedido(pedidoPendienteEntrega)
             : totalConDescuento
         }
         exchangeRate={tasaCambio}
@@ -4486,8 +4712,12 @@ export default function PuntoDeVentaView({
               const pdSubTotal = pdResumenImpuesto.subTotal;
               const pdIsv15 = pdResumenImpuesto.isv15;
               const pdIsv18 = pdResumenImpuesto.isv18;
-              const pdCostoEnvio = parseFloat(pd.costo_envio || "0");
+              const pdCostoEnvio =
+                posConfig.cobrar_delivery_en_pedidos !== false
+                  ? parseFloat(pd.costo_envio || "0")
+                  : 0;
               const pdMontoProductos = Number(pd.total || 0);
+              const pdTotalCobro = pdMontoProductos + pdCostoEnvio;
 
               // Pagos desde PagoModal
               let pdEfectivo = 0,
@@ -4606,10 +4836,7 @@ export default function PuntoDeVentaView({
                 dolares_usd: pdDolaresUsd,
                 delivery: 0,
                 total_recibido: paymentData.totalPaid,
-                cambio: Math.max(
-                  0,
-                  paymentData.totalPaid - (pdMontoProductos + pdCostoEnvio),
-                ),
+                cambio: Math.max(0, paymentData.totalPaid - pdTotalCobro),
                 banco: pdBanco,
                 tarjeta_num: pdTarjetaNum,
                 autorizacion: pdAutorizacion,
@@ -7940,6 +8167,51 @@ export default function PuntoDeVentaView({
                     }}
                   />
                 </div>
+
+                {posConfig.pedidos_telefono_cobro_automatico && (
+                  <div style={{ marginBottom: 16 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: theme === "lite" ? "#334155" : "#e2e8f0",
+                        marginBottom: 8,
+                      }}
+                    >
+                      Tipo de pago
+                    </label>
+                    <select
+                      value={envioTipoPago}
+                      onChange={(e) =>
+                        setEnvioTipoPago(
+                          e.target.value as
+                            | "Efectivo"
+                            | "Tarjeta"
+                            | "Transferencia"
+                            | "Dolares",
+                        )
+                      }
+                      className="form-input"
+                      style={{
+                        width: "100%",
+                        padding: "12px 16px",
+                        fontSize: 15,
+                        borderRadius: 10,
+                        border:
+                          theme === "lite"
+                            ? "2px solid #e2e8f0"
+                            : "2px solid #334155",
+                        background: theme === "lite" ? "#ffffff" : "#0f172a",
+                      }}
+                    >
+                      <option value="Efectivo">Efectivo</option>
+                      <option value="Tarjeta">Tarjeta</option>
+                      <option value="Transferencia">Transferencia</option>
+                      <option value="Dolares">Dólares</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* Summary Section */}
@@ -8034,9 +8306,26 @@ export default function PuntoDeVentaView({
                 >
                   <div>Total</div>
                   <div>
-                    L {(totalConDescuento + Number(envioCosto || 0)).toFixed(2)}
+                    L{" "}
+                    {(
+                      totalConDescuento +
+                      (posConfig.cobrar_delivery_en_pedidos
+                        ? Number(envioCosto || 0)
+                        : 0)
+                    ).toFixed(2)}
                   </div>
                 </div>
+                {!posConfig.cobrar_delivery_en_pedidos && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: theme === "lite" ? "#64748b" : "#94a3b8",
+                    }}
+                  >
+                    El delivery no se cobrará en factura (configuración activa)
+                  </div>
+                )}
                 <div
                   style={{
                     marginTop: 20,
@@ -9244,7 +9533,14 @@ export default function PuntoDeVentaView({
                                   : "Eliminar"}
                               </button>
                               <button
-                                onClick={() => {
+                                onClick={async () => {
+                                  if (
+                                    posConfig.pedidos_telefono_cobro_automatico
+                                  ) {
+                                    await registrarPedidoEntregadoAutomatico(p);
+                                    return;
+                                  }
+
                                   setPedidoPendienteEntrega(p);
                                   setTipoDocumentoFiscal("RECIBO");
                                   setNombreClienteFiscal(p.cliente || "");
@@ -9253,6 +9549,10 @@ export default function PuntoDeVentaView({
                                   setShowPedidosModal(false);
                                   continuarFlujoDocumento();
                                 }}
+                                disabled={
+                                  pedidosProcessingId ===
+                                  String(p.id || p.local_id || `row-${index}`)
+                                }
                                 style={{
                                   background: "#e8f5e9",
                                   color: "#2e7d32",
@@ -9273,7 +9573,10 @@ export default function PuntoDeVentaView({
                                   e.currentTarget.style.color = "#2e7d32";
                                 }}
                               >
-                                Entregado
+                                {pedidosProcessingId ===
+                                String(p.id || p.local_id || `row-${index}`)
+                                  ? "..."
+                                  : "Entregado"}
                               </button>
                             </div>
                           </td>

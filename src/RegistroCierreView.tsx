@@ -688,7 +688,9 @@ export default function RegistroCierreView({
   const transferenciasConteo = Number.parseFloat(transferencias);
   const dolaresConteo = Number.parseFloat(dolares);
 
-  const efectivoConteoNum = Number.isFinite(efectivoConteo) ? efectivoConteo : 0;
+  const efectivoConteoNum = Number.isFinite(efectivoConteo)
+    ? efectivoConteo
+    : 0;
   const tarjetaConteoNum = Number.isFinite(tarjetaConteo) ? tarjetaConteo : 0;
   const transferenciasConteoNum = Number.isFinite(transferenciasConteo)
     ? transferenciasConteo
@@ -698,7 +700,8 @@ export default function RegistroCierreView({
   const diferenciaDolaresUSDLive = dolaresConteoNum - dolaresSistema;
   const diferenciaDolaresLpsLive = diferenciaDolaresUSDLive * precioDolarActual;
   const diferenciaLive =
-    (efectivoConteoNum - efectivoSistema) +
+    efectivoConteoNum -
+    efectivoSistema +
     (tarjetaConteoNum - tarjetaSistema) +
     (transferenciasConteoNum - transferenciasSistema) +
     diferenciaDolaresLpsLive;
@@ -711,23 +714,11 @@ export default function RegistroCierreView({
         : "CUADRADO";
   const difAbsLive = Math.abs(diferenciaLive).toFixed(2);
   const difColorLive =
-    diferenciaLive > 0
-      ? "#166534"
-      : diferenciaLive < 0
-        ? "#b91c1c"
-        : "#0f172a";
+    diferenciaLive > 0 ? "#166534" : diferenciaLive < 0 ? "#b91c1c" : "#0f172a";
   const difBgLive =
-    diferenciaLive > 0
-      ? "#f0fdf4"
-      : diferenciaLive < 0
-        ? "#fef2f2"
-        : "#f8fafc";
+    diferenciaLive > 0 ? "#f0fdf4" : diferenciaLive < 0 ? "#fef2f2" : "#f8fafc";
   const difBorderLive =
-    diferenciaLive > 0
-      ? "#86efac"
-      : diferenciaLive < 0
-        ? "#fca5a5"
-        : "#e2e8f0";
+    diferenciaLive > 0 ? "#86efac" : diferenciaLive < 0 ? "#fca5a5" : "#e2e8f0";
 
   return (
     <div
