@@ -92,6 +92,15 @@ interface Seleccion {
   piezas?: string; // "PIEZAS VARIAS", "PECHUGA", "ALA, CADERA", etc.
 }
 
+type InventarioDiaTipo = "insumos" | "bebidas";
+
+interface InventarioDiaRow {
+  id: string;
+  nombre: string;
+  vendido: number;
+  stock: number;
+}
+
 function obtenerTasaImpuesto(
   tipoImpuesto?: string | number | null,
   tipoProducto?: string,
@@ -196,6 +205,15 @@ export default function PuntoDeVentaView({
   // Menu y modal relacionados
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
+  const [showInsumosBebidasDiaModal, setShowInsumosBebidasDiaModal] =
+    useState(false);
+  const [inventarioDiaTipo, setInventarioDiaTipo] =
+    useState<InventarioDiaTipo>("insumos");
+  const [inventarioDiaRows, setInventarioDiaRows] = useState<
+    InventarioDiaRow[]
+  >([]);
+  const [inventarioDiaFecha, setInventarioDiaFecha] = useState("");
+  const [inventarioDiaLoading, setInventarioDiaLoading] = useState(false);
   // Modal DATOS DE FACTURACIÓN
   const [showDatosFactModal, setShowDatosFactModal] = useState(false);
   const [caiFactData, setCaiFactData] = useState<any>(null);
@@ -897,6 +915,259 @@ export default function PuntoDeVentaView({
     } finally {
       setHistorialLoading(false);
     }
+  }
+
+  async function cargarInsumosBebidasDelDia(tipo: InventarioDiaTipo) {
+    setInventarioDiaTipo(tipo);
+    setInventarioDiaLoading(true);
+    try {
+      const toTs = (value: any): number => {
+        if (!value) return 0;
+        if (typeof value === "number") return value;
+        const raw = String(value).trim();
+        const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+        const ts = Date.parse(normalized);
+        return Number.isFinite(ts) ? ts : 0;
+      };
+      const num = (v: any): number => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const isSalida = (movType: any): boolean => {
+        const t = String(movType || "").toLowerCase().trim();
+        return !(t === "entrada" || t === "compra");
+      };
+
+      const { start, end, day } = getLocalDayRange();
+      const tsStart = Date.parse(start);
+      const tsEnd = Date.parse(end);
+      setInventarioDiaFecha(day);
+
+      let movimientosIdb: any[] = [];
+      let productosIdb: any[] = [];
+      let insumosIdb: any[] = [];
+      let stockProductosIdb: any[] = [];
+
+      try {
+        movimientosIdb = await getAll<any>(STORE.MOVIMIENTOS_INVENTARIO);
+        if (tipo === "bebidas") {
+          productosIdb = await getAll<any>(STORE.PRODUCTOS);
+          stockProductosIdb = await getAll<any>(STORE.STOCK_PRODUCTOS);
+        } else {
+          insumosIdb = await getAll<any>(STORE.INSUMOS);
+        }
+      } catch {
+        movimientosIdb = [];
+      }
+
+      const necesitaFallbackMovs = movimientosIdb.length === 0;
+      const necesitaFallbackCatalogo =
+        tipo === "bebidas"
+          ? productosIdb.length === 0 || stockProductosIdb.length === 0
+          : insumosIdb.length === 0;
+
+      let movimientos = movimientosIdb;
+      let productos = productosIdb;
+      let insumos = insumosIdb;
+      let stockProductos = stockProductosIdb;
+
+      if (necesitaFallbackMovs || necesitaFallbackCatalogo) {
+        try {
+          if (necesitaFallbackMovs) {
+            const { data: movsData } = await supabase
+              .from("movimientos_inventario")
+              .select(
+                "id, item_tipo, insumo_id, producto_id, tipo, cantidad, fecha_hora, created_at",
+              )
+              .order("id", { ascending: false })
+              .limit(2500);
+            if (movsData?.length) movimientos = movsData;
+          }
+
+          if (tipo === "bebidas" && (productos.length === 0 || stockProductos.length === 0)) {
+            const [{ data: prodsData }, { data: stocksData }] =
+              await Promise.all([
+                supabase
+                  .from("productos")
+                  .select("id, nombre, tipo")
+                  .eq("tipo", "bebida"),
+                supabase
+                  .from("stock_productos")
+                  .select("producto_id, stock_actual"),
+              ]);
+            if (prodsData?.length) productos = prodsData;
+            if (stocksData?.length) stockProductos = stocksData;
+          }
+
+          if (tipo === "insumos" && insumos.length === 0) {
+            const { data: insData } = await supabase
+              .from("insumos")
+              .select("id, nombre, stock_actual");
+            if (insData?.length) insumos = insData;
+          }
+        } catch {
+          // Si Supabase falla, conservar datos locales disponibles
+        }
+      }
+
+      const movimientosDia = (movimientos || []).filter((m: any) => {
+        const ts = toTs(m.fecha_hora || m.created_at);
+        return ts >= tsStart && ts <= tsEnd;
+      });
+
+      if (tipo === "bebidas") {
+        const bebidas = (productos || []).filter((p: any) => p.tipo === "bebida");
+        const nombrePorId = new Map<string, string>(
+          bebidas.map((p: any) => [String(p.id), String(p.nombre || "Bebida")]),
+        );
+        const stockPorId = new Map<string, number>(
+          (stockProductos || []).map((s: any) => [
+            String(s.producto_id),
+            num(s.stock_actual),
+          ]),
+        );
+
+        const vendidoPorId = new Map<string, number>();
+        for (const m of movimientosDia) {
+          if (String(m.item_tipo) !== "producto") continue;
+          if (!isSalida(m.tipo)) continue;
+          const productoId = String(m.producto_id || "");
+          if (!productoId) continue;
+          if (!nombrePorId.has(productoId)) continue;
+          vendidoPorId.set(
+            productoId,
+            num(vendidoPorId.get(productoId)) + num(m.cantidad),
+          );
+        }
+
+        const rows: InventarioDiaRow[] = Array.from(vendidoPorId.entries())
+          .map(([id, vendido]) => ({
+            id,
+            nombre: nombrePorId.get(id) || "Bebida",
+            vendido,
+            stock: num(stockPorId.get(id)),
+          }))
+          .sort((a, b) => b.vendido - a.vendido || a.nombre.localeCompare(b.nombre));
+
+        setInventarioDiaRows(rows);
+      } else {
+        const nombrePorId = new Map<string, string>(
+          (insumos || []).map((ins: any) => [
+            String(ins.id),
+            String(ins.nombre || "Insumo"),
+          ]),
+        );
+        const stockPorId = new Map<string, number>(
+          (insumos || []).map((ins: any) => [
+            String(ins.id),
+            num(ins.stock_actual),
+          ]),
+        );
+
+        const vendidoPorId = new Map<string, number>();
+        for (const m of movimientosDia) {
+          if (String(m.item_tipo) !== "insumo") continue;
+          if (!isSalida(m.tipo)) continue;
+          const insumoId = String(m.insumo_id || "");
+          if (!insumoId) continue;
+          vendidoPorId.set(
+            insumoId,
+            num(vendidoPorId.get(insumoId)) + num(m.cantidad),
+          );
+        }
+
+        const rows: InventarioDiaRow[] = Array.from(vendidoPorId.entries())
+          .map(([id, vendido]) => ({
+            id,
+            nombre: nombrePorId.get(id) || "Insumo",
+            vendido,
+            stock: num(stockPorId.get(id)),
+          }))
+          .sort((a, b) => b.vendido - a.vendido || a.nombre.localeCompare(b.nombre));
+
+        setInventarioDiaRows(rows);
+      }
+    } catch (err) {
+      console.error("[InventarioDia] Error cargando lista:", err);
+      setInventarioDiaRows([]);
+      alert("No se pudo cargar la lista del día.");
+    } finally {
+      setInventarioDiaLoading(false);
+    }
+  }
+
+  function imprimirListaInsumosBebidasDia() {
+    if (inventarioDiaRows.length === 0) {
+      alert("No hay datos para imprimir.");
+      return;
+    }
+
+    const titulo =
+      inventarioDiaTipo === "insumos"
+        ? "INSUMOS DEL DÍA"
+        : "BEBIDAS DEL DÍA";
+    const negocio = datosNegocio?.nombre_negocio || NOMBRE_NEGOCIO;
+
+    const filas = inventarioDiaRows
+      .map(
+        (r) => `
+          <tr>
+            <td style="padding:6px 4px;border-bottom:1px dashed #ddd;">${r.nombre}</td>
+            <td style="padding:6px 4px;border-bottom:1px dashed #ddd;text-align:right;">${r.vendido.toFixed(2)}</td>
+            <td style="padding:6px 4px;border-bottom:1px dashed #ddd;text-align:right;">${r.stock.toFixed(2)}</td>
+          </tr>
+        `,
+      )
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <title>${titulo}</title>
+          <style>
+            @page { size: 80mm auto; margin: 4mm; }
+            body { font-family: 'Courier New', monospace; margin: 0; color: #000; }
+            .t { text-align: center; font-weight: 700; font-size: 14px; }
+            .s { text-align: center; font-size: 11px; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; font-size: 11px; }
+            th { text-align: left; border-bottom: 1px solid #000; padding: 4px; }
+            th.r { text-align: right; }
+            .f { margin-top: 8px; font-size: 10px; text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="t">${negocio}</div>
+          <div class="s">${titulo}<br/>Fecha: ${inventarioDiaFecha || new Date().toISOString().slice(0, 10)}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th class="r">Vendido</th>
+                <th class="r">Stock</th>
+              </tr>
+            </thead>
+            <tbody>${filas}</tbody>
+          </table>
+          <div class="f">Registros: ${inventarioDiaRows.length}</div>
+        </body>
+      </html>
+    `;
+
+    const pw = window.open("", "", "height=800,width=420");
+    if (!pw) {
+      alert("Activa las ventanas emergentes para imprimir.");
+      return;
+    }
+    pw.document.write(html);
+    pw.document.close();
+    setTimeout(() => {
+      try {
+        pw.focus();
+        pw.print();
+      } catch {
+        // no-op
+      }
+    }, 250);
   }
 
   // Función para obtener historial de facturas de crédito del turno actual
@@ -10948,6 +11219,26 @@ export default function PuntoDeVentaView({
                     className="menu-btn"
                     onClick={async () => {
                       closeMenuAnimated();
+                      setShowInsumosBebidasDiaModal(true);
+                      await cargarInsumosBebidasDelDia("insumos");
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #ecfeff, #cffafe)",
+                      color: "#155e75",
+                      border: "1px solid #67e8f9",
+                      animationDelay: "410ms",
+                    }}
+                  >
+                    <span className="btn-icon">📦</span>
+                    <span>
+                      <div className="btn-label">Insumos y bebidas del día</div>
+                      <div className="btn-desc">Salida inventario + stock</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
                       setCaiFactLoading(true);
                       setCaiFactData(null);
                       setShowDatosFactModal(true);
@@ -10998,6 +11289,166 @@ export default function PuntoDeVentaView({
                     </span>
                   </button>
                 </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Insumos y bebidas del día */}
+      {showInsumosBebidasDiaModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 145000,
+          }}
+          onClick={() => setShowInsumosBebidasDiaModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#0f172a",
+              borderRadius: 14,
+              width: "92%",
+              maxWidth: 760,
+              maxHeight: "88vh",
+              overflow: "auto",
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <div>
+                <h3 style={{ margin: 0 }}>📦 Insumos y bebidas del día</h3>
+                <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 12 }}>
+                  Monitoreo diario de salidas de inventario y stock actual
+                </p>
+              </div>
+              <button
+                className="inventory-btn secondary"
+                onClick={() => setShowInsumosBebidasDiaModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              <button
+                className="menu-btn"
+                onClick={() => cargarInsumosBebidasDelDia("insumos")}
+                style={{
+                  background:
+                    inventarioDiaTipo === "insumos"
+                      ? "linear-gradient(135deg, #dcfce7, #bbf7d0)"
+                      : "linear-gradient(135deg, #f8fafc, #f1f5f9)",
+                  color: inventarioDiaTipo === "insumos" ? "#166534" : "#475569",
+                  border: "1px solid #cbd5e1",
+                  padding: "10px 14px",
+                  flex: 1,
+                  minWidth: 180,
+                }}
+              >
+                <span className="btn-icon">🧂</span>
+                <span>
+                  <div className="btn-label">Insumos</div>
+                  <div className="btn-desc">Ver consumidos del día</div>
+                </span>
+              </button>
+              <button
+                className="menu-btn"
+                onClick={() => cargarInsumosBebidasDelDia("bebidas")}
+                style={{
+                  background:
+                    inventarioDiaTipo === "bebidas"
+                      ? "linear-gradient(135deg, #dbeafe, #bfdbfe)"
+                      : "linear-gradient(135deg, #f8fafc, #f1f5f9)",
+                  color: inventarioDiaTipo === "bebidas" ? "#1d4ed8" : "#475569",
+                  border: "1px solid #cbd5e1",
+                  padding: "10px 14px",
+                  flex: 1,
+                  minWidth: 180,
+                }}
+              >
+                <span className="btn-icon">🥤</span>
+                <span>
+                  <div className="btn-label">Bebidas</div>
+                  <div className="btn-desc">Ver salidas del día</div>
+                </span>
+              </button>
+            </div>
+
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+              <div
+                style={{
+                  padding: "10px 12px",
+                  background: "#f8fafc",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <strong>
+                  {inventarioDiaTipo === "insumos" ? "🧂 Insumos" : "🥤 Bebidas"} · {inventarioDiaFecha || "Hoy"}
+                </strong>
+                <button
+                  className="inventory-btn primary"
+                  onClick={imprimirListaInsumosBebidasDia}
+                  disabled={inventarioDiaRows.length === 0}
+                >
+                  🖨 Imprimir ticket
+                </button>
+              </div>
+
+              {inventarioDiaLoading ? (
+                <div style={{ padding: 22, color: "#64748b", textAlign: "center" }}>
+                  Cargando lista…
+                </div>
+              ) : inventarioDiaRows.length === 0 ? (
+                <div style={{ padding: 22, color: "#64748b", textAlign: "center" }}>
+                  No hay salidas de inventario para esta lista en el día actual.
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="inventory-table">
+                    <thead>
+                      <tr>
+                        <th>Nombre</th>
+                        <th style={{ textAlign: "right" }}>Vendido</th>
+                        <th style={{ textAlign: "right" }}>Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventarioDiaRows.map((row) => (
+                        <tr key={row.id}>
+                          <td>{row.nombre}</td>
+                          <td style={{ textAlign: "right", color: "#dc2626", fontWeight: 700 }}>
+                            {row.vendido.toFixed(2)}
+                          </td>
+                          <td style={{ textAlign: "right", color: "#0f172a" }}>
+                            {row.stock.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>

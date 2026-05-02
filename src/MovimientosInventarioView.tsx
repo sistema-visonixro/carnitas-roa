@@ -81,7 +81,9 @@ interface ConfigProducto {
 interface RecetaDetalle {
   id?: string;
   receta_id?: string;
+  tipo_item: "insumo" | "complemento";
   insumo_id: string;
+  complemento_id?: string;
   cantidad: string;
   unidad?: string;
 }
@@ -133,7 +135,14 @@ interface StockInsumoRow {
   total_salidas: number;
 }
 
-type TabKey = "resumen" | "recetas" | "movimientos" | "produccion" | "stock";
+type TabKey =
+  | "resumen"
+  | "recetas"
+  | "movimientos"
+  | "produccion"
+  | "stock"
+  | "insumos"
+  | "bebidas";
 
 type MovementFormState = {
   /** "insumo" o cualquier valor de productos.tipo (excepto "comida") */
@@ -141,7 +150,6 @@ type MovementFormState = {
   itemId: string;
   tipoMovimiento: "entrada" | "salida";
   cantidad: string;
-  costoUnitario: string;
   referenciaTipo: string;
   referenciaId: string;
   nota: string;
@@ -183,7 +191,6 @@ const initialMovementForm: MovementFormState = {
   itemId: "",
   tipoMovimiento: "entrada",
   cantidad: "",
-  costoUnitario: "",
   referenciaTipo: "manual",
   referenciaId: "",
   nota: "",
@@ -194,7 +201,7 @@ const initialRecipeForm: RecipeFormState = {
   modoConsumo: "receta",
   rendimiento: "1",
   descripcion: "",
-  detalles: [{ insumo_id: "", cantidad: "", unidad: "" }],
+  detalles: [{ tipo_item: "insumo" as const, insumo_id: "", complemento_id: "", cantidad: "", unidad: "" }],
 };
 
 const money = new Intl.NumberFormat("es-HN", {
@@ -297,19 +304,15 @@ export default function MovimientosInventarioView({
 
   const [movementForm, setMovementForm] =
     useState<MovementFormState>(initialMovementForm);
-  const [insumoSearch, setInsumoSearch] = useState("");
-  const [insumoDropdownOpen, setInsumoDropdownOpen] = useState(false);
-  const [newInsumoOpen, setNewInsumoOpen] = useState(false);
-  const [creatingInsumo, setCreatingInsumo] = useState(false);
   const [newInsumoForm, setNewInsumoForm] = useState({
     nombre: "",
     unidad: "unidad",
     categoria: "general",
-    costo_unitario: "",
   });
   const [recipeForm, setRecipeForm] =
     useState<RecipeFormState>(initialRecipeForm);
   const [recipeId, setRecipeId] = useState<string | null>(null);
+  const [recipeModalOpen, setRecipeModalOpen] = useState(false);
 
   // --- Reporte de producción / ventas ---
   const [reportFechaDesde, setReportFechaDesde] = useState(() => {
@@ -342,6 +345,20 @@ export default function MovimientosInventarioView({
     precaucion: string;
   } | null>(null);
   const [savingStockConfig, setSavingStockConfig] = useState(false);
+
+  // --- Tab Insumos: agregar insumo ---
+  const [newInsumoTabOpen, setNewInsumoTabOpen] = useState(false);
+  const [creatingInsumo, setCreatingInsumo] = useState(false);
+
+  // --- Modal editar insumo ---
+  const [editInsumoModal, setEditInsumoModal] = useState<{
+    id: string;
+    nombre: string;
+    unidad: string;
+    categoria: string;
+    stock_minimo: string;
+  } | null>(null);
+  const [savingEditInsumo, setSavingEditInsumo] = useState(false);
 
   // --- Modal "Registrar movimiento" ---
   const [movFormModalOpen, setMovFormModalOpen] = useState(false);
@@ -381,36 +398,9 @@ export default function MovimientosInventarioView({
     return Array.from(set).sort();
   }, [productos]);
 
-  /** Insumos que tienen al menos un movimiento registrado en movimientos_inventario.
-   *  Si aún no hay movimientos, muestra todos los insumos como alternativa */
-  const insumosConMovimientos = useMemo(() => {
-    const ids = new Set(
-      movimientos
-        .filter((m) => m.item_tipo === "insumo" && m.insumo_id)
-        .map((m) => m.insumo_id as string),
-    );
-    if (ids.size === 0) return insumos;
-    return insumos.filter((i) => ids.has(i.id));
-  }, [insumos, movimientos]);
-
   /** Insumos filtrados por el texto escrito en el combobox del formulario de movimiento */
-  const insumosFiltrados = useMemo(() => {
-    const q = insumoSearch.trim().toLowerCase();
-    if (!q) return insumosConMovimientos;
-    return insumosConMovimientos.filter(
-      (i) =>
-        i.nombre.toLowerCase().includes(q) ||
-        (i.categoria || "").toLowerCase().includes(q),
-    );
-  }, [insumosConMovimientos, insumoSearch]);
-
   const lowStockCount = useMemo(
     () => resumen.filter((item) => item.alerta_stock_bajo).length,
-    [resumen],
-  );
-
-  const inventoryValue = useMemo(
-    () => resumen.reduce((acc, item) => acc + numberValue(item.valor_total), 0),
     [resumen],
   );
 
@@ -432,11 +422,7 @@ export default function MovimientosInventarioView({
     () => productos.find((product) => product.id === recipeForm.productoId),
     [productos, recipeForm.productoId],
   );
-
-  const selectedConfig = useMemo(
-    () => configs.find((item) => item.producto_id === recipeForm.productoId),
-    [configs, recipeForm.productoId],
-  );
+  const isRecipeProductComplemento = selectedRecipeProduct?.tipo === "complemento";
 
   const loadResumen = async () => {
     const primary = await supabase
@@ -602,10 +588,9 @@ export default function MovimientosInventarioView({
 
   // Auto-cargar stock al activar la pestaña o cambiar el sub-filtro
   useEffect(() => {
-    if (activeTab !== "stock") return;
-    if (stockFiltro === "insumos") {
+    if (activeTab === "stock" || activeTab === "insumos") {
       loadStockInsumos();
-    } else {
+    } else if (activeTab === "bebidas") {
       loadStockBebidas();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -623,7 +608,6 @@ export default function MovimientosInventarioView({
           nombre,
           unidad: newInsumoForm.unidad.trim() || "unidad",
           categoria: newInsumoForm.categoria.trim() || "general",
-          costo_unitario: numberValue(newInsumoForm.costo_unitario),
           stock_actual: 0,
           stock_minimo: 0,
           activo: true,
@@ -637,22 +621,46 @@ export default function MovimientosInventarioView({
 
       if (data) {
         setInsumos((prev) => [...prev, data as Insumo]);
-        setInsumoSearch(data.nombre);
         setMovementForm((prev) => ({ ...prev, itemId: data.id }));
       }
 
-      setNewInsumoOpen(false);
+      setNewInsumoTabOpen(false);
       setNewInsumoForm({
         nombre: "",
         unidad: "unidad",
         categoria: "general",
-        costo_unitario: "",
       });
       setMessage(`Insumo "${nombre}" creado y seleccionado.`);
+      loadStockInsumos();
     } catch (err: any) {
       setError(err?.message || "No se pudo crear el insumo.");
     } finally {
       setCreatingInsumo(false);
+    }
+  };
+
+  const handleSaveEditInsumo = async () => {
+    if (!editInsumoModal) return;
+    setSavingEditInsumo(true);
+    setError("");
+    try {
+      const { error: upErr } = await supabase
+        .from("insumos")
+        .update({
+          nombre: editInsumoModal.nombre.trim(),
+          unidad: editInsumoModal.unidad.trim(),
+          categoria: editInsumoModal.categoria.trim() || "general",
+          stock_minimo: parseFloat(editInsumoModal.stock_minimo) || 0,
+        })
+        .eq("id", editInsumoModal.id);
+      if (upErr) throw upErr;
+      setEditInsumoModal(null);
+      setMessage("Insumo actualizado.");
+      loadStockInsumos();
+    } catch (err: any) {
+      setError(err?.message || "No se pudo actualizar el insumo.");
+    } finally {
+      setSavingEditInsumo(false);
     }
   };
 
@@ -666,6 +674,11 @@ export default function MovimientosInventarioView({
     }
 
     const config = configs.find((item) => item.producto_id === productoId);
+    const producto = productos.find((item) => item.id === productoId);
+    const forcedModoConsumo =
+      producto?.tipo === "complemento"
+        ? "receta"
+        : (config?.modo_consumo || "receta");
 
     const { data: receta, error: recetaError } = await supabase
       .from("recetas")
@@ -681,17 +694,17 @@ export default function MovimientosInventarioView({
     if (!receta) {
       setRecipeForm({
         productoId,
-        modoConsumo: config?.modo_consumo || "receta",
+        modoConsumo: forcedModoConsumo,
         rendimiento: "1",
         descripcion: "",
-        detalles: [{ insumo_id: "", cantidad: "", unidad: "" }],
+        detalles: [{ tipo_item: "insumo" as const, insumo_id: "", complemento_id: "", cantidad: "", unidad: "" }],
       });
       return;
     }
 
     const { data: detalles, error: detalleError } = await supabase
       .from("recetas_detalle")
-      .select("id, receta_id, insumo_id, cantidad, unidad")
+      .select("id, receta_id, insumo_id, complemento_id, cantidad, unidad")
       .eq("receta_id", receta.id)
       .order("created_at", { ascending: true });
 
@@ -705,16 +718,18 @@ export default function MovimientosInventarioView({
     setRecipeId(receta.id);
     setRecipeForm({
       productoId,
-      modoConsumo: config?.modo_consumo || "receta",
+      modoConsumo: forcedModoConsumo,
       rendimiento: String(receta.rendimiento || 1),
       descripcion: receta.descripcion || "",
       detalles: (detalles || []).map((item: any) => ({
         id: item.id,
         receta_id: item.receta_id,
-        insumo_id: item.insumo_id,
+        tipo_item: (item.complemento_id ? "complemento" : "insumo") as "insumo" | "complemento",
+        insumo_id: item.insumo_id || "",
+        complemento_id: item.complemento_id || "",
         cantidad: String(item.cantidad ?? ""),
         unidad: item.unidad || "",
-      })) || [{ insumo_id: "", cantidad: "", unidad: "" }],
+      })) || [{ tipo_item: "insumo" as const, insumo_id: "", complemento_id: "", cantidad: "", unidad: "" }],
     });
   };
 
@@ -726,7 +741,6 @@ export default function MovimientosInventarioView({
 
     try {
       const cantidad = numberValue(movementForm.cantidad);
-      const costoUnitario = numberValue(movementForm.costoUnitario);
 
       if (!movementForm.itemId) {
         throw new Error("Selecciona un insumo o producto.");
@@ -743,7 +757,7 @@ export default function MovimientosInventarioView({
           p_item_id: movementForm.itemId,
           p_tipo_movimiento: movementForm.tipoMovimiento,
           p_cantidad: cantidad,
-          p_costo_unitario: costoUnitario,
+          p_costo_unitario: 0,
           p_referencia_tipo: movementForm.referenciaTipo || "manual",
           p_referencia_id: movementForm.referenciaId || null,
           p_nota: movementForm.nota || null,
@@ -758,8 +772,6 @@ export default function MovimientosInventarioView({
       }
 
       setMovementForm(initialMovementForm);
-      setInsumoSearch("");
-      setNewInsumoOpen(false);
       setMovFormModalOpen(false);
       setMessage("Movimiento registrado correctamente.");
       await loadEverything();
@@ -785,8 +797,18 @@ export default function MovimientosInventarioView({
         throw new Error("Selecciona un producto.");
       }
 
+      const currentRecipeProduct =
+        productos.find((product) => product.id === recipeForm.productoId) ||
+        null;
+      const effectiveModoConsumo =
+        currentRecipeProduct?.tipo === "complemento"
+          ? "receta"
+          : recipeForm.modoConsumo;
+
       const validDetails = recipeForm.detalles.filter(
-        (item) => item.insumo_id && numberValue(item.cantidad) > 0,
+        (item) =>
+          (item.tipo_item === "insumo" && item.insumo_id && numberValue(item.cantidad) > 0) ||
+          (item.tipo_item === "complemento" && item.complemento_id && numberValue(item.cantidad) > 0),
       );
 
       const { error: configError } = await supabase
@@ -794,8 +816,8 @@ export default function MovimientosInventarioView({
         .upsert(
           {
             producto_id: recipeForm.productoId,
-            controla_inventario: recipeForm.modoConsumo !== "sin_control",
-            modo_consumo: recipeForm.modoConsumo,
+            controla_inventario: effectiveModoConsumo !== "sin_control",
+            modo_consumo: effectiveModoConsumo,
             permite_stock_negativo: false,
           },
           { onConflict: "producto_id" },
@@ -805,9 +827,9 @@ export default function MovimientosInventarioView({
         throw configError;
       }
 
-      if (recipeForm.modoConsumo === "receta") {
+      if (effectiveModoConsumo === "receta") {
         if (validDetails.length === 0) {
-          throw new Error("Agrega al menos un insumo con cantidad válida.");
+          throw new Error("Agrega al menos un insumo o complemento con cantidad válida.");
         }
 
         let currentRecipeId = recipeId;
@@ -857,11 +879,13 @@ export default function MovimientosInventarioView({
 
         const detallePayload = validDetails.map((item) => ({
           receta_id: currentRecipeId,
-          insumo_id: item.insumo_id,
+          insumo_id: item.tipo_item === "insumo" ? item.insumo_id : null,
+          complemento_id: item.tipo_item === "complemento" ? item.complemento_id : null,
           cantidad: numberValue(item.cantidad),
           unidad:
-            insumos.find((insumo) => insumo.id === item.insumo_id)?.unidad ||
-            "unidad",
+            item.tipo_item === "insumo"
+              ? (insumos.find((insumo) => insumo.id === item.insumo_id)?.unidad || "unidad")
+              : "unidad",
         }));
 
         const { error: insertDetailsError } = await supabase
@@ -1534,21 +1558,6 @@ export default function MovimientosInventarioView({
         >
           <div style={cardStyle}>
             <div style={{ color: "#64748b", fontWeight: 700 }}>
-              Valor del inventario
-            </div>
-            <div
-              style={{
-                fontSize: "1.9rem",
-                fontWeight: 800,
-                color: "#0f172a",
-                marginTop: 8,
-              }}
-            >
-              {money.format(inventoryValue)}
-            </div>
-          </div>
-          <div style={cardStyle}>
-            <div style={{ color: "#64748b", fontWeight: 700 }}>
               Alertas de stock
             </div>
             <div
@@ -1608,6 +1617,8 @@ export default function MovimientosInventarioView({
             ["movimientos", "Movimientos"],
             ["produccion", "Producción"],
             ["stock", "Stock"],
+            ["insumos", "🧂 Insumos"],
+            ["bebidas", "🥤 Bebidas"],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -1662,7 +1673,6 @@ export default function MovimientosInventarioView({
                           <th>Unidad</th>
                           <th>Stock</th>
                           <th>Mínimo</th>
-                          <th>Valor</th>
                           <th>Estado</th>
                         </tr>
                       </thead>
@@ -1675,9 +1685,6 @@ export default function MovimientosInventarioView({
                             <td>{item.unidad || "-"}</td>
                             <td>{numberValue(item.stock_actual).toFixed(3)}</td>
                             <td>{numberValue(item.stock_minimo).toFixed(3)}</td>
-                            <td>
-                              {money.format(numberValue(item.valor_total))}
-                            </td>
                             <td>
                               <span
                                 className="inventory-badge"
@@ -1705,339 +1712,125 @@ export default function MovimientosInventarioView({
             )}
 
             {activeTab === "recetas" && (
-              <div className="inventory-grid inventory-main-grid">
+              <div>
                 <div style={cardStyle}>
-                  <h3 style={{ marginTop: 0, color: "#0f172a" }}>
-                    Configurar producto para inventario
-                  </h3>
-                  <form onSubmit={handleRecipeSubmit}>
-                    <div
-                      className="inventory-form-grid"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <div>
-                        <label>
-                          Producto del punto de venta (comida / complemento)
-                        </label>
-                        <select
-                          className="inventory-select"
-                          value={recipeForm.productoId}
-                          onChange={(event) => {
-                            const productId = event.target.value;
-                            if (!productId) {
-                              setRecipeId(null);
-                              setRecipeForm(initialRecipeForm);
-                              return;
-                            }
-                            loadRecipeForProduct(productId);
-                          }}
-                        >
-                          <option value="">Selecciona un producto</option>
-                          {productos
-                            .filter((p) =>
-                              ["comida", "complemento"].includes(p.tipo),
-                            )
-                            .map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.nombre}
-                              </option>
-                            ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label>Modo de consumo</label>
-                        <select
-                          className="inventory-select"
-                          value={recipeForm.modoConsumo}
-                          onChange={(event) =>
-                            setRecipeForm((prev) => ({
-                              ...prev,
-                              modoConsumo: event.target
-                                .value as RecipeFormState["modoConsumo"],
-                            }))
-                          }
-                        >
-                          {CONSUMPTION_MODES.map((mode) => (
-                            <option key={mode.value} value={mode.value}>
-                              {mode.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label>Rendimiento de la receta</label>
-                        <input
-                          className="inventory-input"
-                          type="number"
-                          min="1"
-                          step="0.01"
-                          value={recipeForm.rendimiento}
-                          onChange={(event) =>
-                            setRecipeForm((prev) => ({
-                              ...prev,
-                              rendimiento: event.target.value,
-                            }))
-                          }
-                          disabled={recipeForm.modoConsumo !== "receta"}
-                        />
-                      </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 16,
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}
+                  >
+                    <div>
+                      <h3 style={{ margin: 0, color: "#0f172a" }}>
+                        Recetas y configuración
+                      </h3>
+                      <p style={{ margin: "4px 0 0", color: "#64748b" }}>
+                        Toca <strong>Receta</strong> en cualquier producto para
+                        configurar cómo afecta el inventario al venderse.
+                      </p>
                     </div>
-
-                    <div style={{ marginBottom: 12 }}>
-                      <label>Descripción / notas</label>
-                      <textarea
-                        className="inventory-textarea"
-                        value={recipeForm.descripcion}
-                        onChange={(event) =>
-                          setRecipeForm((prev) => ({
-                            ...prev,
-                            descripcion: event.target.value,
-                          }))
-                        }
-                        placeholder="Ejemplo: receta estándar por lote o unidad vendida"
-                      />
-                    </div>
-
-                    <div
-                      style={{
-                        background: "#f8fafc",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: 14,
-                        padding: 14,
-                        marginBottom: 14,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 12,
-                          marginBottom: 10,
-                        }}
-                      >
-                        <strong>Ingredientes / insumos</strong>
-                        {insumosConMovimientos.length > 0 ? (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: "#64748b",
-                              fontWeight: 400,
-                            }}
-                          >
-                            {insumosConMovimientos.length} insumo
-                            {insumosConMovimientos.length !== 1 ? "s" : ""} con
-                            movimientos registrados
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: "#dc2626",
-                              fontWeight: 400,
-                            }}
-                          >
-                            Sin insumos registrados — agrega movimientos de
-                            entrada primero
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="inventory-btn secondary"
-                          onClick={() =>
-                            setRecipeForm((prev) => ({
-                              ...prev,
-                              detalles: [
-                                ...prev.detalles,
-                                { insumo_id: "", cantidad: "", unidad: "" },
-                              ],
-                            }))
-                          }
-                          disabled={recipeForm.modoConsumo !== "receta"}
-                        >
-                          + Agregar insumo
-                        </button>
-                      </div>
-                      <div style={{ display: "grid", gap: 10 }}>
-                        {recipeForm.detalles.map((detail, index) => (
-                          <div
-                            key={`${detail.insumo_id}-${index}`}
-                            className="inventory-form-grid"
-                            style={{ alignItems: "end" }}
-                          >
-                            <div>
-                              <label>Insumo</label>
-                              <select
-                                className="inventory-select"
-                                value={detail.insumo_id}
-                                onChange={(event) =>
-                                  setRecipeForm((prev) => ({
-                                    ...prev,
-                                    detalles: prev.detalles.map(
-                                      (item, itemIndex) =>
-                                        itemIndex === index
-                                          ? {
-                                              ...item,
-                                              insumo_id: event.target.value,
-                                              unidad:
-                                                insumos.find(
-                                                  (insumo) =>
-                                                    insumo.id ===
-                                                    event.target.value,
-                                                )?.unidad || "unidad",
-                                            }
-                                          : item,
-                                    ),
-                                  }))
-                                }
-                                disabled={recipeForm.modoConsumo !== "receta"}
-                              >
-                                <option value="">Selecciona un insumo</option>
-                                {insumosConMovimientos.map((insumo) => (
-                                  <option key={insumo.id} value={insumo.id}>
-                                    {insumo.nombre} · {insumo.unidad}
-                                    {insumo.stock_actual !== undefined
-                                      ? ` (disp: ${Number(insumo.stock_actual).toFixed(2)})`
-                                      : ""}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label>Cantidad requerida</label>
-                              <input
-                                className="inventory-input"
-                                type="number"
-                                min="0"
-                                step="0.0001"
-                                value={detail.cantidad}
-                                onChange={(event) =>
-                                  setRecipeForm((prev) => ({
-                                    ...prev,
-                                    detalles: prev.detalles.map(
-                                      (item, itemIndex) =>
-                                        itemIndex === index
-                                          ? {
-                                              ...item,
-                                              cantidad: event.target.value,
-                                            }
-                                          : item,
-                                    ),
-                                  }))
-                                }
-                                disabled={recipeForm.modoConsumo !== "receta"}
-                              />
-                            </div>
-                            <div>
-                              <label>Unidad</label>
-                              <input
-                                className="inventory-input"
-                                value={detail.unidad || ""}
-                                readOnly
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              className="inventory-btn secondary"
-                              onClick={() =>
-                                setRecipeForm((prev) => ({
-                                  ...prev,
-                                  detalles:
-                                    prev.detalles.length === 1
-                                      ? [
-                                          {
-                                            insumo_id: "",
-                                            cantidad: "",
-                                            unidad: "",
-                                          },
-                                        ]
-                                      : prev.detalles.filter(
-                                          (_, itemIndex) => itemIndex !== index,
-                                        ),
-                                }))
-                              }
-                              disabled={recipeForm.modoConsumo !== "receta"}
-                            >
-                              Quitar
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <button
-                        className="inventory-btn primary"
-                        type="submit"
-                        disabled={submitting}
-                      >
-                        {submitting ? "Guardando..." : "Guardar configuración"}
-                      </button>
-                      <button
-                        type="button"
-                        className="inventory-btn secondary"
-                        onClick={() => {
-                          setRecipeId(null);
-                          setRecipeForm(initialRecipeForm);
-                        }}
-                      >
-                        Limpiar formulario
-                      </button>
-                    </div>
-                  </form>
-                </div>
-
-                <div style={cardStyle}>
-                  <h3 style={{ marginTop: 0, color: "#0f172a" }}>
-                    Estado actual del producto
-                  </h3>
-                  {selectedRecipeProduct ? (
-                    <div style={{ display: "grid", gap: 12 }}>
-                      <div>
-                        <strong>Producto:</strong>{" "}
-                        {selectedRecipeProduct.nombre}
-                      </div>
-                      <div>
-                        <strong>Categoría POS:</strong>{" "}
-                        {selectedRecipeProduct.tipo}
-                      </div>
-                      <div>
-                        <strong>Modo actual:</strong>{" "}
-                        {selectedConfig?.modo_consumo || recipeForm.modoConsumo}
-                      </div>
-                      <div style={{ color: "#475569", lineHeight: 1.6 }}>
-                        {
-                          CONSUMPTION_MODES.find(
-                            (mode) =>
-                              mode.value ===
-                              (selectedConfig?.modo_consumo ||
-                                recipeForm.modoConsumo),
-                          )?.help
-                        }
-                      </div>
-                      {recipeForm.modoConsumo === "receta" && (
-                        <div
-                          style={{
-                            background: "#eff6ff",
-                            border: "1px solid #bfdbfe",
-                            borderRadius: 12,
-                            padding: 12,
-                            color: "#1e3a8a",
-                          }}
-                        >
-                          Cada venta de este producto descontará insumos con
-                          base en la receta activa.
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p style={{ margin: 0, color: "#64748b" }}>
-                      Selecciona un producto para ver o editar su configuración.
-                    </p>
-                  )}
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="inventory-table">
+                      <thead>
+                        <tr>
+                          <th>Producto</th>
+                          <th>Tipo</th>
+                          <th>Modo inventario</th>
+                          <th>Estado</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {productos
+                          .filter((p) =>
+                            ["comida", "complemento"].includes(p.tipo),
+                          )
+                          .map((producto) => {
+                            const cfg = configs.find(
+                              (c) => c.producto_id === producto.id,
+                            );
+                            const modoLabel = cfg
+                              ? (CONSUMPTION_MODES.find(
+                                  (m) => m.value === cfg.modo_consumo,
+                                )?.label ?? cfg.modo_consumo)
+                              : "Sin configurar";
+                            return (
+                              <tr key={producto.id}>
+                                <td style={{ fontWeight: 500 }}>
+                                  {producto.nombre}
+                                </td>
+                                <td>
+                                  <span
+                                    className="inventory-badge"
+                                    style={{
+                                      background:
+                                        producto.tipo === "comida"
+                                          ? "#fef3c7"
+                                          : "#e0e7ff",
+                                      color:
+                                        producto.tipo === "comida"
+                                          ? "#92400e"
+                                          : "#3730a3",
+                                    }}
+                                  >
+                                    {producto.tipo}
+                                  </span>
+                                </td>
+                                <td style={{ color: cfg ? "#0f172a" : "#94a3b8", fontSize: "0.88rem" }}>
+                                  {modoLabel}
+                                </td>
+                                <td>
+                                  {cfg ? (
+                                    <span
+                                      className="inventory-badge"
+                                      style={{
+                                        background: "#dcfce7",
+                                        color: "#166534",
+                                      }}
+                                    >
+                                      ✓ Configurado
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="inventory-badge"
+                                      style={{
+                                        background: "#f1f5f9",
+                                        color: "#64748b",
+                                      }}
+                                    >
+                                      Sin configurar
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  <button
+                                    className="inventory-btn primary"
+                                    style={{
+                                      padding: "5px 14px",
+                                      fontSize: "0.82rem",
+                                    }}
+                                    onClick={async () => {
+                                      await loadRecipeForProduct(producto.id);
+                                      setRecipeModalOpen(true);
+                                    }}
+                                  >
+                                    Receta
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
-
             {activeTab === "movimientos" && (
               <div>
                 <div style={cardStyle}>
@@ -2755,6 +2548,212 @@ export default function MovimientosInventarioView({
                 )}
               </div>
             )}
+
+            {/* ── Tab: Insumos ──────────────────────────────────────────── */}
+            {activeTab === "insumos" && (
+              <div style={{ display: "grid", gap: 20 }}>
+                <div style={cardStyle}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 14,
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}
+                  >
+                    <div>
+                      <h3 style={{ margin: 0, color: "#0f172a" }}>
+                        🧂 Insumos
+                      </h3>
+                      <p style={{ margin: "4px 0 0", color: "#64748b" }}>
+                        {stockInsumos.length} insumos registrados
+                      </p>
+                    </div>
+                    <button
+                      className="inventory-btn primary"
+                      onClick={() => setNewInsumoTabOpen(true)}
+                    >
+                      + Agregar insumo
+                    </button>
+                  </div>
+
+                  {stockLoading ? (
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        textAlign: "center",
+                        padding: 32,
+                      }}
+                    >
+                      Cargando…
+                    </p>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="inventory-table">
+                        <thead>
+                          <tr>
+                            <th>Nombre</th>
+                            <th>Categoría</th>
+                            <th>Unidad</th>
+                            <th style={{ textAlign: "right" }}>Stock actual</th>
+                            <th style={{ textAlign: "right" }}>Mínimo</th>
+                            <th>Alerta</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stockInsumos.map((r) => (
+                            <tr
+                              key={r.id}
+                              style={stockRowStyle(
+                                r.id,
+                                r.stock_actual,
+                                r.stock_minimo,
+                              )}
+                            >
+                              <td>{r.nombre}</td>
+                              <td>{r.categoria}</td>
+                              <td>{r.unidad}</td>
+                              <td style={{ textAlign: "right" }}>
+                                {r.stock_actual.toFixed(3)}
+                              </td>
+                              <td style={{ textAlign: "right" }}>
+                                {r.stock_minimo.toFixed(3)}
+                              </td>
+                              <td>
+                                {stockAlertaBadge(
+                                  r.id,
+                                  r.stock_actual,
+                                  r.stock_minimo,
+                                )}
+                              </td>
+                              <td>
+                                <button
+                                  className="inventory-btn secondary"
+                                  style={{ padding: "4px 10px", fontSize: "0.8rem" }}
+                                  onClick={() =>
+                                    setEditInsumoModal({
+                                      id: r.id,
+                                      nombre: r.nombre,
+                                      unidad: r.unidad,
+                                      categoria: r.categoria,
+                                      stock_minimo: r.stock_minimo.toFixed(3),
+                                    })
+                                  }
+                                >
+                                  ✏ Editar
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab: Bebidas ──────────────────────────────────────────── */}
+            {activeTab === "bebidas" && (
+              <div style={{ display: "grid", gap: 20 }}>
+                <div style={cardStyle}>
+                  <div style={{ marginBottom: 14 }}>
+                    <h3 style={{ margin: 0, color: "#0f172a" }}>🥤 Bebidas</h3>
+                    <p style={{ margin: "4px 0 0", color: "#64748b" }}>
+                      {stockBebidas.length} productos en stock
+                    </p>
+                  </div>
+                  {stockLoading ? (
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        textAlign: "center",
+                        padding: 32,
+                      }}
+                    >
+                      Cargando…
+                    </p>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="inventory-table">
+                        <thead>
+                          <tr>
+                              <th>Nombre</th>
+                              <th style={{ textAlign: "right" }}>Stock actual</th>
+                              <th style={{ textAlign: "right" }}>Mínimo</th>
+                              <th style={{ textAlign: "right" }}>Entradas</th>
+                              <th style={{ textAlign: "right" }}>Salidas</th>
+                              <th>Alerta</th>
+                              <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stockBebidas.map((r) => (
+                            <tr
+                              key={r.id}
+                              style={stockRowStyle(
+                                r.id,
+                                r.stock_actual,
+                                r.stock_minimo,
+                              )}
+                            >
+                              <td>{r.nombre}</td>
+                              <td style={{ textAlign: "right" }}>
+                                {r.stock_actual.toFixed(2)}
+                              </td>
+                              <td style={{ textAlign: "right" }}>
+                                {r.stock_minimo.toFixed(2)}
+                              </td>
+                              <td
+                                style={{ textAlign: "right", color: "#16a34a" }}
+                              >
+                                {r.total_entradas.toFixed(2)}
+                              </td>
+                              <td
+                                style={{ textAlign: "right", color: "#dc2626" }}
+                              >
+                                {r.total_salidas.toFixed(2)}
+                              </td>
+                              <td>
+                                {stockAlertaBadge(
+                                  r.id,
+                                  r.stock_actual,
+                                  r.stock_minimo,
+                                )}
+                              </td>
+                              <td>
+                                <button
+                                  className="inventory-btn"
+                                  style={{
+                                    padding: "4px 12px",
+                                    fontSize: "0.8rem",
+                                    background: "#f0fdf4",
+                                    color: "#15803d",
+                                    border: "1px solid #86efac",
+                                    borderRadius: 6,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  onClick={async () => {
+                                    await loadRecipeForProduct(r.id);
+                                    setRecipeModalOpen(true);
+                                  }}
+                                >
+                                  🧂 Insumos
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -2915,7 +2914,6 @@ export default function MovimientosInventarioView({
                         itemType: event.target.value,
                         itemId: "",
                       }));
-                      setInsumoSearch("");
                     }}
                   >
                     <option value="insumo">Insumo</option>
@@ -2928,292 +2926,23 @@ export default function MovimientosInventarioView({
                 </div>
                 <div>
                   <label>Item</label>
-                  {movementForm.itemType === "insumo" ? (
-                    <div style={{ position: "relative" }}>
-                      <input
-                        className="inventory-input"
-                        type="text"
-                        value={insumoSearch}
-                        placeholder="Buscar insumo..."
-                        autoComplete="off"
-                        onFocus={() => setInsumoDropdownOpen(true)}
-                        onBlur={() =>
-                          setTimeout(() => setInsumoDropdownOpen(false), 160)
-                        }
-                        onChange={(event) => {
-                          setInsumoSearch(event.target.value);
-                          setMovementForm((prev) => ({ ...prev, itemId: "" }));
-                          setInsumoDropdownOpen(true);
-                        }}
-                      />
-                      {insumoDropdownOpen && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: "100%",
-                            left: 0,
-                            right: 0,
-                            zIndex: 300,
-                            background: "#fff",
-                            border: "1px solid #e2e8f0",
-                            borderRadius: 8,
-                            maxHeight: 220,
-                            overflowY: "auto",
-                            boxShadow: "0 6px 18px rgba(0,0,0,0.10)",
-                          }}
-                        >
-                          {insumosFiltrados.length === 0 ? (
-                            <div
-                              style={{
-                                padding: "10px 14px",
-                                color: "#94a3b8",
-                                fontSize: 13,
-                              }}
-                            >
-                              Sin coincidencias
-                            </div>
-                          ) : (
-                            insumosFiltrados.map((insumo) => (
-                              <div
-                                key={insumo.id}
-                                onMouseDown={() => {
-                                  setInsumoSearch(insumo.nombre);
-                                  setMovementForm((prev) => ({
-                                    ...prev,
-                                    itemId: insumo.id,
-                                  }));
-                                  setInsumoDropdownOpen(false);
-                                  setNewInsumoOpen(false);
-                                }}
-                                style={{
-                                  padding: "8px 14px",
-                                  cursor: "pointer",
-                                  borderBottom: "1px solid #f1f5f9",
-                                  fontSize: 13,
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  alignItems: "center",
-                                  background:
-                                    movementForm.itemId === insumo.id
-                                      ? "#eff6ff"
-                                      : "transparent",
-                                }}
-                              >
-                                <span style={{ fontWeight: 500 }}>
-                                  {insumo.nombre}
-                                </span>
-                                <span
-                                  style={{
-                                    color: "#64748b",
-                                    fontSize: 11,
-                                    marginLeft: 8,
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {insumo.stock_actual !== undefined
-                                    ? `stock: ${Number(insumo.stock_actual).toFixed(2)} ${insumo.unidad || ""}`
-                                    : insumo.unidad || ""}
-                                </span>
-                              </div>
-                            ))
-                          )}
-                          {insumoSearch.trim() &&
-                            !insumosConMovimientos.some(
-                              (i) =>
-                                i.nombre.toLowerCase() ===
-                                insumoSearch.trim().toLowerCase(),
-                            ) && (
-                              <div
-                                onMouseDown={() => {
-                                  setNewInsumoForm((prev) => ({
-                                    ...prev,
-                                    nombre: insumoSearch.trim(),
-                                  }));
-                                  setNewInsumoOpen(true);
-                                  setInsumoDropdownOpen(false);
-                                }}
-                                style={{
-                                  padding: "9px 14px",
-                                  cursor: "pointer",
-                                  fontSize: 13,
-                                  color: "#1d4ed8",
-                                  fontWeight: 600,
-                                  borderTop: "1px solid #e2e8f0",
-                                  background: "#f0f9ff",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                }}
-                              >
-                                <span>＋</span>
-                                <span>
-                                  Crear &ldquo;{insumoSearch.trim()}&rdquo; como
-                                  nuevo insumo
-                                </span>
-                              </div>
-                            )}
-                        </div>
-                      )}
-                      {newInsumoOpen && (
-                        <div
-                          style={{
-                            marginTop: 8,
-                            background: "#f0f9ff",
-                            border: "1px solid #bfdbfe",
-                            borderRadius: 10,
-                            padding: 14,
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontWeight: 600,
-                              fontSize: 13,
-                              color: "#1e40af",
-                              marginBottom: 10,
-                            }}
-                          >
-                            Nuevo insumo
-                          </div>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
-                              gap: 8,
-                              marginBottom: 8,
-                            }}
-                          >
-                            <div style={{ gridColumn: "1 / -1" }}>
-                              <label style={{ fontSize: 12 }}>Nombre</label>
-                              <input
-                                className="inventory-input"
-                                value={newInsumoForm.nombre}
-                                onChange={(e) =>
-                                  setNewInsumoForm((p) => ({
-                                    ...p,
-                                    nombre: e.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                            <div>
-                              <label style={{ fontSize: 12 }}>Unidad</label>
-                              <input
-                                className="inventory-input"
-                                placeholder="kg, lt, unidad..."
-                                value={newInsumoForm.unidad}
-                                onChange={(e) =>
-                                  setNewInsumoForm((p) => ({
-                                    ...p,
-                                    unidad: e.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                            <div>
-                              <label style={{ fontSize: 12 }}>Categoría</label>
-                              <input
-                                className="inventory-input"
-                                placeholder="general, empaque..."
-                                value={newInsumoForm.categoria}
-                                onChange={(e) =>
-                                  setNewInsumoForm((p) => ({
-                                    ...p,
-                                    categoria: e.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                            <div style={{ gridColumn: "1 / -1" }}>
-                              <label style={{ fontSize: 12 }}>
-                                Costo unitario (L.)
-                              </label>
-                              <input
-                                className="inventory-input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={newInsumoForm.costo_unitario}
-                                onChange={(e) =>
-                                  setNewInsumoForm((p) => ({
-                                    ...p,
-                                    costo_unitario: e.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button
-                              type="button"
-                              className="inventory-btn primary"
-                              style={{ fontSize: 12, padding: "6px 14px" }}
-                              onClick={handleCreateInsumo}
-                              disabled={
-                                creatingInsumo || !newInsumoForm.nombre.trim()
-                              }
-                            >
-                              {creatingInsumo ? "Guardando..." : "Crear insumo"}
-                            </button>
-                            <button
-                              type="button"
-                              className="inventory-btn secondary"
-                              style={{ fontSize: 12, padding: "6px 14px" }}
-                              onClick={() => {
-                                setNewInsumoOpen(false);
-                                setNewInsumoForm({
-                                  nombre: "",
-                                  unidad: "unidad",
-                                  categoria: "general",
-                                  costo_unitario: "",
-                                });
-                              }}
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {movementForm.itemId ? (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "#16a34a",
-                            marginTop: 3,
-                          }}
-                        >
-                          ✓ insumo seleccionado
-                        </div>
-                      ) : insumoSearch.trim() ? (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "#dc2626",
-                            marginTop: 3,
-                          }}
-                        >
-                          Selecciona un insumo de la lista
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <select
-                      className="inventory-select"
-                      value={movementForm.itemId}
-                      onChange={(event) =>
-                        setMovementForm((prev) => ({
-                          ...prev,
-                          itemId: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="">Selecciona</option>
-                      {inventoryItems.map((item: any) => (
-                        <option key={item.id} value={item.id}>
-                          {item.nombre}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    className="inventory-select"
+                    value={movementForm.itemId}
+                    onChange={(event) =>
+                      setMovementForm((prev) => ({
+                        ...prev,
+                        itemId: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Selecciona</option>
+                    {inventoryItems.map((item: any) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nombre}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label>Movimiento</label>
@@ -3255,22 +2984,6 @@ export default function MovimientosInventarioView({
                       setMovementForm((prev) => ({
                         ...prev,
                         cantidad: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label>Costo unitario</label>
-                  <input
-                    className="inventory-input"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={movementForm.costoUnitario}
-                    onChange={(event) =>
-                      setMovementForm((prev) => ({
-                        ...prev,
-                        costoUnitario: event.target.value,
                       }))
                     }
                   />
@@ -3436,6 +3149,759 @@ export default function MovimientosInventarioView({
                 disabled={savingEditMov}
               >
                 {savingEditMov ? "Guardando…" : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Configurar receta ─────────────────────────────────── */}
+      {recipeModalOpen && (
+        <div
+          className="inventory-modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setRecipeModalOpen(false);
+          }}
+        >
+          <div className="inventory-modal" style={{ maxWidth: 680 }}>
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: 18,
+              }}
+            >
+              <div>
+                <h3 style={{ margin: 0, color: "#0f172a" }}>
+                  🍽 Configurar producto
+                </h3>
+                {selectedRecipeProduct && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      color: "#475569",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    <strong>{selectedRecipeProduct.nombre}</strong>
+                    {" · "}
+                    <span
+                      style={{
+                        background:
+                          selectedRecipeProduct.tipo === "comida"
+                            ? "#fef3c7"
+                            : "#e0e7ff",
+                        color:
+                          selectedRecipeProduct.tipo === "comida"
+                            ? "#92400e"
+                            : "#3730a3",
+                        padding: "1px 8px",
+                        borderRadius: 6,
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {selectedRecipeProduct.tipo}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <button
+                className="inventory-btn secondary"
+                style={{ padding: "4px 12px", flexShrink: 0 }}
+                onClick={() => setRecipeModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRecipeSubmit}>
+              {/* ── Configuración básica ───────────────────────────────── */}
+              <div
+                style={{
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 16,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <label>Modo de consumo de inventario</label>
+                  <select
+                    className="inventory-select"
+                    value={recipeForm.modoConsumo}
+                    onChange={(event) =>
+                      setRecipeForm((prev) => ({
+                        ...prev,
+                        modoConsumo: event.target
+                          .value as RecipeFormState["modoConsumo"],
+                      }))
+                    }
+                    disabled={isRecipeProductComplemento}
+                  >
+                    {(isRecipeProductComplemento
+                      ? CONSUMPTION_MODES.filter((mode) => mode.value === "receta")
+                      : CONSUMPTION_MODES
+                    ).map((mode) => (
+                      <option key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                    {isRecipeProductComplemento
+                      ? "Los complementos usan receta para descontar sus insumos al vender."
+                      : CONSUMPTION_MODES.find(
+                          (m) => m.value === recipeForm.modoConsumo,
+                        )?.help}
+                  </div>
+                </div>
+                <div>
+                  <label>Rendimiento por venta</label>
+                  <input
+                    className="inventory-input"
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={recipeForm.rendimiento}
+                    onChange={(event) =>
+                      setRecipeForm((prev) => ({
+                        ...prev,
+                        rendimiento: event.target.value,
+                      }))
+                    }
+                    disabled={recipeForm.modoConsumo !== "receta" && !isRecipeProductComplemento}
+                  />
+                  <div
+                    style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}
+                  >
+                    Unidades producidas por ejecución de receta
+                  </div>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label>Descripción / notas</label>
+                  <textarea
+                    className="inventory-textarea"
+                    style={{ minHeight: 52 }}
+                    value={recipeForm.descripcion}
+                    onChange={(event) =>
+                      setRecipeForm((prev) => ({
+                        ...prev,
+                        descripcion: event.target.value,
+                      }))
+                    }
+                    placeholder="Receta estándar, observaciones, etc."
+                  />
+                </div>
+              </div>
+
+              {/* ── Ingredientes ───────────────────────────────────────── */}
+              {(recipeForm.modoConsumo === "receta" || isRecipeProductComplemento) && (
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      padding: "10px 14px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      borderBottom: "1px solid #e2e8f0",
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}
+                  >
+                    <strong style={{ color: "#0f172a" }}>
+                      Ingredientes de la receta
+                    </strong>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="inventory-btn secondary"
+                        style={{ fontSize: "0.8rem", padding: "4px 12px" }}
+                        onClick={() =>
+                          setRecipeForm((prev) => ({
+                            ...prev,
+                            detalles: [
+                              ...prev.detalles,
+                              {
+                                tipo_item: "insumo",
+                                insumo_id: "",
+                                complemento_id: "",
+                                cantidad: "",
+                                unidad: "",
+                              },
+                            ],
+                          }))
+                        }
+                      >
+                        🧂 + Insumo
+                      </button>
+                      <button
+                        type="button"
+                        className="inventory-btn secondary"
+                        style={{
+                          fontSize: "0.8rem",
+                          padding: "4px 12px",
+                          background: "#ede9fe",
+                          color: "#5b21b6",
+                        }}
+                        onClick={() =>
+                          setRecipeForm((prev) => ({
+                            ...prev,
+                            detalles: [
+                              ...prev.detalles,
+                              {
+                                tipo_item: "complemento",
+                                insumo_id: "",
+                                complemento_id: "",
+                                cantidad: "",
+                                unidad: "unidad",
+                              },
+                            ],
+                          }))
+                        }
+                      >
+                        🛒 + Complemento
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: 12, display: "grid", gap: 8 }}>
+                    {recipeForm.detalles.map((detail, index) => {
+                      const isInsumo = detail.tipo_item === "insumo";
+                      return (
+                        <div
+                          key={index}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "auto 1fr 130px 80px auto",
+                            gap: 8,
+                            alignItems: "end",
+                            background: isInsumo ? "#f0fdf4" : "#f5f3ff",
+                            borderRadius: 8,
+                            padding: "10px 12px",
+                            borderLeft: `3px solid ${isInsumo ? "#16a34a" : "#7c3aed"}`,
+                          }}
+                        >
+                          {/* tipo toggle */}
+                          <div>
+                            <div
+                              style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}
+                            >
+                              Tipo
+                            </div>
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRecipeForm((prev) => ({
+                                    ...prev,
+                                    detalles: prev.detalles.map((d, i) =>
+                                      i === index
+                                        ? {
+                                            ...d,
+                                            tipo_item: "insumo",
+                                            complemento_id: "",
+                                            unidad:
+                                              insumos.find(
+                                                (ins) => ins.id === d.insumo_id,
+                                              )?.unidad || "",
+                                          }
+                                        : d,
+                                    ),
+                                  }))
+                                }
+                                style={{
+                                  padding: "3px 8px",
+                                  fontSize: 11,
+                                  fontWeight: isInsumo ? 700 : 400,
+                                  background: isInsumo ? "#16a34a" : "#e2e8f0",
+                                  color: isInsumo ? "#fff" : "#475569",
+                                  border: "none",
+                                  borderRadius: 5,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                🧂
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRecipeForm((prev) => ({
+                                    ...prev,
+                                    detalles: prev.detalles.map((d, i) =>
+                                      i === index
+                                        ? {
+                                            ...d,
+                                            tipo_item: "complemento",
+                                            insumo_id: "",
+                                            unidad: "unidad",
+                                          }
+                                        : d,
+                                    ),
+                                  }))
+                                }
+                                style={{
+                                  padding: "3px 8px",
+                                  fontSize: 11,
+                                  fontWeight: !isInsumo ? 700 : 400,
+                                  background: !isInsumo ? "#7c3aed" : "#e2e8f0",
+                                  color: !isInsumo ? "#fff" : "#475569",
+                                  border: "none",
+                                  borderRadius: 5,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                🛒
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* item selector */}
+                          <div>
+                            <div
+                              style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}
+                            >
+                              {isInsumo ? "Insumo" : "Complemento"}
+                            </div>
+                            {isInsumo ? (
+                              <select
+                                className="inventory-select"
+                                value={detail.insumo_id}
+                                onChange={(e) =>
+                                  setRecipeForm((prev) => ({
+                                    ...prev,
+                                    detalles: prev.detalles.map((d, i) =>
+                                      i === index
+                                        ? {
+                                            ...d,
+                                            insumo_id: e.target.value,
+                                            unidad:
+                                              insumos.find(
+                                                (ins) =>
+                                                  ins.id === e.target.value,
+                                              )?.unidad || "unidad",
+                                          }
+                                        : d,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <option value="">Seleccionar insumo</option>
+                                {insumos.map((ins) => (
+                                  <option key={ins.id} value={ins.id}>
+                                    {ins.nombre}
+                                    {ins.stock_actual !== undefined
+                                      ? ` (${Number(ins.stock_actual).toFixed(2)} ${ins.unidad})`
+                                      : ` · ${ins.unidad}`}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <select
+                                className="inventory-select"
+                                value={detail.complemento_id || ""}
+                                onChange={(e) =>
+                                  setRecipeForm((prev) => ({
+                                    ...prev,
+                                    detalles: prev.detalles.map((d, i) =>
+                                      i === index
+                                        ? { ...d, complemento_id: e.target.value }
+                                        : d,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <option value="">Seleccionar complemento</option>
+                                {productos
+                                  .filter((p) => p.tipo === "complemento")
+                                  .map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.nombre}
+                                    </option>
+                                  ))}
+                              </select>
+                            )}
+                          </div>
+
+                          {/* cantidad */}
+                          <div>
+                            <div
+                              style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}
+                            >
+                              Cantidad
+                            </div>
+                            <input
+                              className="inventory-input"
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={detail.cantidad}
+                              onChange={(e) =>
+                                setRecipeForm((prev) => ({
+                                  ...prev,
+                                  detalles: prev.detalles.map((d, i) =>
+                                    i === index
+                                      ? { ...d, cantidad: e.target.value }
+                                      : d,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+
+                          {/* unidad */}
+                          <div>
+                            <div
+                              style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}
+                            >
+                              Unidad
+                            </div>
+                            <input
+                              className="inventory-input"
+                              value={detail.unidad || (isInsumo ? "" : "unidad")}
+                              readOnly
+                              style={{ background: "#f1f5f9", color: "#64748b" }}
+                            />
+                          </div>
+
+                          {/* quitar */}
+                          <div>
+                            <div style={{ fontSize: 11, color: "transparent", marginBottom: 4 }}>
+                              &nbsp;
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRecipeForm((prev) => ({
+                                  ...prev,
+                                  detalles:
+                                    prev.detalles.length === 1
+                                      ? [
+                                          {
+                                            tipo_item: "insumo",
+                                            insumo_id: "",
+                                            complemento_id: "",
+                                            cantidad: "",
+                                            unidad: "",
+                                          },
+                                        ]
+                                      : prev.detalles.filter(
+                                          (_, i) => i !== index,
+                                        ),
+                                }))
+                              }
+                              style={{
+                                background: "#fee2e2",
+                                color: "#b91c1c",
+                                border: "none",
+                                borderRadius: 6,
+                                padding: "5px 10px",
+                                cursor: "pointer",
+                                fontWeight: 600,
+                                fontSize: 13,
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {recipeForm.detalles.length === 0 && (
+                      <p style={{ color: "#94a3b8", textAlign: "center", padding: 20, margin: 0 }}>
+                        Agrega ingredientes con los botones de arriba
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Footer ─────────────────────────────────────────────── */}
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="inventory-btn secondary"
+                  onClick={() => {
+                    setRecipeId(null);
+                    setRecipeForm(initialRecipeForm);
+                  }}
+                  disabled={submitting}
+                >
+                  Limpiar
+                </button>
+                <button
+                  type="button"
+                  className="inventory-btn secondary"
+                  onClick={() => setRecipeModalOpen(false)}
+                  disabled={submitting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="inventory-btn primary"
+                  disabled={submitting}
+                >
+                  {submitting ? "Guardando..." : "Guardar configuración"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Editar insumo ──────────────────────────────────────── */}
+      {editInsumoModal && (
+        <div
+          className="inventory-modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEditInsumoModal(null);
+          }}
+        >
+          <div className="inventory-modal" style={{ maxWidth: 480 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 20,
+              }}
+            >
+              <h3 style={{ margin: 0, color: "#0f172a" }}>✏ Editar insumo</h3>
+              <button
+                className="inventory-btn secondary"
+                style={{ padding: "4px 12px" }}
+                onClick={() => setEditInsumoModal(null)}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <label>Nombre</label>
+                <input
+                  className="inventory-input"
+                  value={editInsumoModal.nombre}
+                  onChange={(e) =>
+                    setEditInsumoModal((p) => p && { ...p, nombre: e.target.value })
+                  }
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label>Unidad de medida</label>
+                <select
+                  className="inventory-select"
+                  value={editInsumoModal.unidad}
+                  onChange={(e) =>
+                    setEditInsumoModal((p) => p && { ...p, unidad: e.target.value })
+                  }
+                >
+                  <option value="unidad">Unidad</option>
+                  <option value="lb">Libra (lb)</option>
+                  <option value="oz">Onza (oz)</option>
+                  <option value="kg">Kilogramo (kg)</option>
+                  <option value="g">Gramo (g)</option>
+                  <option value="lt">Litro (lt)</option>
+                  <option value="ml">Mililitro (ml)</option>
+                  <option value="galon">Galón</option>
+                  <option value="docena">Docena</option>
+                  <option value="bolsa">Bolsa</option>
+                  <option value="caja">Caja</option>
+                  <option value="paquete">Paquete</option>
+                  <option value="rollo">Rollo</option>
+                </select>
+              </div>
+              <div>
+                <label>Categoría</label>
+                <input
+                  className="inventory-input"
+                  placeholder="general, empaque, bebidas..."
+                  value={editInsumoModal.categoria}
+                  onChange={(e) =>
+                    setEditInsumoModal((p) => p && { ...p, categoria: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label>Stock mínimo</label>
+                <input
+                  className="inventory-input"
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={editInsumoModal.stock_minimo}
+                  onChange={(e) =>
+                    setEditInsumoModal((p) => p && { ...p, stock_minimo: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                marginTop: 22,
+              }}
+            >
+              <button
+                type="button"
+                className="inventory-btn secondary"
+                onClick={() => setEditInsumoModal(null)}
+                disabled={savingEditInsumo}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="inventory-btn primary"
+                onClick={handleSaveEditInsumo}
+                disabled={savingEditInsumo || !editInsumoModal.nombre.trim()}
+              >
+                {savingEditInsumo ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Agregar insumo (tab Insumos) ───────────────────────── */}
+      {newInsumoTabOpen && (
+        <div
+          className="inventory-modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setNewInsumoTabOpen(false);
+              setNewInsumoForm({
+                nombre: "",
+                unidad: "unidad",
+                categoria: "general",
+              });
+            }
+          }}
+        >
+          <div className="inventory-modal" style={{ maxWidth: 480 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 20,
+              }}
+            >
+              <h3 style={{ margin: 0, color: "#0f172a" }}>🧂 Nuevo insumo</h3>
+              <button
+                className="inventory-btn secondary"
+                style={{ padding: "4px 12px" }}
+                onClick={() => {
+                  setNewInsumoTabOpen(false);
+                  setNewInsumoForm({
+                    nombre: "",
+                    unidad: "unidad",
+                    categoria: "general",
+                  });
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <label>Nombre</label>
+                <input
+                  className="inventory-input"
+                  placeholder="Ej: Carne de cerdo, Aceite..."
+                  value={newInsumoForm.nombre}
+                  onChange={(e) =>
+                    setNewInsumoForm((p) => ({ ...p, nombre: e.target.value }))
+                  }
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label>Unidad de medida</label>
+                <select
+                  className="inventory-select"
+                  value={newInsumoForm.unidad}
+                  onChange={(e) =>
+                    setNewInsumoForm((p) => ({ ...p, unidad: e.target.value }))
+                  }
+                >
+                  <option value="unidad">Unidad</option>
+                  <option value="lb">Libra (lb)</option>
+                  <option value="oz">Onza (oz)</option>
+                  <option value="kg">Kilogramo (kg)</option>
+                  <option value="g">Gramo (g)</option>
+                  <option value="lt">Litro (lt)</option>
+                  <option value="ml">Mililitro (ml)</option>
+                  <option value="galon">Galón</option>
+                  <option value="docena">Docena</option>
+                  <option value="bolsa">Bolsa</option>
+                  <option value="caja">Caja</option>
+                  <option value="paquete">Paquete</option>
+                  <option value="rollo">Rollo</option>
+                </select>
+              </div>
+              <div>
+                <label>Categoría</label>
+                <input
+                  className="inventory-input"
+                  placeholder="general, empaque, bebidas..."
+                  value={newInsumoForm.categoria}
+                  onChange={(e) =>
+                    setNewInsumoForm((p) => ({
+                      ...p,
+                      categoria: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                marginTop: 22,
+              }}
+            >
+              <button
+                type="button"
+                className="inventory-btn secondary"
+                onClick={() => {
+                  setNewInsumoTabOpen(false);
+                  setNewInsumoForm({
+                    nombre: "",
+                    unidad: "unidad",
+                    categoria: "general",
+                  });
+                }}
+                disabled={creatingInsumo}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="inventory-btn primary"
+                onClick={handleCreateInsumo}
+                disabled={creatingInsumo || !newInsumoForm.nombre.trim()}
+              >
+                {creatingInsumo ? "Guardando..." : "Crear insumo"}
               </button>
             </div>
           </div>

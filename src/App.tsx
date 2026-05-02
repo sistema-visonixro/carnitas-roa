@@ -202,7 +202,11 @@ function App() {
         | "donacionesMensuales"
         | "impresoras"
         | "configuraciones"
-        | "facturacionSAR";
+        | "facturacionSAR"
+        | "compras"
+        | "planilla"
+        | "costosOperativos"
+        | "estadoResultados";
     } catch {
       return undefined;
     }
@@ -234,6 +238,10 @@ function App() {
     | "impresoras"
     | "configuraciones"
     | "facturacionSAR"
+    | "compras"
+    | "planilla"
+    | "costosOperativos"
+    | "estadoResultados"
   >(initialView || "home");
   const [cajaApertura, setCajaApertura] = useState<string | null>(null);
 
@@ -436,8 +444,8 @@ function App() {
           alignItems: "center",
           justifyContent: "center",
           background:
-            "linear-gradient(135deg,#071029 0%,#09243d 50%,#073b5b 100%)",
-          color: "#fff",
+            "linear-gradient(135deg,#f8fafc 0%,#e2e8f0 50%,#cbd5e1 100%)",
+          color: "#0f172a",
           gap: 16,
         }}
       >
@@ -452,8 +460,8 @@ function App() {
           style={{
             width: 40,
             height: 40,
-            border: "4px solid #fff3",
-            borderTop: "4px solid #fff",
+            border: "4px solid #cbd5e1",
+            borderTop: "4px solid #1e293b",
             borderRadius: "50%",
             animation: "spin 0.9s linear infinite",
           }}
@@ -473,8 +481,8 @@ function App() {
           alignItems: "center",
           justifyContent: "center",
           background:
-            "linear-gradient(135deg,#071029 0%,#09243d 50%,#073b5b 100%)",
-          color: "#fff",
+            "linear-gradient(135deg,#f8fafc 0%,#e2e8f0 50%,#cbd5e1 100%)",
+          color: "#0f172a",
           gap: 16,
           padding: 24,
           textAlign: "center",
@@ -496,8 +504,8 @@ function App() {
             padding: "10px 28px",
             borderRadius: 8,
             border: "none",
-            background: "#1976d2",
-            color: "#fff",
+            background: "#bfdbfe",
+            color: "#0f172a",
             fontWeight: 700,
             fontSize: 15,
             cursor: "pointer",
@@ -839,8 +847,8 @@ function App() {
         >
           <div
             style={{
-              background: "#0d1b2a",
-              color: "#fff",
+              background: "#ffffff",
+              color: "#0f172a",
               borderRadius: 16,
               padding: "36px 40px",
               minWidth: 320,

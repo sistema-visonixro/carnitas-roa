@@ -24,7 +24,11 @@ type ViewType =
   | "donacionesMensuales"
   | "impresoras"
   | "configuraciones"
-  | "facturacionSAR";
+  | "facturacionSAR"
+  | "compras"
+  | "planilla"
+  | "costosOperativos"
+  | "estadoResultados";
 
 const cards: {
   label: string;
@@ -138,6 +142,34 @@ const cards: {
     color: "#475569",
     subtitle: "Reglas del POS",
   },
+  {
+    label: "Compras",
+    icon: "📦",
+    view: "compras",
+    color: "#2563eb",
+    subtitle: "Registro de compras",
+  },
+  {
+    label: "Planilla",
+    icon: "👥",
+    view: "planilla",
+    color: "#7c3aed",
+    subtitle: "Pagos de nómina",
+  },
+  {
+    label: "Costos Operativos",
+    icon: "🏢",
+    view: "costosOperativos",
+    color: "#0f766e",
+    subtitle: "Gastos fijos recurrentes",
+  },
+  {
+    label: "Estado de Resultados",
+    icon: "📊",
+    view: "estadoResultados",
+    color: "#c62828",
+    subtitle: "Utilidad del período",
+  },
 ];
 
 interface AdminPanelProps {
@@ -163,6 +195,10 @@ import DonacionesMensualesView from "./DonacionesMensualesView";
 import ImpresorasView from "./ImpresorasView";
 import FacturacionSARView from "./FacturacionSARView";
 import ConfiguracionesView from "./ConfiguracionesView";
+import ComprasView from "./ComprasView";
+import PlanillaView from "./PlanillaView";
+import CostosOperativosView from "./CostosOperativosView";
+import EstadoResultadosView from "./EstadoResultadosView";
 
 const ADMIN_PANEL_VIEW_KEY = "admin_current_view";
 const VALID_ADMIN_VIEWS = new Set<string>([
@@ -1014,7 +1050,7 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    color: "white",
+                    color: "#0f172a",
                   }}
                 >
                   <svg
@@ -1169,7 +1205,9 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                     </div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <div className="welcome-pill">Panel Ejecutivo</div>
-                      <div className="welcome-pill secondary">Administrador</div>
+                      <div className="welcome-pill secondary">
+                        Administrador
+                      </div>
                     </div>
                   </div>
                   <div className="welcome-stats">
@@ -1287,6 +1325,18 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
             {currentView === "facturacionSAR" && (
               <FacturacionSARView onBack={() => setCurrentView("menu")} />
             )}
+            {currentView === "compras" && (
+              <ComprasView onBack={() => setCurrentView("menu")} />
+            )}
+            {currentView === "planilla" && (
+              <PlanillaView onBack={() => setCurrentView("menu")} />
+            )}
+            {currentView === "costosOperativos" && (
+              <CostosOperativosView onBack={() => setCurrentView("menu")} />
+            )}
+            {currentView === "estadoResultados" && (
+              <EstadoResultadosView onBack={() => setCurrentView("menu")} />
+            )}
           </div>
         </section>
       </div>
@@ -1349,7 +1399,7 @@ const AdminPanel: FC<AdminPanelProps> = (props) => {
                 style={{
                   background:
                     "linear-gradient(135deg, #ef4444 0%, #f59e0b 100%)",
-                  color: "white",
+                  color: "#0f172a",
                   fontWeight: 700,
                   border: "none",
                   borderRadius: "12px",

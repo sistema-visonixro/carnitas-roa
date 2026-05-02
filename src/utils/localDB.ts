@@ -8,7 +8,7 @@ import { compareTurnoRecordsByRecency } from "./fechas";
 
 // ─────────────────────────── Configuración DB ──────────────────────────────
 const DB_NAME = "CarnitasRoaLocalDB";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 export const STORE = {
   VENTAS: "ventas",
@@ -54,6 +54,10 @@ export const STORE = {
   STOCK_PRODUCTOS: "stock_productos",
   DEVOLUCIONSE: "devolucionse",
   AUDITORIA_FACTURAS: "auditoria_facturas",
+  // Estado de resultados
+  COMPRAS: "compras",
+  PLANILLA: "planilla",
+  COSTOS_OPERATIVOS: "costos_operativos",
 } as const;
 
 export interface ResumenTurno {
@@ -326,6 +330,19 @@ export function openLocalDB(): Promise<IDBDatabase> {
             { name: "tipo_cambio", keyPath: "tipo_cambio" },
           ],
         );
+      }
+
+      if (oldVersion < 6) {
+        ensureStore(STORE.COMPRAS, { keyPath: "id" }, [
+          { name: "fecha", keyPath: "fecha" },
+        ]);
+        ensureStore(STORE.PLANILLA, { keyPath: "id" }, [
+          { name: "fecha_pago", keyPath: "fecha_pago" },
+        ]);
+        ensureStore(STORE.COSTOS_OPERATIVOS, { keyPath: "id" }, [
+          { name: "fecha", keyPath: "fecha" },
+          { name: "categoria", keyPath: "categoria" },
+        ]);
       }
     };
 
