@@ -69,11 +69,13 @@ const COLORES: Record<string, string> = {
   comida: "#16a34a",
   bebida: "#2563eb",
   complemento: "#7c3aed",
+  donaciones: "#db2777",
 };
 const ICONOS: Record<string, string> = {
   comida: "🍽️",
   bebida: "🥤",
   complemento: "🧂",
+  donaciones: "🎁",
 };
 
 export default function GananciasNetasView({
@@ -116,7 +118,7 @@ export default function GananciasNetasView({
       while (true) {
         const { data, error: e } = await supabase
           .from("ventas")
-          .select("id, factura, productos, total, fecha_hora")
+          .select("id, factura, productos, total, fecha_hora, tipo, es_donacion")
           .gte("fecha_hora", desdeStr)
           .lte("fecha_hora", hastaStr)
           .order("fecha_hora", { ascending: false })
@@ -126,6 +128,37 @@ export default function GananciasNetasView({
         todasFacturas = [...todasFacturas, ...data];
         if (data.length < PG) break;
         offset += PG;
+      }
+
+      const ventasValidas = todasFacturas.filter(
+        (fact: any) =>
+          String(fact?.tipo || "").toUpperCase() !== "CREDITO" &&
+          fact?.es_donacion !== true,
+      );
+      const ventasDonacion = todasFacturas.filter(
+        (fact: any) =>
+          String(fact?.tipo || "").toUpperCase() !== "CREDITO" &&
+          fact?.es_donacion === true,
+      );
+
+      let totalVentasDashboard = 0;
+      try {
+        const { data: ventasDiaView } = await supabase
+          .from("vw_reporte_ventas_periodo")
+          .select("ventas_total")
+          .eq("periodo_tipo", "dia")
+          .gte("periodo_inicio", `${desde.split("T")[0]} 00:00:00`)
+          .lte("periodo_inicio", `${hasta.split("T")[0]} 23:59:59`);
+
+        totalVentasDashboard = (ventasDiaView || []).reduce(
+          (sum: number, row: any) => sum + Number(row.ventas_total || 0),
+          0,
+        );
+      } catch {
+        totalVentasDashboard = ventasValidas.reduce(
+          (sum: number, fact: any) => sum + Number(fact.total || 0),
+          0,
+        );
       }
 
       // ── 2. Cargar todos los productos (con costo) ─────────────────
@@ -171,11 +204,10 @@ export default function GananciasNetasView({
         }
       >();
 
-      let totalVentas = 0;
       let totalCosto = 0;
       let productosSinCosto = new Set<string>();
 
-      todasFacturas.forEach((fact: any) => {
+      ventasValidas.forEach((fact: any) => {
         let items: any[] = [];
         try {
           items =
@@ -192,8 +224,6 @@ export default function GananciasNetasView({
           const cantidad = Number(item.cantidad) || 1;
           const precio = Number(item.precio) || Number(prod?.precio) || 0;
           const ingreso = precio * cantidad;
-
-          totalVentas += ingreso;
 
           const nombre = item.nombre || prod?.nombre || "Desconocido";
           const tipo = prod?.tipo || "comida";
@@ -283,6 +313,42 @@ export default function GananciasNetasView({
         })
         .sort((a, b) => b.ganancia - a.ganancia);
 
+      let donacionesCantidad = 0;
+      let donacionesCosto = 0;
+      ventasDonacion.forEach((fact: any) => {
+        let items: any[] = [];
+        try {
+          items =
+            typeof fact.productos === "string"
+              ? JSON.parse(fact.productos || "[]")
+              : fact.productos || [];
+        } catch {
+          return;
+        }
+        if (!Array.isArray(items)) return;
+
+        items.forEach((item: any) => {
+          const prod = prodMap.get(item.id);
+          const cantidad = Number(item.cantidad) || 1;
+          const costoUnitario = prod?.costo != null ? Number(prod.costo) : 0;
+          donacionesCantidad += cantidad;
+          donacionesCosto += costoUnitario * cantidad;
+        });
+      });
+
+      if (donacionesCantidad > 0 || donacionesCosto > 0) {
+        categoriasResult.push({
+          categoria: "donaciones",
+          icono: ICONOS.donaciones,
+          color: COLORES.donaciones,
+          cantidadVendida: donacionesCantidad,
+          ingresoTotal: 0,
+          costoTotal: donacionesCosto,
+          ganancia: -donacionesCosto,
+          margen: 0,
+        });
+      }
+
       const subCategoriasResult: SubcategoriaStat[] = Array.from(
         subcatMap.entries(),
       )
@@ -336,17 +402,14 @@ export default function GananciasNetasView({
         .sort((a, b) => b.fecha.localeCompare(a.fecha));
 
       // KPIs finales
-      const gananciaBruta = totalVentas - totalCosto;
-      const gananciaNeta = gananciaBruta + deliveryIngresos;
-
       setKpis({
-        totalVentas,
+        totalVentas: totalVentasDashboard,
         totalCosto,
-        gananciaBruta,
+        gananciaBruta: totalVentasDashboard - totalCosto,
         deliveryIngresos,
         totalGastos: 0,
-        gananciaNeta,
-        totalFacturas: todasFacturas.length,
+        gananciaNeta: totalVentasDashboard - totalCosto + deliveryIngresos,
+        totalFacturas: ventasValidas.length,
         totalPedidosDelivery: todosEnvios.length,
         productosSinCosto: productosSinCosto.size,
       });
@@ -563,6 +626,7 @@ export default function GananciasNetasView({
           }
           .gn-tabs::-webkit-scrollbar { display: none; }
           .gn-tab { flex-shrink: 0; padding: 7px 14px; font-size: 0.8rem; }
+
         }
         @media (max-width: 480px) {
           .gn-kpis { grid-template-columns: repeat(2, 1fr); gap: 0.65rem; }
@@ -824,7 +888,7 @@ export default function GananciasNetasView({
                   <tbody>
                     {porCategoria.map((cat) => (
                       <tr key={cat.categoria}>
-                        <td>
+                        <td data-label="Categoría">
                           <span
                             className="gn-badge"
                             style={{
@@ -838,10 +902,14 @@ export default function GananciasNetasView({
                               cat.categoria.slice(1)}
                           </span>
                         </td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        <td
+                          data-label="Cantidad Vendida"
+                          style={{ textAlign: "right", fontWeight: 600 }}
+                        >
                           {cat.cantidadVendida}
                         </td>
                         <td
+                          data-label="Ingreso Total"
                           style={{
                             textAlign: "right",
                             color: "#16a34a",
@@ -850,10 +918,14 @@ export default function GananciasNetasView({
                         >
                           {fmt(cat.ingresoTotal)}
                         </td>
-                        <td style={{ textAlign: "right", color: "#d97706" }}>
+                        <td
+                          data-label="Costo Total"
+                          style={{ textAlign: "right", color: "#d97706" }}
+                        >
                           {fmt(cat.costoTotal)}
                         </td>
                         <td
+                          data-label="Ganancia"
                           style={{
                             textAlign: "right",
                             fontWeight: 700,
@@ -862,7 +934,7 @@ export default function GananciasNetasView({
                         >
                           {fmt(cat.ganancia)}
                         </td>
-                        <td style={{ minWidth: 100 }}>
+                        <td data-label="Margen" style={{ minWidth: 100 }}>
                           <div
                             style={{
                               fontSize: "0.8rem",
@@ -896,32 +968,50 @@ export default function GananciasNetasView({
                     ))}
                     {porCategoria.length > 0 && (
                       <tr className="total-row">
-                        <td>TOTAL</td>
-                        <td style={{ textAlign: "right" }}>
+                        <td data-label="Categoría">TOTAL</td>
+                        <td data-label="Cantidad Vendida" style={{ textAlign: "right" }}>
                           {porCategoria.reduce(
                             (s, c) => s + c.cantidadVendida,
                             0,
                           )}
                         </td>
-                        <td style={{ textAlign: "right" }}>
-                          {fmt(kpis.totalVentas)}
+                        <td data-label="Ingreso Total" style={{ textAlign: "right" }}>
+                          {fmt(
+                            porCategoria.reduce(
+                              (s, c) => s + c.ingresoTotal,
+                              0,
+                            ),
+                          )}
                         </td>
-                        <td style={{ textAlign: "right" }}>
-                          {fmt(kpis.totalCosto)}
+                        <td data-label="Costo Total" style={{ textAlign: "right" }}>
+                          {fmt(
+                            porCategoria.reduce((s, c) => s + c.costoTotal, 0),
+                          )}
                         </td>
                         <td
+                          data-label="Ganancia"
                           style={{
                             textAlign: "right",
                             color:
-                              kpis.gananciaBruta >= 0 ? "#16a34a" : "#dc2626",
+                              porCategoria.reduce((s, c) => s + c.ganancia, 0) >=
+                              0
+                                ? "#16a34a"
+                                : "#dc2626",
                           }}
                         >
-                          {fmt(kpis.gananciaBruta)}
+                          {fmt(
+                            porCategoria.reduce((s, c) => s + c.ganancia, 0),
+                          )}
                         </td>
-                        <td>
-                          {kpis.totalVentas > 0
+                        <td data-label="Margen">
+                          {porCategoria.reduce((s, c) => s + c.ingresoTotal, 0) >
+                          0
                             ? (
-                                (kpis.gananciaBruta / kpis.totalVentas) *
+                                (porCategoria.reduce((s, c) => s + c.ganancia, 0) /
+                                  porCategoria.reduce(
+                                    (s, c) => s + c.ingresoTotal,
+                                    0,
+                                  )) *
                                 100
                               ).toFixed(1) + "%"
                             : "—"}

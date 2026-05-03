@@ -3312,26 +3312,43 @@ export default function ResultadosView({
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              padding: "16px 24px",
+              flexWrap: "wrap",
+              gap: 10,
+              padding: "14px 16px",
               background: "linear-gradient(135deg, #0b4f9a 0%, #1976d2 100%)",
               borderRadius: "12px 12px 0 0",
               marginBottom: 0,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 28 }}>🏦</span>
-              <div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                minWidth: 0,
+                flex: "1 1 260px",
+              }}
+            >
+              <span style={{ fontSize: 24, flexShrink: 0 }}>🏦</span>
+              <div style={{ minWidth: 0 }}>
                 <div
                   style={{
                     fontWeight: 900,
-                    fontSize: 22,
+                    fontSize: "clamp(18px, 4.8vw, 22px)",
                     color: "#fff",
-                    letterSpacing: 1,
+                    letterSpacing: 0.6,
+                    lineHeight: 1.15,
                   }}
                 >
                   Resumen de Caja
                 </div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)" }}>
+                <div
+                  style={{
+                    fontSize: "clamp(11px, 3.2vw, 12px)",
+                    color: "rgba(255,255,255,0.85)",
+                    lineHeight: 1.25,
+                  }}
+                >
                   Turnos completados y activos
                 </div>
               </div>
@@ -3340,7 +3357,7 @@ export default function ResultadosView({
               onClick={fetchTurnosResumen}
               style={{
                 fontSize: 13,
-                padding: "10px 18px",
+                padding: "10px 14px",
                 borderRadius: 8,
                 border: "2px solid rgba(255,255,255,0.3)",
                 background: "rgba(255,255,255,0.1)",
@@ -3348,6 +3365,10 @@ export default function ResultadosView({
                 fontWeight: 700,
                 cursor: "pointer",
                 transition: "all 0.2s",
+                width: "100%",
+                maxWidth: 170,
+                marginLeft: "auto",
+                whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
                 (e.target as HTMLButtonElement).style.background =
@@ -3370,9 +3391,9 @@ export default function ResultadosView({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))",
-              gap: "18px",
-              padding: "20px",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: "14px",
+              padding: "14px",
               background: "#f8fafc",
               borderRadius: "0 0 12px 12px",
               minHeight:
@@ -3471,7 +3492,7 @@ export default function ResultadosView({
                             ? "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)"
                             : "linear-gradient(135deg, #0b4f9a 0%, #1976d2 100%)",
                           color: "#fff",
-                          padding: "16px",
+                          padding: "clamp(10px, 2.8vw, 16px)",
                           position: "relative",
                         }}
                       >
@@ -3492,15 +3513,15 @@ export default function ResultadosView({
                           >
                             <div
                               style={{
-                                width: "36px",
-                                height: "36px",
+                                width: "32px",
+                                height: "32px",
                                 borderRadius: "50%",
                                 background: "rgba(255,255,255,0.25)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 fontWeight: 800,
-                                fontSize: "16px",
+                                fontSize: "14px",
                               }}
                             >
                               {(t.nombre_cajero || "?").charAt(0).toUpperCase()}
@@ -3509,7 +3530,7 @@ export default function ResultadosView({
                               <div
                                 style={{
                                   fontWeight: 800,
-                                  fontSize: "15px",
+                                  fontSize: "clamp(13px, 3.4vw, 15px)",
                                 }}
                               >
                                 {t.nombre_cajero}
@@ -3562,7 +3583,7 @@ export default function ResultadosView({
                       </div>
 
                       {/* Card Body */}
-                      <div style={{ padding: "16px" }}>
+                      <div style={{ padding: "clamp(10px, 2.8vw, 16px)" }}>
                         {/* Fechas */}
                         <div
                           style={{
@@ -3586,7 +3607,8 @@ export default function ResultadosView({
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
+                              gridTemplateColumns:
+                                "repeat(auto-fit, minmax(130px, 1fr))",
                               gap: "8px",
                               fontSize: "12px",
                             }}
@@ -3636,7 +3658,8 @@ export default function ResultadosView({
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1fr 1fr",
+                            gridTemplateColumns:
+                              "repeat(auto-fit, minmax(130px, 1fr))",
                             gap: "12px",
                             marginBottom: "14px",
                           }}
@@ -3662,7 +3685,7 @@ export default function ResultadosView({
                             </div>
                             <div
                               style={{
-                                fontSize: "16px",
+                                fontSize: "clamp(14px, 4.6vw, 16px)",
                                 fontWeight: 900,
                                 color: "#15803d",
                               }}
@@ -3695,7 +3718,7 @@ export default function ResultadosView({
                             </div>
                             <div
                               style={{
-                                fontSize: "16px",
+                                fontSize: "clamp(14px, 4.6vw, 16px)",
                                 fontWeight: 900,
                                 color: "#1f2937",
                               }}
@@ -3733,7 +3756,8 @@ export default function ResultadosView({
                           <div
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "1fr 1fr 1fr",
+                              gridTemplateColumns:
+                                "repeat(auto-fit, minmax(90px, 1fr))",
                               gap: "8px",
                               fontSize: "12px",
                             }}
@@ -3811,7 +3835,8 @@ export default function ResultadosView({
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gridTemplateColumns:
+                              "repeat(auto-fit, minmax(90px, 1fr))",
                             gap: "8px",
                             paddingTop: "12px",
                             borderTop: "1px solid #e2e8f0",
@@ -3836,7 +3861,7 @@ export default function ResultadosView({
                             </div>
                             <div
                               style={{
-                                fontSize: "18px",
+                                fontSize: "clamp(14px, 5vw, 18px)",
                                 fontWeight: 800,
                                 color: "#166534",
                                 background: "#f0fdf4",
@@ -3867,7 +3892,7 @@ export default function ResultadosView({
                             </div>
                             <div
                               style={{
-                                fontSize: "18px",
+                                fontSize: "clamp(14px, 5vw, 18px)",
                                 fontWeight: 800,
                                 color: "#1e40af",
                                 background: "#eff6ff",
@@ -3898,7 +3923,7 @@ export default function ResultadosView({
                             </div>
                             <div
                               style={{
-                                fontSize: "18px",
+                                fontSize: "clamp(14px, 5vw, 18px)",
                                 fontWeight: 800,
                                 color: "#dc2626",
                                 background: "#fee2e2",
