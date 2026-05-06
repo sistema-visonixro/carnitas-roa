@@ -2560,7 +2560,11 @@ export async function sincronizarVentas(): Promise<{
     if (secuencial === null) return;
 
     const tipoComprobante = inferirTipoComprobanteVenta(ventaSincronizada);
-    const siguiente = secuencial + 1;
+    // Semántica del campo cai_facturas.factura_actual:
+    // - RECIBO  -> guarda el PRÓXIMO número a usar
+    // - FACTURA -> guarda el ÚLTIMO número usado (lo incrementa el RPC SAR)
+    const siguiente =
+      tipoComprobante === "FACTURA" ? secuencial : secuencial + 1;
     const key = `${ventaSincronizada.cajero_id}::${tipoComprobante}`;
     const existente = correlativosPorSincronizar.get(key);
 
