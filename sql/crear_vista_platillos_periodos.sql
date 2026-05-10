@@ -1,27 +1,33 @@
 -- =============================================================
--- Vista: platillos del día (desde apertura activa del cajero)
+-- Vista: platillos del turno (desde apertura de caja)
 -- Fuente: ventas.productos (JSON) filtrando solo tipo = comida
--- Horario de referencia: America/Tegucigalpa
+-- Rango: fecha_apertura del turno -> fecha_cierre del turno (o NOW si sigue abierto)
 -- =============================================================
 
 DROP VIEW IF EXISTS public.v_platillos_periodos;
 
 CREATE VIEW public.v_platillos_periodos AS
-WITH parametros AS (
-  SELECT
-    timezone('America/Tegucigalpa', now())::date AS hoy_hn
-),
-apertura_activa AS (
-  SELECT
+WITH ultimo_turno AS (
+  SELECT DISTINCT ON (c.cajero_id)
     c.cajero_id,
-    MAX(COALESCE(c.fecha_apertura, c.fecha)) AS fecha_apertura_activa
+    COALESCE(c.fecha_apertura, c.fecha) AS fecha_apertura_turno,
+    COALESCE(
+      CASE
+        WHEN c.estado = 'CIERRE' OR c.tipo_registro = 'cierre'
+          THEN COALESCE(c.fecha_cierre, c.fecha)
+        ELSE NULL
+      END,
+      c.fecha_cierre,
+      NOW()
+    ) AS fecha_cierre_turno
   FROM public.cierres c
   WHERE c.cajero_id IS NOT NULL
     AND (
-      c.estado = 'APERTURA'
-      OR c.tipo_registro = 'apertura'
+      c.estado IN ('APERTURA', 'CIERRE')
+      OR c.tipo_registro IN ('apertura', 'cierre')
+      OR c.fecha_apertura IS NOT NULL
     )
-  GROUP BY c.cajero_id
+  ORDER BY c.cajero_id, COALESCE(c.fecha_apertura, c.fecha) DESC, c.id DESC
 ),
 items AS (
   SELECT
@@ -29,7 +35,6 @@ items AS (
     COALESCE(v.tipo, '')                                AS tipo_venta,
     COALESCE(v.es_donacion, FALSE)                      AS es_donacion,
     v.fecha_hora                                         AS fecha_hora,
-    v.fecha_hora::date                                   AS fecha_hn,
     COALESCE(NULLIF(trim(item ->> 'nombre'), ''), 'SIN NOMBRE') AS nombre_producto,
     COALESCE((item ->> 'cantidad')::numeric, 1)         AS cantidad,
     item ->> 'tipo'                                     AS item_tipo
@@ -52,27 +57,27 @@ base AS (
     i.tipo_venta,
     i.es_donacion,
     i.fecha_hora,
-    i.fecha_hn,
-    p.hoy_hn,
-    COALESCE(a.fecha_apertura_activa, '-infinity'::timestamp) AS fecha_apertura_activa
+    t.fecha_apertura_turno,
+    t.fecha_cierre_turno
   FROM items i
-  JOIN parametros p ON TRUE
-  LEFT JOIN apertura_activa a ON a.cajero_id = i.cajero_id
+  JOIN ultimo_turno t ON t.cajero_id = i.cajero_id
   WHERE i.item_tipo = 'comida'
+    AND i.fecha_hora >= t.fecha_apertura_turno
+    AND i.fecha_hora <  t.fecha_cierre_turno
 )
 SELECT
   cajero_id,
   nombre_producto,
 
-  -- Hoy
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS vendidos_dia,
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS credito_dia,
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta  = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS devolucion_dia,
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
+  -- Turno (apertura -> cierre/now)
+  SUM(CASE WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS vendidos_dia,
+  SUM(CASE WHEN tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS credito_dia,
+  SUM(CASE WHEN tipo_venta = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS devolucion_dia,
+  SUM(CASE WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
   +
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
+  SUM(CASE WHEN tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
   -
-  SUM(CASE WHEN fecha_hora >= fecha_apertura_activa AND fecha_hn = hoy_hn AND tipo_venta  = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS total_dia
+  SUM(CASE WHEN tipo_venta = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS total_dia
 
 FROM base
 GROUP BY cajero_id, nombre_producto;

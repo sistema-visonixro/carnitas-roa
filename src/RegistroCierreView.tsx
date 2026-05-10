@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import {
   formatToHondurasLocal,
   compareTurnoRecordsByRecency,
+  getLocalDayRange,
 } from "./utils/fechas";
 import { useDatosNegocio } from "./useDatosNegocio";
 import { getAperturaActiva, upsertOne, getAll, STORE } from "./utils/localDB";
@@ -22,6 +23,19 @@ interface RegistroCierreViewProps {
   caja: string;
   onCierreGuardado?: () => void;
   onBack?: () => void;
+}
+
+interface PlatilloReportePrintRow {
+  nombre_producto: string;
+  vendidos_dia: number;
+  credito_dia: number;
+  devolucion_dia: number;
+  total_dia: number;
+}
+
+interface BebidaDiaPrintRow {
+  nombre: string;
+  vendido: number;
 }
 
 export default function RegistroCierreView({
@@ -260,6 +274,150 @@ export default function RegistroCierreView({
     sincronizarYCargarResumenExacto();
   }, [usuarioActual?.id, caja]);
 
+  async function obtenerReportePlatillosImpresion(): Promise<
+    PlatilloReportePrintRow[]
+  > {
+    if (!usuarioActual?.id) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from("v_platillos_periodos")
+        .select(
+          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, total_dia",
+        )
+        .eq("cajero_id", usuarioActual.id);
+
+      if (error) throw error;
+
+      return (data || [])
+        .map((row: any) => ({
+          nombre_producto: String(row.nombre_producto || "SIN NOMBRE"),
+          vendidos_dia: Number(row.vendidos_dia) || 0,
+          credito_dia: Number(row.credito_dia) || 0,
+          devolucion_dia: Number(row.devolucion_dia) || 0,
+          total_dia: Number(row.total_dia) || 0,
+        }))
+        .filter(
+          (row) =>
+            Number(row.vendidos_dia || 0) > 0 ||
+            Number(row.credito_dia || 0) > 0 ||
+            Number(row.devolucion_dia || 0) > 0 ||
+            Number(row.total_dia || 0) !== 0,
+        )
+        .sort(
+          (a, b) =>
+            b.total_dia - a.total_dia ||
+            a.nombre_producto.localeCompare(b.nombre_producto),
+        );
+    } catch (err) {
+      console.warn(
+        "[RegistroCierre] No se pudo cargar reporte de platillos:",
+        err,
+      );
+      return [];
+    }
+  }
+
+  async function obtenerBebidasDelDiaImpresion(): Promise<BebidaDiaPrintRow[]> {
+    try {
+      const { start, end } = getLocalDayRange();
+      const tsStart = Date.parse(start);
+      const tsEnd = Date.parse(end);
+
+      const toTs = (value: any): number => {
+        if (!value) return 0;
+        const raw = String(value).trim();
+        const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+        const ts = Date.parse(normalized);
+        return Number.isFinite(ts) ? ts : 0;
+      };
+
+      const isSalida = (movType: any): boolean => {
+        const t = String(movType || "")
+          .toLowerCase()
+          .trim();
+        return !(t === "entrada" || t === "compra");
+      };
+
+      let movimientos: any[] = [];
+      let productos: any[] = [];
+
+      try {
+        movimientos = await getAll<any>(STORE.MOVIMIENTOS_INVENTARIO);
+        productos = await getAll<any>(STORE.PRODUCTOS);
+      } catch {
+        movimientos = [];
+        productos = [];
+      }
+
+      const necesitaFallbackMovs = movimientos.length === 0;
+      const necesitaFallbackProductos = productos.length === 0;
+
+      if (necesitaFallbackMovs || necesitaFallbackProductos) {
+        const [
+          { data: movsData, error: movsError },
+          { data: prodsData, error: prodsError },
+        ] = await Promise.all([
+          necesitaFallbackMovs
+            ? supabase
+                .from("movimientos_inventario")
+                .select(
+                  "item_tipo, producto_id, tipo, cantidad, fecha_hora, created_at",
+                )
+                .order("id", { ascending: false })
+                .limit(2500)
+            : Promise.resolve({ data: null, error: null } as any),
+          necesitaFallbackProductos
+            ? supabase
+                .from("productos")
+                .select("id, nombre, tipo")
+                .eq("tipo", "bebida")
+            : Promise.resolve({ data: null, error: null } as any),
+        ]);
+
+        if (movsError) throw movsError;
+        if (prodsError) throw prodsError;
+
+        if (movsData?.length) movimientos = movsData;
+        if (prodsData?.length) productos = prodsData;
+      }
+
+      const bebidas = (productos || []).filter((p: any) => p?.id && p?.nombre);
+      const nombrePorId = new Map<string, string>(
+        bebidas.map((p: any) => [String(p.id), String(p.nombre || "Bebida")]),
+      );
+
+      const vendidoPorId = new Map<string, number>();
+      for (const mov of movimientos || []) {
+        if (String(mov.item_tipo) !== "producto") continue;
+        if (!isSalida(mov.tipo)) continue;
+        const ts = toTs(mov.fecha_hora || mov.created_at);
+        if (ts < tsStart || ts > tsEnd) continue;
+
+        const productoId = String(mov.producto_id || "");
+        if (!productoId || !nombrePorId.has(productoId)) continue;
+
+        vendidoPorId.set(
+          productoId,
+          Number(vendidoPorId.get(productoId) || 0) +
+            (Number(mov.cantidad) || 0),
+        );
+      }
+
+      return Array.from(vendidoPorId.entries())
+        .map(([id, vendido]) => ({
+          nombre: nombrePorId.get(id) || "Bebida",
+          vendido,
+        }))
+        .sort(
+          (a, b) => b.vendido - a.vendido || a.nombre.localeCompare(b.nombre),
+        );
+    } catch (err) {
+      console.warn("[RegistroCierre] No se pudo cargar bebidas del día:", err);
+      return [];
+    }
+  }
+
   const printCierreReport = (
     registro: any,
     gastosDia: number,
@@ -267,6 +425,8 @@ export default function RegistroCierreView({
     bebidasDia = 0,
     totalVentasDia = 0,
     fechaApertura = "",
+    platillosReporteRows: PlatilloReportePrintRow[] = [],
+    bebidasInventarioRows: BebidaDiaPrintRow[] = [],
   ) => {
     const logoUrl = datosNegocio.logo_url || "/favicon.ico";
     const img = new Image();
@@ -294,6 +454,79 @@ export default function RegistroCierreView({
           return d;
         }
       };
+
+      const esc = (value: any) =>
+        String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+
+      const filasPlatillos =
+        platillosReporteRows.length > 0
+          ? `
+            <table style="width:100%; border-collapse: collapse; font-size: 13px; margin-top: 4px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; border-bottom:1px solid #000; padding-bottom:2px;">Prod</th>
+                  <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Ven</th>
+                  <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Cre</th>
+                  <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Dev</th>
+                  <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Tot</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${platillosReporteRows
+                  .map(
+                    (row) => `
+                      <tr>
+                        <td style="padding:3px 0; max-width:24mm; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.nombre_producto)}</td>
+                        <td style="text-align:right; padding:3px 0;">${Number(row.vendidos_dia).toFixed(2)}</td>
+                        <td style="text-align:right; padding:3px 0;">${Number(row.credito_dia).toFixed(2)}</td>
+                        <td style="text-align:right; padding:3px 0;">${Number(row.devolucion_dia).toFixed(2)}</td>
+                        <td style="text-align:right; padding:3px 0; font-weight:700;">${Number(row.total_dia).toFixed(2)}</td>
+                      </tr>
+                    `,
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+            <div class="divider"></div>
+            <div class="row"><span>Ventas:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.vendidos_dia) || 0), 0).toFixed(2)}</span></div>
+            <div class="row"><span>Créditos:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.credito_dia) || 0), 0).toFixed(2)}</span></div>
+            <div class="row"><span>Devoluciones:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.devolucion_dia) || 0), 0).toFixed(2)}</span></div>
+            <div class="row" style="font-weight:bold;"><span>NETO FINAL:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.total_dia) || 0), 0).toFixed(2)}</span></div>
+          `
+          : `<div style="font-size:14px; text-align:center;">Sin datos</div>`;
+
+      const filasBebidas =
+        bebidasInventarioRows.length > 0
+          ? bebidasInventarioRows
+              .map(
+                (row) =>
+                  `<div class="row"><span>${esc(row.nombre)}</span><span>${Number(row.vendido).toFixed(2)}</span></div>`,
+              )
+              .join("")
+          : `<div style="font-size:14px; text-align:center;">Sin datos</div>`;
+
+      const totalPlatillosReporte = platillosReporteRows.reduce(
+        (acc, row) => acc + (Number(row.total_dia) || 0),
+        0,
+      );
+      const totalBebidasReporte = bebidasInventarioRows.reduce(
+        (acc, row) => acc + (Number(row.vendido) || 0),
+        0,
+      );
+
+      const platillosResumenFinal =
+        platillosReporteRows.length > 0
+          ? Math.round(totalPlatillosReporte)
+          : Math.round(platillosDia);
+      const bebidasResumenFinal =
+        bebidasInventarioRows.length > 0
+          ? Math.round(totalBebidasReporte)
+          : Math.round(bebidasDia);
 
       const html = `
         <html>
@@ -325,8 +558,18 @@ export default function RegistroCierreView({
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">RESUMEN DE VENTAS</div>
-            <div class="row"><span>Platillos:</span><span>${Math.round(platillosDia)}</span></div>
-            <div class="row"><span>Bebidas:</span><span>${Math.round(bebidasDia)}</span></div>
+            <div class="row"><span>Platillos:</span><span>${platillosResumenFinal}</span></div>
+            <div class="row"><span>Bebidas:</span><span>${bebidasResumenFinal}</span></div>
+
+            <div class="divider"></div>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">REPORTE DE PLATILLOS</div>
+            ${filasPlatillos}
+
+            <div class="divider"></div>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 4px;">📦 INSUMOS Y BEBIDAS DEL DÍA</div>
+            <div style="text-align: center; font-size: 13px; margin-bottom: 10px;">Monitoreo diario de salidas de inventario</div>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 8px;">BEBIDAS</div>
+            ${filasBebidas}
 
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
@@ -658,6 +901,12 @@ export default function RegistroCierreView({
       } else {
         // Imprimir reporte si es CIERRE
         if (registro.tipo_registro === "cierre") {
+          const [platillosReporteRows, bebidasInventarioRows] =
+            await Promise.all([
+              obtenerReportePlatillosImpresion(),
+              obtenerBebidasDelDiaImpresion(),
+            ]);
+
           printCierreReport(
             { ...registro, id: registroId },
             gastosDia || 0,
@@ -665,6 +914,8 @@ export default function RegistroCierreView({
             bebidasDia || 0,
             totalVentasDia || 0,
             fechaApertura || "",
+            platillosReporteRows,
+            bebidasInventarioRows,
           );
         }
 
