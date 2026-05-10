@@ -68,6 +68,9 @@ import {
   obtenerPiezasOpciones,
   obtenerPosConfig,
 } from "./services/posConfigService";
+import PlatillosPeriodoModal, {
+  type PlatilloPeriodoRow,
+} from "./components/PlatillosPeriodoModal";
 
 interface Producto {
   id: string;
@@ -214,6 +217,11 @@ export default function PuntoDeVentaView({
   >([]);
   const [inventarioDiaFecha, setInventarioDiaFecha] = useState("");
   const [inventarioDiaLoading, setInventarioDiaLoading] = useState(false);
+  const [showPlatillosModal, setShowPlatillosModal] = useState(false);
+  const [platillosPeriodoLoading, setPlatillosPeriodoLoading] = useState(false);
+  const [platillosPeriodoRows, setPlatillosPeriodoRows] = useState<
+    PlatilloPeriodoRow[]
+  >([]);
   // Modal DATOS DE FACTURACIÓN
   const [showDatosFactModal, setShowDatosFactModal] = useState(false);
   const [caiFactData, setCaiFactData] = useState<any>(null);
@@ -566,10 +574,131 @@ export default function PuntoDeVentaView({
   }
 
   // Función para obtener resumen de caja del día (EFECTIVO/TARJETA/TRANSFERENCIA)
+  async function obtenerAperturaActivaSupabase(cajeroId: string) {
+    const { data, error } = await supabase
+      .from("cierres")
+      .select(
+        "id, cajero_id, caja, fecha, fecha_apertura, fecha_cierre, estado",
+      )
+      .eq("cajero_id", cajeroId)
+      .eq("estado", "APERTURA")
+      .order("fecha_apertura", { ascending: false, nullsFirst: false })
+      .order("fecha", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.warn("No se pudo leer apertura activa desde Supabase:", error);
+      return null;
+    }
+
+    return data?.[0] ?? null;
+  }
+
+  async function obtenerConteoTurnoSupabase(aperturaId: number) {
+    const { data, error } = await supabase
+      .from("v_conteo_items_turno")
+      .select(
+        "platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas, total_platillos, total_bebidas",
+      )
+      .eq("apertura_id", aperturaId)
+      .limit(1);
+
+    if (error) {
+      console.warn("No se pudo leer conteo de turno desde Supabase:", error);
+      return null;
+    }
+
+    return data?.[0] ?? null;
+  }
+
   async function fetchResumenCaja() {
     setShowResumen(true);
     setResumenLoading(true);
     try {
+      if (!usuarioActual?.id) {
+        setResumenLoading(false);
+        return;
+      }
+
+      const aperturaSupabase = await obtenerAperturaActivaSupabase(
+        usuarioActual.id,
+      );
+      if (aperturaSupabase) {
+        const { data: resumenRemotoRows, error: resumenRemotoError } =
+          await supabase
+            .from("v_resumen_turnos")
+            .select(
+              "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas",
+            )
+            .eq("apertura_id", aperturaSupabase.id)
+            .limit(1);
+
+        if (!resumenRemotoError && resumenRemotoRows?.[0]) {
+          const resumenRemoto = resumenRemotoRows[0] as any;
+          const conteoTurno = await obtenerConteoTurnoSupabase(
+            Number(aperturaSupabase.id),
+          );
+
+          const fechaInicio =
+            aperturaSupabase.fecha_apertura ?? aperturaSupabase.fecha;
+          let deliverySum = 0;
+          if (fechaInicio) {
+            const { data: ventasDelivery } = await supabase
+              .from("ventas")
+              .select("delivery")
+              .eq("cajero_id", usuarioActual.id)
+              .neq("tipo", "CREDITO")
+              .gte("fecha_hora", fechaInicio);
+
+            deliverySum = (ventasDelivery || []).reduce(
+              (acc: number, row: any) => acc + parseFloat(row?.delivery || 0),
+              0,
+            );
+          }
+
+          const tasa = await getPrecioDolarLocal();
+          const dolaresConvertidos = Number(
+            ((Number(resumenRemoto.dolares_usd) || 0) * tasa).toFixed(2),
+          );
+
+          setResumenData({
+            efectivo: Number(
+              (
+                (Number(resumenRemoto.efectivo_bruto) || 0) -
+                (Number(resumenRemoto.cambio_devuelto) || 0)
+              ).toFixed(2),
+            ),
+            tarjeta: Number(resumenRemoto.tarjeta) || 0,
+            transferencia: Number(resumenRemoto.transferencia) || 0,
+            dolares: Number(resumenRemoto.dolares_lps) || 0,
+            dolares_usd: Number(resumenRemoto.dolares_usd) || 0,
+            dolares_convertidos: dolaresConvertidos,
+            tasa_dolar: tasa,
+            gastos: Number(resumenRemoto.gastos) || 0,
+            cambio: Number(resumenRemoto.cambio_devuelto) || 0,
+            delivery: Number(deliverySum.toFixed(2)),
+            platillos:
+              Number(conteoTurno?.platillos_vendidos) ||
+              Number(resumenRemoto.platillos_vendidos) ||
+              0,
+            bebidas:
+              Number(conteoTurno?.bebidas_vendidas) ||
+              Number(resumenRemoto.bebidas_vendidas) ||
+              0,
+            platillos_donados:
+              Number(conteoTurno?.platillos_donados) ||
+              Number(resumenRemoto.platillos_donados) ||
+              0,
+            bebidas_donadas:
+              Number(conteoTurno?.bebidas_donadas) ||
+              Number(resumenRemoto.bebidas_donadas) ||
+              0,
+          });
+          setResumenLoading(false);
+          return;
+        }
+      }
+
       // ── IDB primero (siempre, sin depender de navigator.onLine) ──────────
       {
         const cierresIDB = await getByIndex<any>(
@@ -1177,6 +1306,52 @@ export default function PuntoDeVentaView({
         // no-op
       }
     }, 250);
+  }
+
+  async function cargarPlatillosPorPeriodo() {
+    setPlatillosPeriodoLoading(true);
+    try {
+      if (!usuarioActual?.id) {
+        setPlatillosPeriodoRows([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("v_platillos_periodos")
+        .select(
+          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, total_dia",
+        )
+        .eq("cajero_id", usuarioActual.id);
+
+      if (error) throw error;
+
+      const rows: PlatilloPeriodoRow[] = (data || []).map((r: any) => ({
+        nombre_producto: String(r.nombre_producto || "SIN NOMBRE"),
+        vendidos_dia: Number(r.vendidos_dia) || 0,
+        credito_dia: Number(r.credito_dia) || 0,
+        devolucion_dia: Number(r.devolucion_dia) || 0,
+        total_dia: Number(r.total_dia) || 0,
+      }));
+      rows.sort(
+        (a, b) =>
+          Number(b.total_dia || 0) - Number(a.total_dia || 0) ||
+          a.nombre_producto.localeCompare(b.nombre_producto),
+      );
+
+      const totalPlatillosReporte = rows.reduce(
+        (acc, row) => acc + (Number(row.total_dia) || 0),
+        0,
+      );
+      setPlatillosTurno(Math.max(0, Math.round(totalPlatillosReporte)));
+
+      setPlatillosPeriodoRows(rows);
+    } catch (err) {
+      console.error("Error cargando platillos por período:", err);
+      setPlatillosPeriodoRows([]);
+      alert("No se pudo cargar el reporte de platillos.");
+    } finally {
+      setPlatillosPeriodoLoading(false);
+    }
   }
 
   // Función para obtener historial de facturas de crédito del turno actual
@@ -2471,6 +2646,22 @@ export default function PuntoDeVentaView({
   const fetchConteoTurno = async () => {
     try {
       if (!usuarioActual?.id) return;
+
+      const aperturaSupabase = await obtenerAperturaActivaSupabase(
+        usuarioActual.id,
+      );
+      if (aperturaSupabase?.id) {
+        const conteoTurno = await obtenerConteoTurnoSupabase(
+          Number(aperturaSupabase.id),
+        );
+        if (conteoTurno) {
+          setPlatillosTurno(
+            Math.max(0, Number(conteoTurno.total_platillos) || 0),
+          );
+          setBebidasTurno(Math.max(0, Number(conteoTurno.total_bebidas) || 0));
+          return;
+        }
+      }
 
       // ── IDB SIEMPRE PRIMERO (fuente de verdad) ─────────────────────────────
       const cierresIDB = await getByIndex<any>(
@@ -11248,6 +11439,26 @@ export default function PuntoDeVentaView({
                     className="menu-btn"
                     onClick={async () => {
                       closeMenuAnimated();
+                      setShowPlatillosModal(true);
+                      await cargarPlatillosPorPeriodo();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+                      color: "#9a3412",
+                      border: "1px solid #fdba74",
+                      animationDelay: "415ms",
+                    }}
+                  >
+                    <span className="btn-icon">🍽</span>
+                    <span>
+                      <div className="btn-label">Platillos</div>
+                      <div className="btn-desc">Ventas del día</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
                       setCaiFactLoading(true);
                       setCaiFactData(null);
                       setShowDatosFactModal(true);
@@ -11493,6 +11704,14 @@ export default function PuntoDeVentaView({
           </div>
         </div>
       )}
+
+      <PlatillosPeriodoModal
+        isOpen={showPlatillosModal}
+        onClose={() => setShowPlatillosModal(false)}
+        loading={platillosPeriodoLoading}
+        rows={platillosPeriodoRows}
+        onRefresh={cargarPlatillosPorPeriodo}
+      />
 
       {/* Modal Historial de Ventas */}
       {showHistorialVentas &&

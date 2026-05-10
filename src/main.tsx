@@ -70,6 +70,16 @@ function Root() {
   const [showUpdateNotification, setShowUpdateNotification] = useState(false);
   const [updatedVersion, setUpdatedVersion] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!(import.meta.env.DEV && "serviceWorker" in navigator)) return;
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+      .catch(() => {
+        // ignore
+      });
+  }, []);
+
   // Verificar si acabamos de actualizar (viene del query param _cb)
   useEffect(() => {
     const url = new URL(window.location.href);
