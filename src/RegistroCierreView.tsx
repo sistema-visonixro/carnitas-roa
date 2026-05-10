@@ -5,18 +5,12 @@ import {
   compareTurnoRecordsByRecency,
 } from "./utils/fechas";
 import { useDatosNegocio } from "./useDatosNegocio";
-import {
-  calcularResumenTurno,
-  getAperturaActiva,
-  upsertOne,
-  getAll,
-  STORE,
-  getPrecioDolarLocal,
-  sincronizarDiaActual,
-} from "./utils/localDB";
+import { getAperturaActiva, upsertOne, getAll, STORE } from "./utils/localDB";
 import {
   limpiarAperturaCache,
   limpiarAperturaLocalStorage,
+  sincronizarTodo,
+  obtenerContadorPendientes,
 } from "./utils/offlineSync";
 interface UsuarioActual {
   nombre: string;
@@ -60,59 +54,30 @@ export default function RegistroCierreView({
   const [fechaAperturaSistema, setFechaAperturaSistema] = useState<string>("");
   const [precioDolarActual, setPrecioDolarActual] = useState(0);
 
-  // Cargar valores del sistema al montar la vista
-  useEffect(() => {
-    let mounted = true;
-    async function cargarResumen() {
-      if (!usuarioActual || !usuarioActual.id || !caja) return;
-      setLoading(true);
-      setSyncError("");
-      try {
-        // Primero sincronizar ventas y gastos del día desde Supabase
-        if (navigator.onLine) {
-          setSincronizando(true);
-          try {
-            await sincronizarDiaActual(usuarioActual.id);
-            setUltimaSync(new Date());
-          } catch (syncErr) {
-            console.warn(
-              "[CierreCaja] No se pudo sincronizar con servidor:",
-              syncErr,
-            );
-            setSyncError(
-              "No se pudo conectar al servidor. Los datos pueden ser del caché local.",
-            );
-          } finally {
-            setSincronizando(false);
-          }
-        } else {
-          setSyncError("Sin conexión. Mostrando datos del caché local.");
-        }
-        await obtenerValoresAutomaticos();
-        const tasa = await getPrecioDolarLocal();
-        setPrecioDolarActual(Number(tasa) || 0);
-      } catch (err) {
-        console.error("Error cargando resumen:", err);
-      } finally {
-        if (mounted) setLoading(false);
-      }
+  async function obtenerPrecioDolarSupabase() {
+    const { data, error } = await supabase
+      .from("precio_dolar")
+      .select("valor")
+      .eq("id", "singleton")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[RegistroCierre] No se pudo leer precio_dolar:", error);
+      return 0;
     }
-    cargarResumen();
-    return () => {
-      mounted = false;
-    };
-  }, [usuarioActual?.id, caja]);
 
-  // Calcular valores automáticos solo desde IndexedDB
+    return Number(data?.valor) || 0;
+  }
+
+  // Calcular valores automáticos solo desde Supabase
   async function obtenerValoresAutomaticos() {
-    // 1. Apertura desde IDB/localStorage cache
-    let aperturaActual: any = await getAperturaActiva(usuarioActual?.id ?? "");
-
-    if (!aperturaActual) {
+    if (!usuarioActual?.id) {
       setEfectivoSistema(0);
       setTarjetaSistema(0);
       setTransferenciasSistema(0);
       setDolaresSistema(0);
+      setGastosSistema(0);
+      setTotalVentasSistema(0);
       setFechaAperturaSistema("");
       return {
         fondoFijoDia: 0,
@@ -126,37 +91,96 @@ export default function RegistroCierreView({
       };
     }
 
+    const { data: aperturaActual, error: aperturaError } = await supabase
+      .from("cierres")
+      .select("id, fecha, fecha_apertura, fondo_fijo_registrado")
+      .eq("cajero_id", usuarioActual.id)
+      .eq("caja", caja)
+      .eq("estado", "APERTURA")
+      .order("fecha_apertura", { ascending: false, nullsFirst: false })
+      .order("fecha", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (aperturaError) {
+      throw aperturaError;
+    }
+
+    if (!aperturaActual) {
+      setEfectivoSistema(0);
+      setTarjetaSistema(0);
+      setTransferenciasSistema(0);
+      setDolaresSistema(0);
+      setGastosSistema(0);
+      setTotalVentasSistema(0);
+      setFechaAperturaSistema("");
+      return {
+        fondoFijoDia: 0,
+        efectivoDia: 0,
+        tarjetaDia: 0,
+        transferenciasDia: 0,
+        dolaresDia: 0,
+        gastosDia: 0,
+        platillosDia: 0,
+        bebidasDia: 0,
+        totalVentasDia: 0,
+        fechaApertura: "",
+      };
+    }
+
     const fondoFijoDia = parseFloat(
       aperturaActual.fondo_fijo_registrado || "0",
     );
 
-    // 2. Calcular resumen desde IDB
-    let turnoIDB: any = null;
-    try {
-      if (aperturaActual.id) {
-        turnoIDB = await calcularResumenTurno(
-          Number(aperturaActual.id),
-          usuarioActual?.id ?? "",
-        );
-      }
-    } catch (e) {
-      console.warn("[RegistroCierre] calcularResumenTurno error:", e);
+    const { data: resumenRows, error: resumenError } = await supabase
+      .from("v_resumen_turnos")
+      .select(
+        "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas",
+      )
+      .eq("apertura_id", aperturaActual.id)
+      .limit(1);
+
+    if (resumenError) {
+      throw resumenError;
     }
 
-    const efectivoDia = parseFloat(turnoIDB?.efectivo_neto ?? 0);
-    const tarjetaDia = parseFloat(turnoIDB?.tarjeta ?? 0);
-    const transferenciasDia = parseFloat(
-      turnoIDB?.transferencia ?? turnoIDB?.transferencia ?? 0,
-    );
-    const dolaresDia = parseFloat(turnoIDB?.dolares_usd ?? 0);
-    const gastosDia = parseFloat(turnoIDB?.gastos ?? 0);
-    const platillosDia = parseFloat(
-      turnoIDB?.total_platillos ?? turnoIDB?.platillos_vendidos ?? 0,
-    );
-    const bebidasDia = parseFloat(
-      turnoIDB?.total_bebidas ?? turnoIDB?.bebidas_vendidas ?? 0,
-    );
-    const totalVentasDia = parseFloat(turnoIDB?.total_ventas ?? 0);
+    const resumen = resumenRows?.[0] ?? {};
+
+    const { data: conteoRows, error: conteoError } = await supabase
+      .from("v_conteo_items_turno")
+      .select("platillos_vendidos, bebidas_vendidas")
+      .eq("apertura_id", aperturaActual.id)
+      .limit(1);
+
+    if (conteoError) {
+      console.warn(
+        "[RegistroCierre] No se pudo leer v_conteo_items_turno:",
+        conteoError,
+      );
+    }
+
+    const conteo = conteoRows?.[0] ?? {};
+
+    const efectivoDia =
+      (Number((resumen as any).efectivo_bruto) || 0) -
+      (Number((resumen as any).cambio_devuelto) || 0);
+    const tarjetaDia = Number((resumen as any).tarjeta) || 0;
+    const transferenciasDia = Number((resumen as any).transferencia) || 0;
+    const dolaresDia = Number((resumen as any).dolares_usd) || 0;
+    const gastosDia = Number((resumen as any).gastos) || 0;
+    const platillosDia =
+      Number((conteo as any).platillos_vendidos) ||
+      Number((resumen as any).platillos_vendidos) ||
+      0;
+    const bebidasDia =
+      Number((conteo as any).bebidas_vendidas) ||
+      Number((resumen as any).bebidas_vendidas) ||
+      0;
+    const totalVentasDia =
+      efectivoDia +
+      tarjetaDia +
+      transferenciasDia +
+      (Number((resumen as any).dolares_lps) || 0);
 
     setEfectivoSistema(efectivoDia);
     setTarjetaSistema(tarjetaDia);
@@ -180,6 +204,61 @@ export default function RegistroCierreView({
       fechaApertura: aperturaActual.fecha_apertura ?? aperturaActual.fecha,
     };
   }
+
+  async function sincronizarYCargarResumenExacto() {
+    if (!usuarioActual?.id || !caja) return;
+
+    if (!navigator.onLine) {
+      setSyncError(
+        "Se requiere conexión a internet para cargar el cierre exacto desde Supabase.",
+      );
+      return;
+    }
+
+    setLoading(true);
+    setSincronizando(true);
+    setSyncError("");
+    try {
+      await Promise.all([
+        sincronizarTodo(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+      ]);
+
+      const pendientes = await obtenerContadorPendientes();
+      const totalPendientes =
+        pendientes.facturas +
+        pendientes.pagos +
+        pendientes.gastos +
+        pendientes.envios +
+        pendientes.ventas +
+        pendientes.cierres;
+
+      if (totalPendientes > 0) {
+        throw new Error(
+          `Aún hay ${totalPendientes} registros pendientes por sincronizar.`,
+        );
+      }
+
+      await obtenerValoresAutomaticos();
+      const tasa = await obtenerPrecioDolarSupabase();
+      setPrecioDolarActual(Number(tasa) || 0);
+      setUltimaSync(new Date());
+    } catch (err: any) {
+      console.error("Error cargando resumen exacto de cierre:", err);
+      setSyncError(
+        err?.message ||
+          "No se pudo completar la sincronización para mostrar datos exactos.",
+      );
+    } finally {
+      setSincronizando(false);
+      setLoading(false);
+    }
+  }
+
+  // Cargar valores del sistema al montar la vista
+  useEffect(() => {
+    sincronizarYCargarResumenExacto();
+  }, [usuarioActual?.id, caja]);
 
   const printCierreReport = (
     registro: any,
@@ -339,8 +418,8 @@ export default function RegistroCierreView({
       const dolaresRegistrado =
         dolares && parseFloat(dolares) > 0 ? parseFloat(dolares) : 0;
 
-      // Obtener precio del dólar desde IDB (siempre disponible offline)
-      const precioDolar = await getPrecioDolarLocal();
+      // Obtener precio del dólar desde Supabase para mantener exactitud
+      const precioDolar = await obtenerPrecioDolarSupabase();
 
       // Calcular diferencia de dólares en Lempiras
       const diferenciaDolaresUSD = dolaresRegistrado - dolaresDia;
@@ -732,6 +811,52 @@ export default function RegistroCierreView({
         padding: "24px 16px",
       }}
     >
+      {(loading || sincronizando) && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(4px)",
+            WebkitBackdropFilter: "blur(4px)",
+            zIndex: 200000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: 16,
+              padding: "28px 24px",
+              width: "min(460px, 100%)",
+              textAlign: "center",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 48,
+                marginBottom: 10,
+                animation: "pulse 1.25s ease-in-out infinite",
+              }}
+            >
+              ☁️
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 18, color: "#1e3a8a" }}>
+              Descargando datos de la nube
+            </div>
+            <div style={{ marginTop: 8, color: "#334155", fontSize: 13 }}>
+              Sincronizando ventas, pedidos, gastos y devoluciones pendientes
+            </div>
+            <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
+              Carga mínima de 5 segundos para mostrar datos exactos
+            </div>
+          </div>
+        </div>
+      )}
       <style>{`
         @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
         .ci-input:focus { border-color: #2563eb !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.13) !important; background: #fff !important; }
@@ -892,24 +1017,7 @@ export default function RegistroCierreView({
             <button
               type="button"
               disabled={sincronizando || loading}
-              onClick={async () => {
-                if (!usuarioActual?.id) return;
-                setSincronizando(true);
-                setSyncError("");
-                setLoading(true);
-                try {
-                  await sincronizarDiaActual(usuarioActual.id);
-                  setUltimaSync(new Date());
-                  await obtenerValoresAutomaticos();
-                  const tasa = await getPrecioDolarLocal();
-                  setPrecioDolarActual(Number(tasa) || 0);
-                } catch (e) {
-                  setSyncError("Error al sincronizar.");
-                } finally {
-                  setSincronizando(false);
-                  setLoading(false);
-                }
-              }}
+              onClick={sincronizarYCargarResumenExacto}
               style={{
                 background: sincronizando ? "#e2e8f0" : "#fff",
                 border: "1.5px solid #cbd5e1",
@@ -938,7 +1046,7 @@ export default function RegistroCierreView({
                   >
                     ⟳
                   </span>{" "}
-                  Sync...
+                  Sync nube...
                 </>
               ) : (
                 <>🔄 Sincronizar</>

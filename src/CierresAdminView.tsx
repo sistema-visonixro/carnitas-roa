@@ -65,6 +65,13 @@ export default function CierresAdminView({
   const [cerrandoCaja, setCerrandoCaja] = useState(false);
   const [cierreError, setCierreError] = useState("");
   const [valoresCierre, setValoresCierre] = useState<any | null>(null);
+  const [showCorreccionModal, setShowCorreccionModal] = useState(false);
+  const [corrLoading, setCorrLoading] = useState(false);
+  const [corrSaving, setCorrSaving] = useState(false);
+  const [corrError, setCorrError] = useState("");
+  const [cierreCorreccion, setCierreCorreccion] = useState<any | null>(null);
+  const [sistemaCorreccion, setSistemaCorreccion] = useState<any | null>(null);
+  const [formCorreccion, setFormCorreccion] = useState<any | null>(null);
 
   useEffect(() => {
     cargarCierres();
@@ -246,6 +253,184 @@ export default function CierresAdminView({
     } catch (error) {
       console.error("Error aclarando cierre:", error);
     }
+  };
+
+  const limpiarEstadoCorreccion = () => {
+    setShowCorreccionModal(false);
+    setCierreCorreccion(null);
+    setSistemaCorreccion(null);
+    setFormCorreccion(null);
+  };
+
+  const actualizarFlagCorreccion = async (
+    cierreId: number,
+    activo: boolean,
+  ) => {
+    const { error } = await supabase
+      .from("cierres")
+      .update({ correccion: activo })
+      .eq("id", cierreId);
+
+    if (error) throw error;
+  };
+
+  const cancelarCorreccionCierre = async () => {
+    if (corrSaving) return;
+
+    setCorrError("");
+    try {
+      if (cierreCorreccion?.id) {
+        await actualizarFlagCorreccion(cierreCorreccion.id, false);
+      }
+      limpiarEstadoCorreccion();
+    } catch (err: any) {
+      console.error("Error cancelando corrección de cierre:", err);
+      setCorrError(
+        err?.message ||
+          "No se pudo cancelar la corrección. Intenta nuevamente.",
+      );
+    }
+  };
+
+  const abrirModalCorreccion = async (cierre: any) => {
+    setCierreCorreccion(cierre);
+    setCorrError("");
+    setCorrLoading(true);
+    setShowCorreccionModal(true);
+
+    try {
+      await actualizarFlagCorreccion(cierre.id, true);
+
+      const { data: row, error } = await supabase
+        .from("correccion_de_cierre")
+        .select("*")
+        .eq("cierre_id", cierre.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!row) {
+        throw new Error(
+          "No se encontraron datos del sistema para este cierre en la vista correccion_de_cierre.",
+        );
+      }
+
+      setSistemaCorreccion(row);
+      setFormCorreccion({
+        fondo_fijo_registrado: Number(cierre.fondo_fijo_registrado ?? 0),
+        efectivo_registrado: Number(cierre.efectivo_registrado ?? 0),
+        monto_tarjeta_registrado: Number(cierre.monto_tarjeta_registrado ?? 0),
+        transferencias_registradas: Number(
+          cierre.transferencias_registradas ?? 0,
+        ),
+        dolares_registrado: Number(cierre.dolares_registrado ?? 0),
+      });
+    } catch (err: any) {
+      console.error("Error abriendo modal de corrección:", err);
+
+      if (cierre?.id) {
+        try {
+          await actualizarFlagCorreccion(cierre.id, false);
+        } catch (flagErr) {
+          console.error("Error restaurando flag de corrección:", flagErr);
+        }
+      }
+
+      setCorrError(
+        err?.message || "No se pudo cargar la información para corregir.",
+      );
+    } finally {
+      setCorrLoading(false);
+    }
+  };
+
+  const guardarCorreccionCierre = async () => {
+    if (!cierreCorreccion || !formCorreccion || !sistemaCorreccion) return;
+
+    setCorrSaving(true);
+    setCorrError("");
+    try {
+      const fondoReg = Number(formCorreccion.fondo_fijo_registrado || 0);
+      const efectivoReg = Number(formCorreccion.efectivo_registrado || 0);
+      const tarjetaReg = Number(formCorreccion.monto_tarjeta_registrado || 0);
+      const transfReg = Number(formCorreccion.transferencias_registradas || 0);
+      const dolaresReg = Number(formCorreccion.dolares_registrado || 0);
+
+      const gastosDia = Number(sistemaCorreccion.gastos_dia || 0);
+      const fondoDia = Number(sistemaCorreccion.fondo_fijo_dia || 0);
+      const efectivoDia = Number(sistemaCorreccion.efectivo_dia || 0);
+      const tarjetaDia = Number(sistemaCorreccion.tarjeta_dia || 0);
+      const transfDia = Number(sistemaCorreccion.transferencias_dia || 0);
+      const dolaresDia = Number(sistemaCorreccion.dolares_dia || 0);
+
+      // Restamos gastos_dia explícitamente del efectivo para garantizar que
+      // el resultado coincida con el cierre real (neto = registrado − gastos_turno)
+      const diferencia =
+        fondoReg -
+        fondoDia +
+        (efectivoReg - efectivoDia - gastosDia) +
+        (tarjetaReg - tarjetaDia) +
+        (transfReg - transfDia) +
+        (dolaresReg - dolaresDia);
+
+      const observacion =
+        Math.abs(diferencia) < 0.005 ? "cuadrado" : "sin aclarar";
+
+      const { error } = await supabase
+        .from("cierres")
+        .update({
+          fondo_fijo_registrado: fondoReg,
+          fondo_fijo: fondoDia,
+          efectivo_registrado: efectivoReg,
+          efectivo_dia: efectivoDia,
+          monto_tarjeta_registrado: tarjetaReg,
+          monto_tarjeta_dia: tarjetaDia,
+          transferencias_registradas: transfReg,
+          transferencias_dia: transfDia,
+          dolares_registrado: dolaresReg,
+          dolares_dia: dolaresDia,
+          diferencia: Number(diferencia.toFixed(2)),
+          observacion,
+          correccion: false,
+        })
+        .eq("id", cierreCorreccion.id);
+
+      if (error) throw error;
+
+      limpiarEstadoCorreccion();
+      await cargarCierres();
+    } catch (err: any) {
+      console.error("Error guardando corrección de cierre:", err);
+      setCorrError(err?.message || "No se pudo guardar la corrección.");
+    } finally {
+      setCorrSaving(false);
+    }
+  };
+
+  const calcularDiferenciaNuevoRegistro = (form: any, sistema: any) => {
+    const fondoReg = Number(form?.fondo_fijo_registrado || 0);
+    const efectivoReg = Number(form?.efectivo_registrado || 0);
+    const tarjetaReg = Number(form?.monto_tarjeta_registrado || 0);
+    const transfReg = Number(form?.transferencias_registradas || 0);
+    const dolaresReg = Number(form?.dolares_registrado || 0);
+
+    const fondoDia = Number(sistema?.fondo_fijo_dia || 0);
+    const efectivoDia = Number(sistema?.efectivo_dia || 0);
+    const tarjetaDia = Number(sistema?.tarjeta_dia || 0);
+    const transfDia = Number(sistema?.transferencias_dia || 0);
+    const dolaresDia = Number(sistema?.dolares_dia || 0);
+
+    const gastosDia = Number(sistema?.gastos_dia || 0);
+
+    return Number(
+      (
+        fondoReg -
+        fondoDia +
+        (efectivoReg - efectivoDia - gastosDia) +
+        (tarjetaReg - tarjetaDia) +
+        (transfReg - transfDia) +
+        (dolaresReg - dolaresDia)
+      ).toFixed(2),
+    );
   };
 
   const handleReaperturarCaja = async (row: any) => {
@@ -1554,6 +1739,22 @@ export default function CierresAdminView({
                         >
                           🔓 Reaperturar caja
                         </button>
+                        <button
+                          className="btn-aclarar"
+                          onClick={() => abrirModalCorreccion(c)}
+                          style={{
+                            fontSize: 12,
+                            padding: "5px 12px",
+                            borderRadius: 8,
+                            border: "none",
+                            cursor: "pointer",
+                            background: "#7c3aed",
+                            color: "#fff",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ✏️ Corregir
+                        </button>
                       </>
                     )}
                     {tipo === "apertura" &&
@@ -1688,6 +1889,364 @@ export default function CierresAdminView({
         )}
 
         {/* Modal de clave eliminado */}
+
+        {showCorreccionModal && (
+          <div
+            className="modal-overlay"
+            onClick={() => {
+              void cancelarCorreccionCierre();
+            }}
+          >
+            <div
+              className="modal"
+              onClick={(e) => e.stopPropagation()}
+              style={{ minWidth: 760 }}
+            >
+              <h3 className="modal-title">✏️ Corregir cierre</h3>
+
+              {corrLoading ? (
+                <div style={{ color: "#64748b", padding: "10px 0" }}>
+                  Cargando datos del sistema...
+                </div>
+              ) : (
+                <>
+                  {cierreCorreccion && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 10,
+                        padding: 10,
+                        fontSize: 13,
+                        color: "#334155",
+                      }}
+                    >
+                      Caja: <strong>{cierreCorreccion.caja}</strong> · Cajero:{" "}
+                      <strong>{cierreCorreccion.cajero}</strong>
+                    </div>
+                  )}
+
+                  {corrError && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        color: "#b91c1c",
+                        borderRadius: 8,
+                        padding: 10,
+                        fontSize: 13,
+                      }}
+                    >
+                      {corrError}
+                    </div>
+                  )}
+
+                  {sistemaCorreccion && formCorreccion && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 10,
+                          padding: 12,
+                          background: "#f8fafc",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            marginBottom: 10,
+                            color: "#1e3a8a",
+                          }}
+                        >
+                          Datos de sistema
+                        </div>
+                        {[
+                          [
+                            "Fondo fijo",
+                            Number(sistemaCorreccion.fondo_fijo_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Efectivo bruto",
+                            Number(sistemaCorreccion.efectivo_bruto_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Gastos del turno",
+                            Number(sistemaCorreccion.gastos_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Efectivo neto",
+                            Number(sistemaCorreccion.efectivo_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Tarjeta día",
+                            Number(sistemaCorreccion.tarjeta_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Transferencia día",
+                            Number(sistemaCorreccion.transferencias_dia || 0),
+                            "L",
+                          ],
+                          [
+                            "Dólares día",
+                            Number(sistemaCorreccion.dolares_dia || 0),
+                            "$",
+                          ],
+                        ].map(([label, value, pref]) => (
+                          <div
+                            key={String(label)}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 13,
+                              marginBottom: 7,
+                              color: "#334155",
+                            }}
+                          >
+                            <span>{label}</span>
+                            <strong>
+                              {String(pref)} {Number(value).toFixed(2)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 10,
+                          padding: 12,
+                          background: "#ffffff",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            marginBottom: 10,
+                            color: "#065f46",
+                          }}
+                        >
+                          Datos a registrar (corrección)
+                        </div>
+
+                        <div
+                          style={{
+                            marginBottom: 10,
+                            background: "#f8fafc",
+                            border: "1px dashed #94a3b8",
+                            borderRadius: 8,
+                            padding: "8px 10px",
+                            fontSize: 12,
+                            color: "#334155",
+                          }}
+                        >
+                          <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                            Nota informativa · valores registrados anteriormente
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 6,
+                            }}
+                          >
+                            <div>
+                              Fondo fijo:{" "}
+                              <strong>
+                                L{" "}
+                                {Number(
+                                  sistemaCorreccion.fondo_fijo_registrado_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                            <div>
+                              Efectivo:{" "}
+                              <strong>
+                                L{" "}
+                                {Number(
+                                  sistemaCorreccion.efectivo_registrado_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                            <div>
+                              Tarjeta:{" "}
+                              <strong>
+                                L{" "}
+                                {Number(
+                                  sistemaCorreccion.tarjeta_registrada_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                            <div>
+                              Transferencia:{" "}
+                              <strong>
+                                L{" "}
+                                {Number(
+                                  sistemaCorreccion.transferencias_registradas_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              Dólares:{" "}
+                              <strong>
+                                ${" "}
+                                {Number(
+                                  sistemaCorreccion.dolares_registrados_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              Diferencia total:{" "}
+                              <strong>
+                                L{" "}
+                                {Number(
+                                  sistemaCorreccion.diferencia_total_actual ||
+                                    0,
+                                ).toFixed(2)}
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {[
+                          ["fondo_fijo_registrado", "Fondo fijo", "L"],
+                          ["efectivo_registrado", "Efectivo", "L"],
+                          ["monto_tarjeta_registrado", "Tarjeta", "L"],
+                          ["transferencias_registradas", "Transferencia", "L"],
+                          ["dolares_registrado", "Dólares", "$"],
+                        ].map(([field, label, pref]) => (
+                          <label
+                            key={String(field)}
+                            style={{
+                              display: "block",
+                              marginBottom: 8,
+                              fontSize: 12,
+                              color: "#334155",
+                            }}
+                          >
+                            {label}
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={Number(
+                                formCorreccion[field as string] || 0,
+                              )}
+                              onChange={(e) =>
+                                setFormCorreccion((prev: any) => ({
+                                  ...prev,
+                                  [field as string]: Number(
+                                    e.target.value || 0,
+                                  ),
+                                }))
+                              }
+                              style={{
+                                width: "100%",
+                                marginTop: 4,
+                                padding: "8px 10px",
+                                borderRadius: 8,
+                                border: "1px solid #cbd5e1",
+                                fontSize: 13,
+                                background: "#ffffff",
+                                color: "#0f172a",
+                                WebkitTextFillColor: "#0f172a",
+                                colorScheme: "light",
+                              }}
+                              placeholder={`${String(pref)} 0.00`}
+                            />
+                          </label>
+                        ))}
+
+                        <div
+                          style={{
+                            marginTop: 10,
+                            background: "#f8fafc",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 8,
+                            padding: "10px 12px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            fontSize: 13,
+                            color: "#334155",
+                          }}
+                        >
+                          <span style={{ fontWeight: 700 }}>
+                            Diferencia total del nuevo registro
+                          </span>
+                          <strong
+                            style={{
+                              color:
+                                calcularDiferenciaNuevoRegistro(
+                                  formCorreccion,
+                                  sistemaCorreccion,
+                                ) === 0
+                                  ? "#166534"
+                                  : "#b91c1c",
+                            }}
+                          >
+                            L{" "}
+                            {calcularDiferenciaNuevoRegistro(
+                              formCorreccion,
+                              sistemaCorreccion,
+                            ).toFixed(2)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 10,
+                  marginTop: 16,
+                }}
+              >
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    void cancelarCorreccionCierre();
+                  }}
+                  disabled={corrSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={guardarCorreccionCierre}
+                  disabled={
+                    corrLoading ||
+                    corrSaving ||
+                    !sistemaCorreccion ||
+                    !formCorreccion
+                  }
+                >
+                  {corrSaving ? "⏳ Guardando..." : "💾 Guardar corrección"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

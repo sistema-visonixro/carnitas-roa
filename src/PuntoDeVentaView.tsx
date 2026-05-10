@@ -13,8 +13,7 @@ import {
   inicializarSistemaOffline,
   guardarGastoLocal,
   guardarEnvioLocal,
-
-  // obtenerContadorPendientes,
+  obtenerContadorPendientes,
   sincronizarTodo,
   eliminarEnvioLocal,
   obtenerEnviosPendientes,
@@ -611,200 +610,147 @@ export default function PuntoDeVentaView({
     return data?.[0] ?? null;
   }
 
+  async function obtenerPrecioDolarSupabase() {
+    const { data, error } = await supabase
+      .from("precio_dolar")
+      .select("valor")
+      .eq("id", "singleton")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("No se pudo leer precio_dolar desde Supabase:", error);
+      return 0;
+    }
+
+    return Number(data?.valor) || 0;
+  }
+
+  async function sincronizarAntesDeResumen() {
+    if (!navigator.onLine || !estaConectado()) {
+      throw new Error(
+        "Se requiere conexión a internet para sincronizar y calcular el resumen exacto.",
+      );
+    }
+
+    await Promise.all([
+      sincronizarTodo(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+
+    const pendientes = await obtenerContadorPendientes();
+    const totalPendientes =
+      pendientes.facturas +
+      pendientes.pagos +
+      pendientes.gastos +
+      pendientes.envios +
+      pendientes.ventas +
+      pendientes.cierres;
+
+    if (totalPendientes > 0) {
+      throw new Error(
+        `Hay ${totalPendientes} registros pendientes de sincronizar. Intente de nuevo en unos segundos.`,
+      );
+    }
+  }
+
   async function fetchResumenCaja() {
     setShowResumen(true);
     setResumenLoading(true);
+    setResumenData(null);
     try {
       if (!usuarioActual?.id) {
         setResumenLoading(false);
         return;
       }
 
+      await sincronizarAntesDeResumen();
+
       const aperturaSupabase = await obtenerAperturaActivaSupabase(
         usuarioActual.id,
       );
-      if (aperturaSupabase) {
-        const { data: resumenRemotoRows, error: resumenRemotoError } =
-          await supabase
-            .from("v_resumen_turnos")
-            .select(
-              "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas",
-            )
-            .eq("apertura_id", aperturaSupabase.id)
-            .limit(1);
-
-        if (!resumenRemotoError && resumenRemotoRows?.[0]) {
-          const resumenRemoto = resumenRemotoRows[0] as any;
-          const conteoTurno = await obtenerConteoTurnoSupabase(
-            Number(aperturaSupabase.id),
-          );
-
-          const fechaInicio =
-            aperturaSupabase.fecha_apertura ?? aperturaSupabase.fecha;
-          let deliverySum = 0;
-          if (fechaInicio) {
-            const { data: ventasDelivery } = await supabase
-              .from("ventas")
-              .select("delivery")
-              .eq("cajero_id", usuarioActual.id)
-              .neq("tipo", "CREDITO")
-              .gte("fecha_hora", fechaInicio);
-
-            deliverySum = (ventasDelivery || []).reduce(
-              (acc: number, row: any) => acc + parseFloat(row?.delivery || 0),
-              0,
-            );
-          }
-
-          const tasa = await getPrecioDolarLocal();
-          const dolaresConvertidos = Number(
-            ((Number(resumenRemoto.dolares_usd) || 0) * tasa).toFixed(2),
-          );
-
-          setResumenData({
-            efectivo: Number(
-              (
-                (Number(resumenRemoto.efectivo_bruto) || 0) -
-                (Number(resumenRemoto.cambio_devuelto) || 0)
-              ).toFixed(2),
-            ),
-            tarjeta: Number(resumenRemoto.tarjeta) || 0,
-            transferencia: Number(resumenRemoto.transferencia) || 0,
-            dolares: Number(resumenRemoto.dolares_lps) || 0,
-            dolares_usd: Number(resumenRemoto.dolares_usd) || 0,
-            dolares_convertidos: dolaresConvertidos,
-            tasa_dolar: tasa,
-            gastos: Number(resumenRemoto.gastos) || 0,
-            cambio: Number(resumenRemoto.cambio_devuelto) || 0,
-            delivery: Number(deliverySum.toFixed(2)),
-            platillos:
-              Number(conteoTurno?.platillos_vendidos) ||
-              Number(resumenRemoto.platillos_vendidos) ||
-              0,
-            bebidas:
-              Number(conteoTurno?.bebidas_vendidas) ||
-              Number(resumenRemoto.bebidas_vendidas) ||
-              0,
-            platillos_donados:
-              Number(conteoTurno?.platillos_donados) ||
-              Number(resumenRemoto.platillos_donados) ||
-              0,
-            bebidas_donadas:
-              Number(conteoTurno?.bebidas_donadas) ||
-              Number(resumenRemoto.bebidas_donadas) ||
-              0,
-          });
-          setResumenLoading(false);
-          return;
-        }
-      }
-
-      // ── IDB primero (siempre, sin depender de navigator.onLine) ──────────
-      {
-        const cierresIDB = await getByIndex<any>(
-          STORE.CIERRES,
-          "cajero_id",
-          usuarioActual?.id,
-        );
-        let aperturaIDB: any =
-          cierresIDB
-            .filter((c) => c.estado === "APERTURA")
-            .sort(
-              (a, b) =>
-                new Date(b.fecha ?? 0).getTime() -
-                new Date(a.fecha ?? 0).getTime(),
-            )[0] ?? null;
-
-        // Fallback: buscar en localStorage / apertura_cache y sincronizar en STORE.CIERRES
-        if (!aperturaIDB) {
-          const lsAp = obtenerAperturaLocalStorage();
-          const cachedAp =
-            lsAp?.cajero_id === usuarioActual?.id
-              ? lsAp
-              : await obtenerAperturaCache()
-                  .then((c) => (c?.cajero_id === usuarioActual?.id ? c : null))
-                  .catch(() => null);
-          if (cachedAp) {
-            const numId =
-              parseInt(cachedAp.id as string) > 0
-                ? parseInt(cachedAp.id as string)
-                : -Date.now();
-            aperturaIDB = {
-              id: numId,
-              cajero_id: cachedAp.cajero_id,
-              cajero: (cachedAp as any).cajero || "",
-              caja: cachedAp.caja,
-              fecha: cachedAp.fecha,
-              estado: "APERTURA",
-            };
-            await upsertOne(STORE.CIERRES, aperturaIDB);
-            console.log(
-              "✓ Apertura rescatada de cache y guardada en STORE.CIERRES",
-            );
-          }
-        }
-
-        if (aperturaIDB) {
-          const resumenIDB = await calcularResumenTurno(
-            aperturaIDB.id,
-            usuarioActual!.id,
-          );
-          if (!resumenIDB) {
-            setResumenLoading(false);
-            alert("No se pudo calcular el resumen desde IDB.");
-            setShowResumen(false);
-            return;
-          }
-
-          const tasa = await getPrecioDolarLocal();
-          const dolaresConvertidos = Number(
-            (resumenIDB.dolares_usd * tasa).toFixed(2),
-          );
-
-          // Calcular delivery desde IDB
-          const ventasIDB = await getByIndex<any>(
-            STORE.VENTAS,
-            "cajero_id",
-            usuarioActual!.id,
-          );
-          const tsAp = new Date(aperturaIDB.fecha ?? 0).getTime();
-          const deliverySum = ventasIDB
-            .filter((v) => {
-              const ts = new Date(v.fecha_hora ?? 0).getTime();
-              return ts >= tsAp && v.tipo !== "CREDITO";
-            })
-            .reduce((acc, v) => acc + parseFloat(v.delivery || 0), 0);
-
-          setResumenData({
-            efectivo: Number(
-              (resumenIDB.efectivo_bruto - resumenIDB.cambio_devuelto).toFixed(
-                2,
-              ),
-            ),
-            tarjeta: resumenIDB.tarjeta,
-            transferencia: resumenIDB.transferencia,
-            dolares: resumenIDB.dolares_lps,
-            dolares_usd: resumenIDB.dolares_usd,
-            dolares_convertidos: dolaresConvertidos,
-            tasa_dolar: tasa,
-            gastos: resumenIDB.gastos,
-            cambio: resumenIDB.cambio_devuelto,
-            delivery: deliverySum,
-            platillos: resumenIDB.platillos_vendidos,
-            bebidas: resumenIDB.bebidas_vendidas,
-            platillos_donados: resumenIDB.platillos_donados,
-            bebidas_donadas: resumenIDB.bebidas_donadas,
-          });
-          setResumenLoading(false);
-          return;
-        }
-        setResumenLoading(false);
+      if (!aperturaSupabase) {
         alert(
-          "No hay apertura de caja en IndexedDB. El resumen de caja se calcula solo desde datos locales.",
+          "No hay apertura activa en Supabase para este cajero. No se puede mostrar un resumen exacto.",
         );
         setShowResumen(false);
         return;
       }
+
+      const { data: resumenRemotoRows, error: resumenRemotoError } =
+        await supabase
+          .from("v_resumen_turnos")
+          .select(
+            "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas",
+          )
+          .eq("apertura_id", aperturaSupabase.id)
+          .limit(1);
+
+      if (resumenRemotoError || !resumenRemotoRows?.[0]) {
+        throw (
+          resumenRemotoError ?? new Error("Sin datos de resumen en Supabase")
+        );
+      }
+
+      const resumenRemoto = resumenRemotoRows[0] as any;
+      const conteoTurno = await obtenerConteoTurnoSupabase(
+        Number(aperturaSupabase.id),
+      );
+
+      const fechaInicio =
+        aperturaSupabase.fecha_apertura ?? aperturaSupabase.fecha;
+      let deliverySum = 0;
+      if (fechaInicio) {
+        const { data: ventasDelivery } = await supabase
+          .from("ventas")
+          .select("delivery")
+          .eq("cajero_id", usuarioActual.id)
+          .neq("tipo", "CREDITO")
+          .gte("fecha_hora", fechaInicio);
+
+        deliverySum = (ventasDelivery || []).reduce(
+          (acc: number, row: any) => acc + parseFloat(row?.delivery || 0),
+          0,
+        );
+      }
+
+      const tasa = await obtenerPrecioDolarSupabase();
+      const dolaresConvertidos = Number(
+        ((Number(resumenRemoto.dolares_usd) || 0) * tasa).toFixed(2),
+      );
+
+      setResumenData({
+        efectivo: Number(
+          (
+            (Number(resumenRemoto.efectivo_bruto) || 0) -
+            (Number(resumenRemoto.cambio_devuelto) || 0)
+          ).toFixed(2),
+        ),
+        tarjeta: Number(resumenRemoto.tarjeta) || 0,
+        transferencia: Number(resumenRemoto.transferencia) || 0,
+        dolares: Number(resumenRemoto.dolares_lps) || 0,
+        dolares_usd: Number(resumenRemoto.dolares_usd) || 0,
+        dolares_convertidos: dolaresConvertidos,
+        tasa_dolar: tasa,
+        gastos: Number(resumenRemoto.gastos) || 0,
+        cambio: Number(resumenRemoto.cambio_devuelto) || 0,
+        delivery: Number(deliverySum.toFixed(2)),
+        platillos:
+          Number(conteoTurno?.platillos_vendidos) ||
+          Number(resumenRemoto.platillos_vendidos) ||
+          0,
+        bebidas:
+          Number(conteoTurno?.bebidas_vendidas) ||
+          Number(resumenRemoto.bebidas_vendidas) ||
+          0,
+        platillos_donados:
+          Number(conteoTurno?.platillos_donados) ||
+          Number(resumenRemoto.platillos_donados) ||
+          0,
+        bebidas_donadas:
+          Number(conteoTurno?.bebidas_donadas) ||
+          Number(resumenRemoto.bebidas_donadas) ||
+          0,
+      });
     } catch (err) {
       console.error("Error al obtener resumen de caja:", err);
       setResumenData({
@@ -814,6 +760,11 @@ export default function PuntoDeVentaView({
         dolares: 0,
         gastos: 0,
       });
+      alert(
+        err instanceof Error
+          ? err.message
+          : "No se pudo obtener el resumen exacto desde Supabase.",
+      );
     } finally {
       setResumenLoading(false);
     }
@@ -4340,7 +4291,25 @@ export default function PuntoDeVentaView({
                   fontSize: 16,
                 }}
               >
-                Cargando...
+                <div
+                  style={{
+                    fontSize: 40,
+                    marginBottom: 10,
+                    animation: "pulse 1.3s ease-in-out infinite",
+                  }}
+                >
+                  ☁️
+                </div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  Descargando datos de la nube...
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.8 }}>
+                  Sincronizando ventas, pedidos, gastos y devoluciones
+                  pendientes
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
+                  Tiempo mínimo de carga: 5 segundos
+                </div>
               </div>
             ) : resumenData ? (
               <div style={{ padding: "clamp(12px,3.5vw,20px)" }}>
