@@ -3,6 +3,7 @@ export interface PlatilloPeriodoRow {
   vendidos_dia: number;
   credito_dia: number;
   devolucion_dia: number;
+  donados_dia: number;
   total_dia: number;
 }
 
@@ -29,6 +30,7 @@ export default function PlatillosPeriodoModal({
         Number(r.vendidos_dia || 0) > 0 ||
         Number(r.credito_dia || 0) > 0 ||
         Number(r.devolucion_dia || 0) > 0 ||
+        Number(r.donados_dia || 0) > 0 ||
         Number(r.total_dia || 0) !== 0,
     )
     .sort(
@@ -39,6 +41,10 @@ export default function PlatillosPeriodoModal({
 
   const totVendidos = rowsFiltradas.reduce(
     (acc, row) => acc + (Number(row.vendidos_dia) || 0),
+    0,
+  );
+  const totDonados = rowsFiltradas.reduce(
+    (acc, row) => acc + (Number(row.donados_dia) || 0),
     0,
   );
   const totDevolucion = rowsFiltradas.reduce(
@@ -108,6 +114,7 @@ export default function PlatillosPeriodoModal({
                 <th>Ven</th>
                 <th>Cre</th>
                 <th>Dev</th>
+                <th>Don</th>
                 <th>Tot</th>
               </tr>
             </thead>
@@ -120,6 +127,7 @@ export default function PlatillosPeriodoModal({
                   <td>${Number(r.vendidos_dia).toFixed(0)}</td>
                   <td>${Number(r.credito_dia).toFixed(0)}</td>
                   <td>${Number(r.devolucion_dia).toFixed(0)}</td>
+                  <td>${Number(r.donados_dia).toFixed(0)}</td>
                   <td class="bold">${Number(r.total_dia).toFixed(2)}</td>
                 </tr>
               `,
@@ -132,6 +140,7 @@ export default function PlatillosPeriodoModal({
             <div class="total-row"><span>Ventas:</span><span>${totVendidos.toFixed(2)}</span></div>
             <div class="total-row"><span>Créditos:</span><span>${totCredito.toFixed(2)}</span></div>
             <div class="total-row"><span>Devoluciones:</span><span>${totDevolucion.toFixed(2)}</span></div>
+            <div class="total-row"><span>Donaciones:</span><span>${totDonados.toFixed(2)}</span></div>
             <div class="total-row total-final"><span>NETO FINAL:</span><span>${totFinal.toFixed(2)}</span></div>
           </div>
           <div class="divider"></div>
@@ -393,6 +402,20 @@ export default function PlatillosPeriodoModal({
                       letterSpacing: "1px",
                     }}
                   >
+                    Donados
+                  </th>
+                  <th
+                    style={{
+                      borderBottom: "2px solid #cbd5e1",
+                      padding: "16px 20px",
+                      textAlign: "right",
+                      color: "#0f172a",
+                      fontWeight: 900,
+                      fontSize: 13,
+                      textTransform: "uppercase",
+                      letterSpacing: "1px",
+                    }}
+                  >
                     Total{" "}
                   </th>
                 </tr>
@@ -461,6 +484,19 @@ export default function PlatillosPeriodoModal({
                         borderBottom: "1px solid #e2e8f0",
                         padding: "18px 20px",
                         textAlign: "right",
+                        color: "#9f1239",
+                        fontWeight: 900,
+                        fontSize: 16,
+                        transition: "border-color 0.2s",
+                      }}
+                    >
+                      {Number(row.donados_dia || 0).toFixed(2)}
+                    </td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #e2e8f0",
+                        padding: "18px 20px",
+                        textAlign: "right",
                         color: "#020617",
                         fontWeight: 900,
                         fontSize: 18,
@@ -480,7 +516,7 @@ export default function PlatillosPeriodoModal({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
             gap: 20,
             padding: "32px 40px",
             marginTop: "16px",
@@ -571,6 +607,35 @@ export default function PlatillosPeriodoModal({
               }}
             >
               {totDevolucion.toFixed(2)}
+            </div>
+          </div>
+          <div
+            style={{
+              background: "#ede9fe",
+              padding: "20px 24px",
+              borderRadius: 24,
+            }}
+          >
+            <div
+              style={{
+                color: "#5b21b6",
+                fontSize: 13,
+                fontWeight: 900,
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
+              Donados
+            </div>
+            <div
+              style={{
+                fontWeight: 900,
+                color: "#311b92",
+                fontSize: 28,
+                marginTop: 4,
+              }}
+            >
+              {totDonados.toFixed(2)}
             </div>
           </div>
           <div

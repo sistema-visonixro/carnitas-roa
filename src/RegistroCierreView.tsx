@@ -30,6 +30,7 @@ interface PlatilloReportePrintRow {
   vendidos_dia: number;
   credito_dia: number;
   devolucion_dia: number;
+  donados_dia: number;
   total_dia: number;
 }
 
@@ -283,7 +284,7 @@ export default function RegistroCierreView({
       const { data, error } = await supabase
         .from("v_platillos_periodos")
         .select(
-          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, total_dia",
+          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, donados_dia, total_dia",
         )
         .eq("cajero_id", usuarioActual.id);
 
@@ -295,6 +296,7 @@ export default function RegistroCierreView({
           vendidos_dia: Number(row.vendidos_dia) || 0,
           credito_dia: Number(row.credito_dia) || 0,
           devolucion_dia: Number(row.devolucion_dia) || 0,
+          donados_dia: Number(row.donados_dia) || 0,
           total_dia: Number(row.total_dia) || 0,
         }))
         .filter(
@@ -473,6 +475,7 @@ export default function RegistroCierreView({
                   <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Ven</th>
                   <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Cre</th>
                   <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Dev</th>
+                  <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Don</th>
                   <th style="text-align:right; border-bottom:1px solid #000; padding-bottom:2px;">Tot</th>
                 </tr>
               </thead>
@@ -485,6 +488,7 @@ export default function RegistroCierreView({
                         <td style="text-align:right; padding:3px 0;">${Number(row.vendidos_dia).toFixed(2)}</td>
                         <td style="text-align:right; padding:3px 0;">${Number(row.credito_dia).toFixed(2)}</td>
                         <td style="text-align:right; padding:3px 0;">${Number(row.devolucion_dia).toFixed(2)}</td>
+                        <td style="text-align:right; padding:3px 0;">${Number(row.donados_dia).toFixed(2)}</td>
                         <td style="text-align:right; padding:3px 0; font-weight:700;">${Number(row.total_dia).toFixed(2)}</td>
                       </tr>
                     `,
@@ -496,6 +500,7 @@ export default function RegistroCierreView({
             <div class="row"><span>Ventas:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.vendidos_dia) || 0), 0).toFixed(2)}</span></div>
             <div class="row"><span>Créditos:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.credito_dia) || 0), 0).toFixed(2)}</span></div>
             <div class="row"><span>Devoluciones:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.devolucion_dia) || 0), 0).toFixed(2)}</span></div>
+            <div class="row"><span>Donaciones:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.donados_dia) || 0), 0).toFixed(2)}</span></div>
             <div class="row" style="font-weight:bold;"><span>NETO FINAL:</span><span>${platillosReporteRows.reduce((acc, row) => acc + (Number(row.total_dia) || 0), 0).toFixed(2)}</span></div>
           `
           : `<div style="font-size:14px; text-align:center;">Sin datos</div>`;

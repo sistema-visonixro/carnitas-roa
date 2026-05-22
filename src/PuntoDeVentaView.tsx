@@ -1270,7 +1270,7 @@ export default function PuntoDeVentaView({
       const { data, error } = await supabase
         .from("v_platillos_periodos")
         .select(
-          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, total_dia",
+          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, donados_dia, total_dia",
         )
         .eq("cajero_id", usuarioActual.id);
 
@@ -1281,6 +1281,7 @@ export default function PuntoDeVentaView({
         vendidos_dia: Number(r.vendidos_dia) || 0,
         credito_dia: Number(r.credito_dia) || 0,
         devolucion_dia: Number(r.devolucion_dia) || 0,
+        donados_dia: Number(r.donados_dia) || 0,
         total_dia: Number(r.total_dia) || 0,
       }));
       rows.sort(

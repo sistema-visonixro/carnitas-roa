@@ -1,6 +1,7 @@
 -- =============================================================
 -- Vista: platillos del turno (desde apertura de caja)
--- Fuente: ventas.productos (JSON) filtrando solo tipo = comida
+-- Fuente: ventas.productos JSON
+-- Filtro real: public.productos.tipo = 'comida'
 -- Rango: fecha_apertura del turno -> fecha_cierre del turno (o NOW si sigue abierto)
 -- =============================================================
 
@@ -27,17 +28,32 @@ WITH ultimo_turno AS (
       OR c.tipo_registro IN ('apertura', 'cierre')
       OR c.fecha_apertura IS NOT NULL
     )
-  ORDER BY c.cajero_id, COALESCE(c.fecha_apertura, c.fecha) DESC, c.id DESC
+  ORDER BY 
+    c.cajero_id, 
+    COALESCE(c.fecha_apertura, c.fecha) DESC, 
+    c.id DESC
 ),
+
 items AS (
   SELECT
     v.cajero_id,
-    COALESCE(v.tipo, '')                                AS tipo_venta,
-    COALESCE(v.es_donacion, FALSE)                      AS es_donacion,
-    v.fecha_hora                                         AS fecha_hora,
-    COALESCE(NULLIF(trim(item ->> 'nombre'), ''), 'SIN NOMBRE') AS nombre_producto,
-    COALESCE((item ->> 'cantidad')::numeric, 1)         AS cantidad,
-    item ->> 'tipo'                                     AS item_tipo
+    COALESCE(v.tipo, '') AS tipo_venta,
+    COALESCE(v.es_donacion, FALSE) AS es_donacion,
+    v.fecha_hora AS fecha_hora,
+
+    -- ID que viene dentro del JSON de ventas.productos
+    item ->> 'id' AS id_json,
+
+    -- Convertimos a UUID solo si el ID tiene formato UUID válido
+    CASE
+      WHEN item ->> 'id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN (item ->> 'id')::uuid
+      ELSE NULL
+    END AS id_platillo,
+
+    COALESCE(NULLIF(trim(item ->> 'nombre'), ''), 'SIN NOMBRE') AS nombre_json,
+    COALESCE((item ->> 'cantidad')::numeric, 1) AS cantidad
+
   FROM public.ventas v
   CROSS JOIN LATERAL jsonb_array_elements(
     CASE
@@ -49,10 +65,13 @@ items AS (
     END
   ) AS item
 ),
+
 base AS (
   SELECT
     i.cajero_id,
-    i.nombre_producto,
+    i.id_platillo,
+    p.nombre AS nombre_producto,
+    p.tipo,
     i.cantidad,
     i.tipo_venta,
     i.es_donacion,
@@ -60,27 +79,92 @@ base AS (
     t.fecha_apertura_turno,
     t.fecha_cierre_turno
   FROM items i
-  JOIN ultimo_turno t ON t.cajero_id = i.cajero_id
-  WHERE i.item_tipo = 'comida'
+  JOIN public.productos p 
+    ON p.id = i.id_platillo
+  JOIN ultimo_turno t 
+    ON t.cajero_id = i.cajero_id
+  WHERE p.tipo = 'comida'
     AND i.fecha_hora >= t.fecha_apertura_turno
     AND i.fecha_hora <  t.fecha_cierre_turno
 )
+
 SELECT
   cajero_id,
+  id_platillo,
   nombre_producto,
+  tipo,
 
-  -- Turno (apertura -> cierre/now)
-  SUM(CASE WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS vendidos_dia,
-  SUM(CASE WHEN tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END) AS credito_dia,
-  SUM(CASE WHEN tipo_venta = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS devolucion_dia,
-  SUM(CASE WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
+  -- Vendidos en el turno
+  SUM(
+    CASE 
+      WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') 
+       AND es_donacion IS NOT TRUE 
+      THEN cantidad 
+      ELSE 0 
+    END
+  ) AS vendidos_dia,
+
+  -- Créditos en el turno
+  SUM(
+    CASE 
+      WHEN tipo_venta = 'CREDITO' 
+       AND es_donacion IS NOT TRUE 
+      THEN cantidad 
+      ELSE 0 
+    END
+  ) AS credito_dia,
+
+  -- Devoluciones en el turno
+  SUM(
+    CASE 
+      WHEN tipo_venta = 'DEVOLUCION' 
+      THEN cantidad 
+      ELSE 0 
+    END
+  ) AS devolucion_dia,
+
+  -- Donaciones de platillos en el turno
+  SUM(
+    CASE 
+      WHEN es_donacion IS TRUE 
+      THEN cantidad 
+      ELSE 0 
+    END
+  ) AS donados_dia,
+
+  -- Total neto del turno (excluye donaciones)
+  SUM(
+    CASE 
+      WHEN tipo_venta NOT IN ('DEVOLUCION', 'CREDITO') 
+       AND es_donacion IS NOT TRUE 
+      THEN cantidad 
+      ELSE 0 
+    END
+  )
   +
-  SUM(CASE WHEN tipo_venta = 'CREDITO' AND es_donacion IS NOT TRUE THEN cantidad ELSE 0 END)
+  SUM(
+    CASE 
+      WHEN tipo_venta = 'CREDITO' 
+       AND es_donacion IS NOT TRUE 
+      THEN cantidad 
+      ELSE 0 
+    END
+  )
   -
-  SUM(CASE WHEN tipo_venta = 'DEVOLUCION' THEN cantidad ELSE 0 END) AS total_dia
+  SUM(
+    CASE 
+      WHEN tipo_venta = 'DEVOLUCION' 
+      THEN cantidad 
+      ELSE 0 
+    END
+  ) AS total_dia
 
 FROM base
-GROUP BY cajero_id, nombre_producto;
+GROUP BY 
+  cajero_id,
+  id_platillo,
+  nombre_producto,
+  tipo;
 
 GRANT SELECT ON public.v_platillos_periodos TO authenticated;
 GRANT SELECT ON public.v_platillos_periodos TO anon;
