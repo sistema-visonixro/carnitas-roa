@@ -12,6 +12,8 @@ type PagoItem = {
   autorizador?: string;
   referencia?: string;
 };
+// marca si el pago fue realizado usando puntos (se registra como efectivo pero
+// para la lógica se identifica con esta bandera)
 
 type PaymentPayload = {
   efectivo: number;
@@ -21,6 +23,7 @@ type PaymentPayload = {
   tipoPagoString: string;
   pagos?: PagoItem[];
   esDonacion?: boolean;
+  canjearPuntos?: boolean;
 };
 
 export default function PaymentModal({
@@ -55,6 +58,7 @@ export default function PaymentModal({
   const [factura, setFactura] = useState<string>("");
   const [autorizador, setAutorizador] = useState<string>("");
   const [referencia, setReferencia] = useState<string>("");
+
   const [usdAmount, setUsdAmount] = useState<number>(0);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [loadingGenerating, setLoadingGenerating] = useState<boolean>(false);
@@ -389,6 +393,7 @@ export default function PaymentModal({
               fontSize: 13,
             }}
           >
+            <div />
             {/* Encabezado prominente con Total a pagar */}
             <div
               style={{

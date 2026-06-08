@@ -630,6 +630,98 @@ export default function RegistroCierreView({
     }, 2000);
   };
 
+  // Imprime un corte pequeño (ticket 80mm) para platillos o bebidas
+  const printSmallCorte = (
+    rows: any[],
+    titleText = "CORTE",
+    itemLabel = "Prod",
+    isPlatillos = false,
+  ) => {
+    try {
+      const pw = window.open("", "_blank", "width=400,height=600");
+      if (!pw) return;
+
+      const fechaStr = new Date().toLocaleString("es-HN", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+
+      let tableHtml = "";
+      if (isPlatillos) {
+        tableHtml = `
+          <table style="width:100%; border-collapse: collapse; font-size:11px; margin-top:4px;">
+            <thead>
+              <tr>
+                <th style="text-align:left">${itemLabel}</th>
+                <th style="text-align:right">Ven</th>
+                <th style="text-align:right">Cre</th>
+                <th style="text-align:right">Dev</th>
+                <th style="text-align:right">Don</th>
+                <th style="text-align:right">Tot</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows
+                .map(
+                  (r: any) => `
+                  <tr>
+                    <td style="max-width:24mm; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${String(
+                      r.nombre_producto || r.nombre || "",
+                    )}</td>
+                    <td style="text-align:right">${Number(r.vendidos_dia || r.vendido || 0).toFixed(0)}</td>
+                    <td style="text-align:right">${Number(r.credito_dia || 0).toFixed(0)}</td>
+                    <td style="text-align:right">${Number(r.devolucion_dia || 0).toFixed(0)}</td>
+                    <td style="text-align:right">${Number(r.donados_dia || 0).toFixed(0)}</td>
+                    <td style="text-align:right; font-weight:700">${Number(r.total_dia || 0).toFixed(2)}</td>
+                  </tr>`,
+                )
+                .join("")}
+            </tbody>
+          </table>
+        `;
+      } else {
+        tableHtml = `
+          <div style="margin-top:6px; font-size:12px;">
+            ${rows
+              .map(
+                (r: any) =>
+                  `<div style="display:flex; justify-content:space-between; padding:3px 0;"><span>${String(r.nombre || r.nombre_producto || "").substring(0, 40)}</span><span>${Number(r.vendido || r.vendidos_dia || 0).toFixed(0)}</span></div>`,
+              )
+              .join("")}
+          </div>
+        `;
+      }
+
+      const html = `
+        <html>
+          <head>
+            <title>${titleText}</title>
+            <style>
+              body { font-family: 'Courier New', monospace; width:72mm; margin:0 auto; padding:6mm 4mm; color:#000; }
+              h2 { text-align:center; margin:0; font-size:16px }
+              .divider { border-bottom:1px dashed #000; margin:6px 0 }
+              table { width:100%; }
+            </style>
+          </head>
+          <body>
+            <h2>${titleText}</h2>
+            <p style="text-align:center; margin:4px 0 6px;">Fecha: ${fechaStr}</p>
+            <div class="divider"></div>
+            ${tableHtml}
+            <div class="divider"></div>
+            <p style="text-align:center; font-size:10px; margin-top:8px;">-- Sistema de Reportes --</p>
+            <script>window.onload = function(){ setTimeout(function(){ window.print(); window.close(); }, 300); };</script>
+          </body>
+        </html>
+      `;
+
+      pw.document.write(html);
+      pw.document.close();
+    } catch (e) {
+      console.warn("printSmallCorte error:", e);
+    }
+  };
+
   const handleGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
     setGuardando(true);
@@ -922,6 +1014,31 @@ export default function RegistroCierreView({
             platillosReporteRows,
             bebidasInventarioRows,
           );
+          // Imprimir cortes pequeños: primero platillos, luego bebidas (pequeños tickets)
+          try {
+            setTimeout(
+              () =>
+                printSmallCorte(
+                  platillosReporteRows,
+                  "CORTE DE PLATILLOS",
+                  "Platillo",
+                  true,
+                ),
+              900,
+            );
+            setTimeout(
+              () =>
+                printSmallCorte(
+                  bebidasInventarioRows,
+                  "CORTE DE BEBIDAS",
+                  "Bebida",
+                  false,
+                ),
+              1800,
+            );
+          } catch (e) {
+            /* non-critical */
+          }
         }
 
         // Enviar datos al script de Google (fire-and-forget)

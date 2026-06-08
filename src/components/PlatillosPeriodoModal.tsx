@@ -13,6 +13,9 @@ interface PlatillosPeriodoModalProps {
   loading: boolean;
   rows: PlatilloPeriodoRow[];
   onRefresh: () => void;
+  title?: string;
+  itemLabel?: string;
+  ticketTitle?: string;
 }
 
 export default function PlatillosPeriodoModal({
@@ -21,6 +24,9 @@ export default function PlatillosPeriodoModal({
   loading,
   rows,
   onRefresh,
+  title = "Reporte de Platillos",
+  itemLabel = "Platillo",
+  ticketTitle = "CORTE DE PLATILLOS",
 }: PlatillosPeriodoModalProps) {
   if (!isOpen) return null;
 
@@ -103,8 +109,8 @@ export default function PlatillosPeriodoModal({
             .center { text-align: center; }
           </style>
         </head>
-        <body>
-          <h2>CORTE DE PLATILLOS</h2>
+            <body>
+              <h2>${ticketTitle}</h2>
           <p>Fecha: ${fechaStr}</p>
           <div class="divider"></div>
           <table>
@@ -253,7 +259,7 @@ export default function PlatillosPeriodoModal({
                 letterSpacing: "-1px",
               }}
             >
-              Reporte de Platillos
+              {title}
             </h3>
             <p
               style={{
@@ -346,7 +352,7 @@ export default function PlatillosPeriodoModal({
                       letterSpacing: "1px",
                     }}
                   >
-                    Platillo
+                    {itemLabel}
                   </th>
                   <th
                     style={{

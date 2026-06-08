@@ -70,6 +70,8 @@ import {
 import PlatillosPeriodoModal, {
   type PlatilloPeriodoRow,
 } from "./components/PlatillosPeriodoModal";
+import PuntosClienteModal from "./components/PuntosClienteModal";
+import InventarioBebidasView from "./views/InventarioBebidasView";
 
 interface Producto {
   id: string;
@@ -221,6 +223,12 @@ export default function PuntoDeVentaView({
   const [platillosPeriodoRows, setPlatillosPeriodoRows] = useState<
     PlatilloPeriodoRow[]
   >([]);
+  // Estados para reporte de bebidas (misma estructura que platillos)
+  const [showBebidasModal, setShowBebidasModal] = useState(false);
+  const [bebidasPeriodoLoading, setBebidasPeriodoLoading] = useState(false);
+  const [bebidasPeriodoRows, setBebidasPeriodoRows] = useState<
+    PlatilloPeriodoRow[]
+  >([]);
   // Modal DATOS DE FACTURACIÓN
   const [showDatosFactModal, setShowDatosFactModal] = useState(false);
   const [caiFactData, setCaiFactData] = useState<any>(null);
@@ -228,6 +236,11 @@ export default function PuntoDeVentaView({
   // ── Créditos POS ────────────────────────────────────────────────────────────
   const [showCreditoClienteModal, setShowCreditoClienteModal] = useState(false);
   const [showPagoCreditoModal, setShowPagoCreditoModal] = useState(false);
+
+  // Puntos cliente
+  const [showPuntosModal, setShowPuntosModal] = useState(false);
+  const [showInventarioBebidasView, setShowInventarioBebidasView] =
+    useState(false);
 
   const [showTipoOrdenModal, setShowTipoOrdenModal] = useState(false);
   const [selectedVentaForComanda, setSelectedVentaForComanda] = useState<
@@ -1306,6 +1319,53 @@ export default function PuntoDeVentaView({
     }
   }
 
+  async function cargarBebidasPorPeriodo() {
+    setBebidasPeriodoLoading(true);
+    try {
+      if (!usuarioActual?.id) {
+        setBebidasPeriodoRows([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("v_bebidas_periodos")
+        .select(
+          "nombre_producto, vendidos_dia, credito_dia, devolucion_dia, donados_dia, total_dia",
+        )
+        .eq("cajero_id", usuarioActual.id);
+
+      if (error) throw error;
+
+      const rows: PlatilloPeriodoRow[] = (data || []).map((r: any) => ({
+        nombre_producto: String(r.nombre_producto || "SIN NOMBRE"),
+        vendidos_dia: Number(r.vendidos_dia) || 0,
+        credito_dia: Number(r.credito_dia) || 0,
+        devolucion_dia: Number(r.devolucion_dia) || 0,
+        donados_dia: Number(r.donados_dia) || 0,
+        total_dia: Number(r.total_dia) || 0,
+      }));
+      rows.sort(
+        (a, b) =>
+          Number(b.total_dia || 0) - Number(a.total_dia || 0) ||
+          a.nombre_producto.localeCompare(b.nombre_producto),
+      );
+
+      const totalBebidasReporte = rows.reduce(
+        (acc, row) => acc + (Number(row.total_dia) || 0),
+        0,
+      );
+      setBebidasTurno(Math.max(0, Math.round(totalBebidasReporte)));
+
+      setBebidasPeriodoRows(rows);
+    } catch (err) {
+      console.error("Error cargando bebidas por período:", err);
+      setBebidasPeriodoRows([]);
+      alert("No se pudo cargar el reporte de bebidas.");
+    } finally {
+      setBebidasPeriodoLoading(false);
+    }
+  }
+
   // Función para obtener historial de facturas de crédito del turno actual
   async function fetchHistorialCreditos() {
     setShowHistorialCreditos(true);
@@ -1437,6 +1497,239 @@ export default function PuntoDeVentaView({
       alert("Error al cargar historial de créditos");
     } finally {
       setHistorialCreditosLoading(false);
+    }
+  }
+
+  // --- Puntos cliente: consultas y canjes ---------------------------------
+  async function fetchPuntosCliente(identidad: string) {
+    if (!identidad) return null;
+    try {
+      // Usar la vista de resumen que toma el último nombre y suma desde puntos_historial
+      const { data, error } = await supabase
+        .from("v_puntos_clientes_resumen")
+        .select("identidad, nombre, puntos")
+        .eq("identidad", identidad)
+        .maybeSingle();
+      if (error) throw error;
+      return data || null;
+    } catch (e) {
+      console.warn("Error fetchPuntosCliente:", e);
+      return null;
+    }
+  }
+
+  async function fetchProductosComida() {
+    try {
+      const { data, error } = await supabase
+        .from("productos")
+        .select("id, nombre, precio, tipo")
+        .eq("tipo", "comida")
+        .order("nombre", { ascending: true });
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      console.warn("Error fetchProductosComida:", e);
+      return [];
+    }
+  }
+
+  async function handleCanjearPorPuntos(
+    identidad: string,
+    clienteNombre: string | null,
+    producto: any,
+  ) {
+    // Cada punto == 1 Lps
+    const precio = Number(producto.precio || 0);
+    // Consultar puntos actuales
+    const cliente = await fetchPuntosCliente(identidad);
+    if (!cliente) throw new Error("Cliente no encontrado o sin puntos");
+    if (Number(cliente.puntos || 0) < precio)
+      throw new Error("Puntos insuficientes para canjear este producto");
+
+    // Preparar venta con total 0
+    const fechaVenta = formatToHondurasLocal();
+    const facturaOffline = `OFFLINE-CANJE-${Date.now()}`;
+    const productosVenta = [
+      {
+        id: producto.id,
+        nombre: producto.nombre,
+        precio: Number(producto.precio || 0),
+        cantidad: 1,
+        tipo: producto.tipo || "comida",
+      },
+    ];
+
+    const venta: any = {
+      fecha_hora: fechaVenta,
+      cajero: usuarioActual?.nombre || "",
+      cajero_id: usuarioActual?.id || null,
+      caja: caiInfo?.caja_asignada || "",
+      cai: caiInfo?.cai || "",
+      factura: facturaOffline,
+      cliente: clienteNombre || identidad,
+      tipo_orden: "PARA LLEVAR",
+      tipo: "CONTADO",
+      operation_id: crypto.randomUUID(),
+      productos: JSON.stringify(productosVenta),
+      sub_total: Number(0).toFixed(2),
+      isv_15: "0.00",
+      isv_18: "0.00",
+      total: Number(0).toFixed(2),
+      tipo_documento_fiscal: "RECIBO",
+      rtn_cliente: null,
+      nombre_cliente_fiscal: clienteNombre || null,
+      numero_secuencial: null,
+      fecha_limite_emision_cai: null,
+      efectivo: 0,
+      tarjeta: 0,
+      transferencia: 0,
+      dolares: 0,
+      dolares_usd: 0,
+      delivery: 0,
+      total_recibido: 0,
+      cambio: 0,
+    };
+
+    // Guardar localmente y en Supabase si posible
+    try {
+      const ventaIdLocal = await guardarVentaLocal(venta);
+      if (navigator.onLine && estaConectado()) {
+        try {
+          const { error } = await supabase.from("ventas").insert([venta]);
+          if (!error) {
+            try {
+              await eliminarVentaLocal(ventaIdLocal);
+            } catch {}
+          }
+        } catch (e) {
+          // no crítico
+        }
+      }
+    } catch (e) {
+      console.warn("Error guardando venta de canje:", e);
+      throw new Error("No se pudo registrar la venta de canje");
+    }
+
+    // Eliminar posibles registros anteriores de tipo CANJE para esta identidad
+    try {
+      if (navigator.onLine && estaConectado()) {
+        await supabase
+          .from("ventas")
+          .delete()
+          .eq("tipo", "CANJE")
+          .eq("cliente", identidad);
+      }
+    } catch (e) {
+      console.warn("No se pudo eliminar registro CANJE antiguo:", e);
+    }
+
+    // Imprimir comanda y recibo para el canje (usar configs si están disponibles)
+    try {
+      const [{ data: etiquetaConfig }, { data: reciboConfig }] =
+        await Promise.all([
+          supabase
+            .from("etiquetas_config")
+            .select("*")
+            .eq("nombre", "default")
+            .maybeSingle(),
+          supabase
+            .from("recibo_config")
+            .select("*")
+            .eq("nombre", "default")
+            .maybeSingle(),
+        ]);
+
+      const comandaHtml = `
+        <div style='font-family:monospace; width:${etiquetaConfig?.etiqueta_ancho || 80}mm; margin:0; padding:${etiquetaConfig?.etiqueta_padding || 8}px;'>
+          <div style='text-align:center; font-weight:900; font-size:20px;'>COMANDA - CANJE POR PUNTOS</div>
+          <div style='font-size:16px; margin-top:8px;'>Factura: ${facturaOffline}</div>
+          <div style='font-size:16px; margin-bottom:8px;'>Cliente: ${venta.cliente || "S/N"}</div>
+          <ul style='list-style:none; padding:0; margin:0;'>
+            ${productosVenta
+              .map(
+                (it) =>
+                  `<li style='padding:6px 0; font-size:16px;'>${it.cantidad}x ${it.nombre}</li>`,
+              )
+              .join("")}
+          </ul>
+        </div>`;
+
+      const reciboHtml = `
+        <div style='font-family:monospace; width:${reciboConfig?.recibo_ancho || 80}mm; margin:0; padding:${reciboConfig?.recibo_padding || 8}px;'>
+          <div style='text-align:center; font-weight:900; font-size:18px;'>${datosNegocio?.nombre_negocio?.toUpperCase() || ""}</div>
+          <div style='text-align:center; font-size:14px; margin-bottom:6px;'>CANJE POR PUNTOS</div>
+          <div style='font-size:13px;'>Factura: ${facturaOffline}</div>
+          <div style='font-size:13px;'>Cliente: ${venta.cliente || "S/N"}</div>
+          <div style='border-top:1px dashed #000; margin-top:8px; padding-top:8px;'>
+            ${productosVenta
+              .map(
+                (it) =>
+                  `<div style='display:flex; justify-content:space-between; font-size:14px; padding:4px 0;'><span>${it.nombre}</span><span>L${(it.precio || 0).toFixed(2)}</span></div>`,
+              )
+              .join("")}
+            <div style='border-top:1px solid #000; margin-top:6px; padding-top:6px; font-weight:700; display:flex; justify-content:space-between;'><span>TOTAL</span><span>L0.00</span></div>
+          </div>
+          <div style='text-align:center; margin-top:12px;'>¡GRACIAS POR SU COMPRA!</div>
+        </div>`;
+
+      const pwC = window.open("", "", "height=800,width=400");
+      if (pwC) {
+        pwC.document.write(
+          `<html><head><title>Comanda</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}</style></head><body>${comandaHtml}</body></html>`,
+        );
+        pwC.document.close();
+        pwC.onload = () => {
+          setTimeout(() => {
+            pwC.focus();
+            pwC.print();
+            pwC.close();
+          }, 300);
+        };
+      }
+
+      const pwR = window.open("", "", "height=800,width=400");
+      if (pwR) {
+        pwR.document.write(
+          `<html><head><title>Recibo</title><style>@page{margin:0;size:auto;}body{margin:0;padding:0;}*{-webkit-print-color-adjust:exact;}</style></head><body>${reciboHtml}</body></html>`,
+        );
+        pwR.document.close();
+        pwR.onload = () => {
+          setTimeout(() => {
+            pwR.focus();
+            pwR.print();
+            pwR.close();
+          }, 400);
+        };
+      }
+    } catch (e) {
+      console.warn("Error imprimiendo canje:", e);
+    }
+
+    // Registrar canje en historial y asegurar existencia de cliente (nombre)
+    try {
+      // Insertar registro negativo en historial
+      await supabase.from("puntos_historial").insert([
+        {
+          identidad,
+          factura: String(facturaOffline),
+          puntos: -precio,
+          descripcion: `Canje por producto ${producto.nombre}`,
+        },
+      ]);
+    } catch (e) {
+      console.warn("No se pudo insertar puntos_historial:", e);
+    }
+    try {
+      // Asegurar que exista una fila en puntos_clientes con el nombre (no guardamos puntos aquí)
+      await supabase.from("puntos_clientes").upsert(
+        {
+          identidad,
+          nombre: clienteNombre || null,
+        },
+        { onConflict: "identidad" },
+      );
+    } catch (e) {
+      console.warn("No se pudo upsertear puntos_clientes:", e);
     }
   }
 
@@ -1801,6 +2094,15 @@ export default function PuntoDeVentaView({
 
   const [facturaActual, setFacturaActual] = useState<string>("");
   const [showPagoModal, setShowPagoModal] = useState(false);
+  const [showPuntosFlowModal, setShowPuntosFlowModal] = useState(false);
+  const [acumularPuntosChoice, setAcumularPuntosChoice] = useState<
+    boolean | null
+  >(null);
+  const [identidadClienteParaPuntos, setIdentidadClienteParaPuntos] =
+    useState<string>("");
+  const [pointsPerPlatillo, setPointsPerPlatillo] = useState<number>(7);
+  const nombreClienteInputRef = useRef<HTMLInputElement | null>(null);
+  const identidadClienteInputRef = useRef<HTMLInputElement | null>(null);
   // Pedido en proceso de entrega (flujo: Entregado → SAR modal → Pago modal)
   const [pedidoPendienteEntrega, setPedidoPendienteEntrega] =
     useState<any>(null);
@@ -2430,8 +2732,39 @@ export default function PuntoDeVentaView({
       if (piezas.length > 0) {
         setPiezasOpciones(piezas.map((p) => p.nombre));
       }
+      // Cargar configuración de puntos por platillo
+      try {
+        const { data: puntosCfg } = await supabase
+          .from("puntos_config")
+          .select("points_per_platillo")
+          .eq("nombre", "default")
+          .maybeSingle();
+        if (
+          puntosCfg &&
+          typeof (puntosCfg as any).points_per_platillo === "number"
+        ) {
+          setPointsPerPlatillo((puntosCfg as any).points_per_platillo);
+        }
+      } catch (err) {
+        console.warn(
+          "No se pudo cargar configuración puntos, usando default 7",
+          err,
+        );
+      }
     })();
   }, []);
+
+  // Autofocus al abrir modal Nombre Cliente: si se eligió acumular puntos, enfocar identidad
+  useEffect(() => {
+    if (!showClienteModal) return;
+    setTimeout(() => {
+      if (acumularPuntosChoice === true) {
+        identidadClienteInputRef.current?.focus();
+      } else {
+        nombreClienteInputRef.current?.focus();
+      }
+    }, 80);
+  }, [showClienteModal, acumularPuntosChoice]);
 
   useEffect(() => {
     if (!posConfig.descuento_habilitado) {
@@ -4885,6 +5218,17 @@ export default function PuntoDeVentaView({
           }
           isSubmittingRef.current = true;
 
+          // Inyectar identidad recolectada en Nombre Cliente si aplica
+          try {
+            if (
+              identidadClienteParaPuntos &&
+              identidadClienteParaPuntos.trim()
+            ) {
+              (paymentData as any).identidadCliente =
+                identidadClienteParaPuntos;
+            }
+          } catch (_) {}
+
           // ── Obtener número de documento ATÓMICAMENTE mediante RPC ─────────────
           // FACTURA: llama siguiente_numero_factura_sar (correlativo SAR formateado)
           // RECIBO : llama obtener_siguiente_factura    (correlativo numérico simple)
@@ -6456,6 +6800,102 @@ export default function PuntoDeVentaView({
 
                 // Siempre guardar en IDB (fuente primaria offline)
                 await guardarVentaLocal(ventaCompleta);
+                // Procesar puntos de fidelidad si el pago incluyó identidad
+                try {
+                  const identidadClientePago = (paymentData as any)
+                    ?.identidadCliente;
+                  if (identidadClientePago && identidadClientePago.trim()) {
+                    // Detectar si hubo pago por puntos en la lista de pagos
+                    const pagosArr: any[] = (paymentData as any)?.pagos || [];
+                    const pagoPuntos = pagosArr.find(
+                      (p: any) => p.es_puntos === true,
+                    );
+                    const puntosCanjeados = pagoPuntos
+                      ? Math.round(pagoPuntos.monto)
+                      : 0;
+                    const cantidadPlatillos = snap.seleccionados.reduce(
+                      (s: any, p: any) =>
+                        s + (p.tipo === "comida" ? p.cantidad : 0),
+                      0,
+                    );
+                    const puntosGanados =
+                      (pointsPerPlatillo || 7) * cantidadPlatillos;
+                    if (isOnline && estaConectado()) {
+                      try {
+                        // Calcular puntos actuales sumando el historial
+                        const { data: historialRows } = await supabase
+                          .from("puntos_historial")
+                          .select("puntos")
+                          .eq("identidad", identidadClientePago);
+                        let actuales = 0;
+                        if (historialRows && Array.isArray(historialRows)) {
+                          actuales = historialRows.reduce(
+                            (s: number, r: any) => s + (Number(r.puntos) || 0),
+                            0,
+                          );
+                        }
+
+                        // Procesar canje si aplica (insertar registro negativo en historial)
+                        if (puntosCanjeados > 0) {
+                          const usar = Math.min(actuales, puntosCanjeados);
+                          if (usar > 0) {
+                            await supabase.from("puntos_historial").insert([
+                              {
+                                identidad: identidadClientePago,
+                                factura: ventaCompleta.factura,
+                                puntos: -usar,
+                                descripcion: `Canje puntos - factura ${ventaCompleta.factura}`,
+                              },
+                            ]);
+                            // ajustar total en ventas si es necesario
+                            const totalFinal = Math.max(
+                              0,
+                              parseFloat(String(ventaCompleta.total)) - usar,
+                            );
+                            await supabase
+                              .from("ventas")
+                              .update({ total: totalFinal.toFixed(2) })
+                              .eq("factura", ventaCompleta.factura);
+                            actuales = actuales - usar;
+                          }
+                        }
+
+                        // Insertar puntos ganados en historial
+                        if (puntosGanados > 0) {
+                          await supabase.from("puntos_historial").insert([
+                            {
+                              identidad: identidadClientePago,
+                              factura: ventaCompleta.factura,
+                              puntos: puntosGanados,
+                              descripcion: `Acumulaci\u00f3n ${puntosGanados} pts por venta ${ventaCompleta.factura}`,
+                            },
+                          ]);
+                          actuales = actuales + puntosGanados;
+                        }
+
+                        // Asegurar existencia de registro maestro con el último nombre
+                        await supabase.from("puntos_clientes").upsert(
+                          {
+                            identidad: identidadClientePago,
+                            nombre: ventaCompleta.cliente || null,
+                          },
+                          { onConflict: "identidad" },
+                        );
+                      } catch (err) {
+                        console.error(
+                          "Error al procesar puntos (Supabase):",
+                          err,
+                        );
+                      }
+                    } else {
+                      console.warn(
+                        "[puntos] No hay conexión: puntos no procesados ahora.",
+                      );
+                    }
+                  }
+                } catch (err) {
+                  console.error("Error al intentar procesar puntos:", err);
+                }
                 if (!guardadoEnSupabase) {
                   console.log(
                     "⚠ Fallo en Supabase. Venta guardada en IndexedDB para sincronización",
@@ -6539,6 +6979,8 @@ export default function PuntoDeVentaView({
               // independientemente de si la operación fue exitosa o no.
               limpiarSeleccion();
               setNombreCliente("");
+              setAcumularPuntosChoice(null);
+              setIdentidadClienteParaPuntos("");
               // Resetear estado SAR para la próxima venta
               setTipoDocumentoFiscal("RECIBO");
               setRtnCliente("");
@@ -7167,33 +7609,58 @@ export default function PuntoDeVentaView({
                 </button>
 
                 {posConfig.credito_habilitado && (
-                  <button
-                    style={{
-                      background: "linear-gradient(90deg,#7c3aed,#6d28d9)",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 10,
-                      padding: "10px 20px",
-                      fontWeight: 700,
-                      fontSize: 15,
-                      cursor:
-                        seleccionados.length === 0 ? "not-allowed" : "pointer",
-                      opacity: seleccionados.length === 0 ? 0.5 : 1,
-                      boxShadow: "0 6px 18px rgba(124,58,237,0.25)",
-                      transition:
-                        "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
-                    }}
-                    disabled={seleccionados.length === 0}
-                    onClick={() => {
-                      if (facturaActual === "Límite alcanzado") {
-                        alert("¡Límite de facturas alcanzado!");
-                        return;
-                      }
-                      setShowCreditoClienteModal(true);
-                    }}
-                  >
-                    💳 Facturar a Crédito
-                  </button>
+                  <>
+                    <button
+                      style={{
+                        background: "linear-gradient(90deg,#7c3aed,#6d28d9)",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 10,
+                        padding: "10px 20px",
+                        fontWeight: 700,
+                        fontSize: 15,
+                        cursor:
+                          seleccionados.length === 0
+                            ? "not-allowed"
+                            : "pointer",
+                        opacity: seleccionados.length === 0 ? 0.5 : 1,
+                        boxShadow: "0 6px 18px rgba(124,58,237,0.25)",
+                        transition:
+                          "transform 0.18s, box-shadow 0.18s, opacity 0.18s",
+                      }}
+                      disabled={seleccionados.length === 0}
+                      onClick={() => {
+                        if (facturaActual === "Límite alcanzado") {
+                          alert("¡Límite de facturas alcanzado!");
+                          return;
+                        }
+                        setShowCreditoClienteModal(true);
+                      }}
+                    >
+                      💳 Facturar a Crédito
+                    </button>
+                    <button
+                      className="menu-btn"
+                      onClick={() => {
+                        setShowInventarioBebidasView(true);
+                        closeMenuAnimated();
+                      }}
+                      style={{
+                        background: "linear-gradient(135deg, #e8f0ff, #e6eefc)",
+                        color: "#1e40af",
+                        border: "1px solid #c7d2fe",
+                        animationDelay: "160ms",
+                      }}
+                    >
+                      <span className="btn-icon">🍾</span>
+                      <span>
+                        <div className="btn-label">Inventario de bebidas</div>
+                        <div className="btn-desc">
+                          Consultar y registrar movimientos
+                        </div>
+                      </span>
+                    </button>
+                  </>
                 )}
               </div>
 
@@ -7531,7 +7998,7 @@ export default function PuntoDeVentaView({
                 onClick={() => {
                   setTipoOrden("PARA LLEVAR");
                   setShowOrdenModal(false);
-                  setShowClienteModal(true);
+                  setShowPuntosFlowModal(true);
                 }}
                 style={{
                   background:
@@ -7563,7 +8030,7 @@ export default function PuntoDeVentaView({
                 onClick={() => {
                   setTipoOrden("COMER AQUÍ");
                   setShowOrdenModal(false);
-                  setShowClienteModal(true);
+                  setShowPuntosFlowModal(true);
                 }}
                 style={{
                   background:
@@ -7608,6 +8075,87 @@ export default function PuntoDeVentaView({
             >
               Cancelar
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: ¿Acumular puntos? */}
+      {showPuntosFlowModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              background: theme === "lite" ? "#fff" : "#232526",
+              borderRadius: 16,
+              padding: 28,
+              minWidth: 340,
+              maxWidth: 520,
+              width: "90%",
+              textAlign: "center",
+              color: theme === "lite" ? "#111" : "#f5f5f5",
+            }}
+          >
+            <h3 style={{ marginTop: 0, color: "#1976d2" }}>
+              ¿Acumular puntos?
+            </h3>
+            <p style={{ color: "#666" }}>
+              ¿Desea acumular puntos por esta venta para el cliente?
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                justifyContent: "center",
+                marginTop: 16,
+              }}
+            >
+              <button
+                onClick={() => {
+                  setAcumularPuntosChoice(true);
+                  setShowPuntosFlowModal(false);
+                  setShowClienteModal(true);
+                }}
+                style={{
+                  padding: "10px 20px",
+                  background: "#1976d2",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontWeight: 700,
+                }}
+              >
+                Sí
+              </button>
+              <button
+                onClick={() => {
+                  setAcumularPuntosChoice(false);
+                  setShowPuntosFlowModal(false);
+                  setShowClienteModal(true);
+                }}
+                style={{
+                  padding: "10px 20px",
+                  background: "#9e9e9e",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontWeight: 700,
+                }}
+              >
+                No
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -8016,13 +8564,25 @@ export default function PuntoDeVentaView({
               Nombre del Cliente
             </h3>
             <input
-              ref={(el) => el?.focus()}
+              ref={(el) => {
+                nombreClienteInputRef.current = el;
+              }}
               type="text"
               placeholder="Ingrese el nombre del cliente"
               value={nombreCliente}
               onChange={(e) => setNombreCliente(e.target.value.toUpperCase())}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && nombreCliente.trim()) {
+                  // Si se eligió acumular puntos, identidad es requerida
+                  if (
+                    acumularPuntosChoice === true &&
+                    !identidadClienteParaPuntos.trim()
+                  ) {
+                    alert(
+                      "Ingrese la identidad del cliente para acumular puntos.",
+                    );
+                    return;
+                  }
                   // preventDefault evita que el evento llegue al botón
                   // "Continuar" si tiene el foco, disparando dos veces
                   e.preventDefault();
@@ -8038,6 +8598,39 @@ export default function PuntoDeVentaView({
                 marginBottom: 18,
               }}
             />
+            {acumularPuntosChoice === true && (
+              <div style={{ marginTop: 6 }}>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: 6,
+                    color: theme === "lite" ? "#333" : "#f5f5f5",
+                  }}
+                >
+                  Identidad (requerido para puntos)
+                </label>
+                <input
+                  ref={(el) => {
+                    identidadClienteInputRef.current = el;
+                  }}
+                  type="text"
+                  placeholder="08011999..."
+                  value={identidadClienteParaPuntos}
+                  onChange={(e) => {
+                    const onlyDigits = String(e.target.value || "")
+                      .replace(/\D/g, "")
+                      .slice(0, 14);
+                    setIdentidadClienteParaPuntos(onlyDigits);
+                  }}
+                  style={{
+                    padding: "8px",
+                    borderRadius: 8,
+                    border: "1px solid #ccc",
+                    width: "100%",
+                  }}
+                />
+              </div>
+            )}
             <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
               <button
                 onClick={() => setShowClienteModal(false)}
@@ -8057,6 +8650,15 @@ export default function PuntoDeVentaView({
               <button
                 onClick={() => {
                   if (nombreCliente.trim()) {
+                    if (
+                      acumularPuntosChoice === true &&
+                      !identidadClienteParaPuntos.trim()
+                    ) {
+                      alert(
+                        "Ingrese la identidad del cliente para acumular puntos.",
+                      );
+                      return;
+                    }
                     setShowClienteModal(false);
                     continuarFlujoDocumento();
                   }
@@ -11069,6 +11671,37 @@ export default function PuntoDeVentaView({
               }}
             />
 
+            {/* Botón siempre visible: Inventario de bebidas */}
+            <div
+              style={{
+                marginBottom: 12,
+                display: "flex",
+                justifyContent: "flex-start",
+              }}
+            >
+              <button
+                className="menu-btn"
+                onClick={() => {
+                  setShowInventarioBebidasView(true);
+                  closeMenuAnimated();
+                }}
+                style={{
+                  background: "linear-gradient(135deg, #e8f0ff, #e6eefc)",
+                  color: "#1e40af",
+                  border: "1px solid #c7d2fe",
+                  padding: "10px 14px",
+                }}
+              >
+                <span className="btn-icon">🍾</span>
+                <span>
+                  <div className="btn-label">Inventario de bebidas</div>
+                  <div className="btn-desc">
+                    Consultar y registrar movimientos
+                  </div>
+                </span>
+              </button>
+            </div>
+
             {/* Grid de botones */}
             <div
               style={{
@@ -11119,6 +11752,27 @@ export default function PuntoDeVentaView({
                     <span>
                       <div className="btn-label">Aclaraciones</div>
                       <div className="btn-desc">Cierres del mes</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={() => {
+                      setShowInventarioBebidasView(true);
+                      closeMenuAnimated();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #e8f0ff, #e6eefc)",
+                      color: "#1e40af",
+                      border: "1px solid #c7d2fe",
+                      animationDelay: "120ms",
+                    }}
+                  >
+                    <span className="btn-icon">🍾</span>
+                    <span>
+                      <div className="btn-label">Inventario de bebidas</div>
+                      <div className="btn-desc">
+                        Consultar y registrar movimientos
+                      </div>
                     </span>
                   </button>
                 </>
@@ -11385,26 +12039,7 @@ export default function PuntoDeVentaView({
                       <div className="btn-desc">Recibir pago de cliente</div>
                     </span>
                   </button>
-                  <button
-                    className="menu-btn"
-                    onClick={async () => {
-                      closeMenuAnimated();
-                      setShowInsumosBebidasDiaModal(true);
-                      await cargarInsumosBebidasDelDia("insumos");
-                    }}
-                    style={{
-                      background: "linear-gradient(135deg, #ecfeff, #cffafe)",
-                      color: "#155e75",
-                      border: "1px solid #67e8f9",
-                      animationDelay: "410ms",
-                    }}
-                  >
-                    <span className="btn-icon">📦</span>
-                    <span>
-                      <div className="btn-label">Insumos y bebidas del día</div>
-                      <div className="btn-desc">Salida inventario + stock</div>
-                    </span>
-                  </button>
+
                   <button
                     className="menu-btn"
                     onClick={async () => {
@@ -11422,6 +12057,45 @@ export default function PuntoDeVentaView({
                     <span className="btn-icon">🍽</span>
                     <span>
                       <div className="btn-label">Platillos</div>
+                      <div className="btn-desc">Ventas del día</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
+                      setShowPuntosModal(true);
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #f0fdf4, #dcfce7)",
+                      color: "#14532d",
+                      border: "1px solid #4ade80",
+                      animationDelay: "417ms",
+                    }}
+                  >
+                    <span className="btn-icon">🎁</span>
+                    <span>
+                      <div className="btn-label">Puntos Cliente</div>
+                      <div className="btn-desc">Consultar y canjear puntos</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
+                      setShowBebidasModal(true);
+                      await cargarBebidasPorPeriodo();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #fff7f5, #fff1f2)",
+                      color: "#7f1d1d",
+                      border: "1px solid #fca5a5",
+                      animationDelay: "416ms",
+                    }}
+                  >
+                    <span className="btn-icon">🥤</span>
+                    <span>
+                      <div className="btn-label">Bebidas</div>
                       <div className="btn-desc">Ventas del día</div>
                     </span>
                   </button>
@@ -11682,6 +12356,40 @@ export default function PuntoDeVentaView({
         rows={platillosPeriodoRows}
         onRefresh={cargarPlatillosPorPeriodo}
       />
+
+      <PlatillosPeriodoModal
+        isOpen={showBebidasModal}
+        onClose={() => setShowBebidasModal(false)}
+        loading={bebidasPeriodoLoading}
+        rows={bebidasPeriodoRows}
+        onRefresh={cargarBebidasPorPeriodo}
+        title={"Reporte de Bebidas"}
+        itemLabel={"Bebida"}
+        ticketTitle={"CORTE DE BEBIDAS"}
+      />
+
+      <PuntosClienteModal
+        isOpen={showPuntosModal}
+        onClose={() => setShowPuntosModal(false)}
+        fetchPuntos={fetchPuntosCliente}
+        fetchProductosComida={fetchProductosComida}
+        onCanjear={handleCanjearPorPuntos}
+      />
+
+      {showInventarioBebidasView && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "#fff",
+            zIndex: 160000,
+          }}
+        >
+          <InventarioBebidasView
+            onBack={() => setShowInventarioBebidasView(false)}
+          />
+        </div>
+      )}
 
       {/* Modal Historial de Ventas */}
       {showHistorialVentas &&
