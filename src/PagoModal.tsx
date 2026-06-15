@@ -33,6 +33,10 @@ export default function PaymentModal({
   onPagoConfirmado,
   exchangeRate = 25.0,
   theme = "lite",
+  clientePuntosActuales,
+  puntosAAcumular,
+  puntosCargando,
+  puntosError,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -40,6 +44,10 @@ export default function PaymentModal({
   onPagoConfirmado?: (p: PaymentPayload) => void;
   exchangeRate?: number;
   theme?: "lite" | "dark";
+  clientePuntosActuales?: number | null;
+  puntosAAcumular?: number;
+  puntosCargando?: boolean;
+  puntosError?: string;
 }) {
   const [pagos, setPagos] = useState<PagoItem[]>([]);
   const [tipo, setTipo] = useState<
@@ -422,6 +430,91 @@ export default function PaymentModal({
                 {currency(totalPedido)}
               </div>
             </div>
+            {typeof puntosAAcumular !== "undefined" &&
+              (puntosCargando || puntosError || puntosAAcumular > 0) && (
+                <div
+                  style={{
+                    gridColumn: "1 / -1",
+                    marginBottom: 14,
+                    padding: 12,
+                    borderRadius: 10,
+                    background:
+                      theme === "lite" ? "#f7f9fc" : "rgba(255,255,255,0.05)",
+                    border:
+                      theme === "lite"
+                        ? "1px solid #e2e8f0"
+                        : "1px solid #334155",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 700,
+                      marginBottom: 8,
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                    }}
+                  >
+                    Puntos del cliente
+                  </div>
+                  {puntosCargando ? (
+                    <div style={{ color: "#2563eb" }}>
+                      Consultando puntos...
+                    </div>
+                  ) : puntosError ? (
+                    <div style={{ color: "#dc2626" }}>{puntosError}</div>
+                  ) : clientePuntosActuales !== null ? (
+                    <>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginBottom: 4,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span>Puntos actuales</span>
+                        <span>{clientePuntosActuales} pts</span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginBottom: 4,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span>Puntos a acumular</span>
+                        <span>{puntosAAcumular} pts</span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginTop: 6,
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color: "#15803d",
+                        }}
+                      >
+                        <span>Puntos totales</span>
+                        <span>
+                          {(clientePuntosActuales ?? 0) +
+                            (puntosAAcumular ?? 0)}{" "}
+                          pts
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div
+                      style={{
+                        color: theme === "lite" ? "#475569" : "#cbd5e1",
+                      }}
+                    >
+                      Puntos a acumular: {puntosAAcumular} pts
+                    </div>
+                  )}
+                </div>
+              )}
             {/* izquierda: mini tabla de pagos y totales */}
             <div style={{ color: theme === "lite" ? "#111" : "#f5f5f5" }}>
               Pedido

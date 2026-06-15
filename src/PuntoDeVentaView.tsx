@@ -2100,6 +2100,12 @@ export default function PuntoDeVentaView({
   >(null);
   const [identidadClienteParaPuntos, setIdentidadClienteParaPuntos] =
     useState<string>("");
+  const [clientePuntosActuales, setClientePuntosActuales] = useState<
+    number | null
+  >(null);
+  const [clientePuntosCargando, setClientePuntosCargando] =
+    useState<boolean>(false);
+  const [clientePuntosError, setClientePuntosError] = useState<string>("");
   const [pointsPerPlatillo, setPointsPerPlatillo] = useState<number>(7);
   const nombreClienteInputRef = useRef<HTMLInputElement | null>(null);
   const identidadClienteInputRef = useRef<HTMLInputElement | null>(null);
@@ -2767,6 +2773,39 @@ export default function PuntoDeVentaView({
   }, [showClienteModal, acumularPuntosChoice]);
 
   useEffect(() => {
+    const actualizarPuntosCliente = async () => {
+      const identidad = identidadClienteParaPuntos.trim();
+      if (showPagoModal && acumularPuntosChoice === true && identidad !== "") {
+        setClientePuntosCargando(true);
+        setClientePuntosError("");
+        setClientePuntosActuales(null);
+        try {
+          const cliente = await fetchPuntosCliente(identidad);
+          if (cliente) {
+            setClientePuntosActuales(Number(cliente.puntos || 0));
+          } else {
+            setClientePuntosActuales(null);
+            setClientePuntosError(
+              "Cliente no encontrado o sin puntos registrados.",
+            );
+          }
+        } catch (err) {
+          setClientePuntosActuales(null);
+          setClientePuntosError("No se pudo consultar puntos del cliente.");
+        } finally {
+          setClientePuntosCargando(false);
+        }
+      } else {
+        setClientePuntosCargando(false);
+        setClientePuntosError("");
+        setClientePuntosActuales(null);
+      }
+    };
+
+    actualizarPuntosCliente();
+  }, [showPagoModal, acumularPuntosChoice, identidadClienteParaPuntos]);
+
+  useEffect(() => {
     if (!posConfig.descuento_habilitado) {
       setDescuentosProductos(new Set());
     }
@@ -2883,6 +2922,14 @@ export default function PuntoDeVentaView({
       } catch {}
     }
   }, []);
+
+  const puntosAAcumularVenta =
+    (pointsPerPlatillo || 7) *
+    seleccionados.reduce(
+      (s: number, p: any) =>
+        s + (p.tipo === "comida" ? Number(p.cantidad || 0) : 0),
+      0,
+    );
 
   // ── Descuentos por producto tipo 'comida' ──────────────────────────────────
   // Set de IDs de productos en la orden que tienen descuento aplicado
@@ -5210,6 +5257,10 @@ export default function PuntoDeVentaView({
         }
         exchangeRate={tasaCambio}
         theme={theme}
+        clientePuntosActuales={clientePuntosActuales}
+        puntosAAcumular={puntosAAcumularVenta}
+        puntosCargando={clientePuntosCargando}
+        puntosError={clientePuntosError}
         onPagoConfirmado={async (paymentData) => {
           // ── Guard contra doble submit ──────────────────────────────
           if (isSubmittingRef.current) {
@@ -6316,6 +6367,26 @@ export default function PuntoDeVentaView({
                 `
                 }
                 
+                ${
+                  acumularPuntosChoice === true &&
+                  identidadClienteParaPuntos.trim() !== ""
+                    ? `
+                <div style='font-size:14px; margin-top:8px; padding-top:8px; border-top:1px dashed #000;'>
+                  ${
+                    clientePuntosActuales !== null
+                      ? `<div style='display:flex; justify-content:space-between; margin-bottom:4px;'><span>Puntos actuales:</span><span>${clientePuntosActuales} pts</span></div>`
+                      : `<div style='display:flex; justify-content:space-between; margin-bottom:4px; color:#555;'><span>Puntos actuales:</span><span>—</span></div>`
+                  }
+                  <div style='display:flex; justify-content:space-between; margin-bottom:4px;'><span>Puntos a acumular:</span><span>${puntosAAcumularVenta} pts</span></div>
+                  ${
+                    clientePuntosActuales !== null
+                      ? `<div style='display:flex; justify-content:space-between; font-weight:700; color:#15803d;'><span>Puntos totales:</span><span>${clientePuntosActuales + puntosAAcumularVenta} pts</span></div>`
+                      : ""
+                  }
+                </div>
+                `
+                    : ""
+                }
                 ${pagosHtml}
                 
                 <!-- Mensaje de Agradecimiento -->
@@ -7638,27 +7709,6 @@ export default function PuntoDeVentaView({
                       }}
                     >
                       💳 Facturar a Crédito
-                    </button>
-                    <button
-                      className="menu-btn"
-                      onClick={() => {
-                        setShowInventarioBebidasView(true);
-                        closeMenuAnimated();
-                      }}
-                      style={{
-                        background: "linear-gradient(135deg, #e8f0ff, #e6eefc)",
-                        color: "#1e40af",
-                        border: "1px solid #c7d2fe",
-                        animationDelay: "160ms",
-                      }}
-                    >
-                      <span className="btn-icon">🍾</span>
-                      <span>
-                        <div className="btn-label">Inventario de bebidas</div>
-                        <div className="btn-desc">
-                          Consultar y registrar movimientos
-                        </div>
-                      </span>
                     </button>
                   </>
                 )}
