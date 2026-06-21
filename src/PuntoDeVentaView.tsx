@@ -7356,87 +7356,127 @@ export default function PuntoDeVentaView({
                   key={p.id}
                   onClick={() => agregarProducto(p)}
                   style={{
-                    background: theme === "lite" ? "#fff" : "#333",
-                    borderRadius: 18,
-                    padding: 16,
+                    position: "relative",
+                    background:
+                      theme === "lite"
+                        ? "linear-gradient(180deg,#ffffff,#f7fbff)"
+                        : "#2b2b2b",
+                    borderRadius: 14,
+                    padding: 12,
                     boxShadow:
                       theme === "lite"
-                        ? "0 4px 16px rgba(0,0,0,0.12)"
-                        : "0 4px 16px #0008",
+                        ? "0 8px 28px rgba(16,24,40,0.08)"
+                        : "0 10px 30px rgba(0,0,0,0.6)",
                     cursor: "pointer",
                     display: "flex",
                     flexDirection: "column",
-                    alignItems: "center",
-                    transition:
-                      "transform 0.2s, background 0.3s', color 0.3s', box-shadow 0.3s', border 0.3s',",
-                    minHeight: 180,
-                    color: theme === "lite" ? "#222" : "#f5f5f5",
+                    alignItems: "stretch",
+                    transition: "transform 160ms ease, box-shadow 160ms ease",
+                    minHeight: 200,
+                    color: theme === "lite" ? "#111827" : "#f5f5f5",
+                    overflow: "hidden",
                   }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.transform = "scale(1.07)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.transform = "scale(1)")
-                  }
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-6px) scale(1.02)";
+                    e.currentTarget.style.boxShadow =
+                      theme === "lite"
+                        ? "0 18px 48px rgba(16,24,40,0.12)"
+                        : "0 20px 60px rgba(0,0,0,0.7)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0) scale(1)";
+                    e.currentTarget.style.boxShadow =
+                      theme === "lite"
+                        ? "0 8px 28px rgba(16,24,40,0.08)"
+                        : "0 10px 30px rgba(0,0,0,0.6)";
+                  }}
                 >
+                  {/* Price badge */}
                   <div
                     style={{
-                      width: "100%",
-                      display: "flex",
-                      justifyContent: "center",
-                      marginBottom: 12,
+                      position: "absolute",
+                      top: 12,
+                      left: 12,
+                      zIndex: 2,
+                      padding: "6px 10px",
+                      borderRadius: 12,
+                      fontWeight: 800,
+                      fontSize: 14,
+                      color: theme === "lite" ? "#0b1220" : "#fff",
+                      background:
+                        theme === "lite"
+                          ? "linear-gradient(90deg,#ffd86b,#ffb347)"
+                          : "linear-gradient(90deg,#1976d2,#1565c0)",
+                      boxShadow:
+                        theme === "lite"
+                          ? "0 6px 18px rgba(25,118,210,0.06)"
+                          : "0 8px 26px rgba(0,0,0,0.6)",
                     }}
+                    aria-hidden
                   >
-                    <div
-                      style={{
-                        background: theme === "lite" ? "#fff7cc" : "#2b2b2b",
-                        color: theme === "lite" ? "#3b2f00" : "#f5f5f5",
-                        padding: "6px 12px",
-                        borderRadius: 999,
-                        fontWeight: 800,
-                        boxShadow:
-                          theme === "lite"
-                            ? "0 6px 18px rgba(251,192,45,0.12)"
-                            : "0 6px 18px rgba(0,0,0,0.6)",
-                        fontSize: 18,
-                      }}
-                    >
-                      L {p.precio.toFixed(2)}
-                    </div>
+                    L {p.precio.toFixed(2)}
                   </div>
 
-                  {p.imagen && (
-                    <img
-                      src={p.imagen}
-                      alt={p.nombre}
+                  {/* Image */}
+                  {p.imagen ? (
+                    <div
                       style={{
-                        width: "100%",
                         height: 140,
-                        objectFit: "cover",
-                        borderRadius: 12,
+                        borderRadius: 10,
+                        overflow: "hidden",
                         marginBottom: 12,
-                        boxShadow:
-                          theme === "lite"
-                            ? "0 8px 24px rgba(16,24,40,0.08)"
-                            : "0 8px 24px rgba(0,0,0,0.6)",
+                        background: theme === "lite" ? "#fff" : "#1f1f1f",
                       }}
-                    />
+                    >
+                      <img
+                        src={p.imagen}
+                        alt={p.nombre}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        height: 140,
+                        borderRadius: 10,
+                        overflow: "hidden",
+                        marginBottom: 12,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: theme === "lite" ? "#f3f6fb" : "#222",
+                        color: theme === "lite" ? "#94a3b8" : "#9ca3af",
+                      }}
+                    >
+                      Sin imagen
+                    </div>
                   )}
 
+                  {/* Name */}
                   <div style={{ textAlign: "center", width: "100%" }}>
                     <div
                       style={{
                         fontWeight: 800,
-                        fontSize: 18,
-                        color: theme === "lite" ? "#111827" : "#f5f5f5",
+                        fontSize: 16,
+                        color: theme === "lite" ? "#0f1724" : "#f5f5f5",
                         marginBottom: 6,
-                        lineHeight: 1.1,
+                        lineHeight: 1.15,
+                        minHeight: 44,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "0 6px",
+                        textAlign: "center",
                       }}
                     >
                       {p.nombre}
                     </div>
                   </div>
-                  {/* precio mostrado arriba en badge; eliminado aquí para evitar duplicado */}
                 </div>
               ))}
             </div>
