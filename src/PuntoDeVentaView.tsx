@@ -5192,55 +5192,8 @@ export default function PuntoDeVentaView({
         >
           ☰ Menú
         </button>
-        {/* Chips de conteo del turno */}
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            marginTop: 6,
-            justifyContent: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          {pedidosPendientesCount > 0 && (
-            <span
-              style={{
-                background: "#1239e7",
-                color: "#fff",
-                borderRadius: 12,
-                padding: "2px 10px",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              📦 {pedidosPendientesCount}
-            </span>
-          )}
-          <span
-            style={{
-              background: "#388e3c",
-              color: "#fff",
-              borderRadius: 12,
-              padding: "2px 10px",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
-            🍽 {platillosTurno}
-          </span>
-          <span
-            style={{
-              background: "#1976d2",
-              color: "#fff",
-              borderRadius: 12,
-              padding: "2px 10px",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
-            🥤 {bebidasTurno}
-          </span>
-        </div>
+        {/* Chips de conteo del turno (ocultos) */}
+        <div style={{ display: "none" }} />
       </div>
 
       {/* Modal de pago (fuera del bloque del botón) */}
