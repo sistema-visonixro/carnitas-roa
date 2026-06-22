@@ -5320,6 +5320,25 @@ export default function PuntoDeVentaView({
         }}
       >
         <button
+          onClick={() => setShowPedidosModal(true)}
+          title="Pedidos a domicilio (últimos)"
+          style={{
+            background: "#16a34a",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 14px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px #0004",
+            marginRight: 10,
+          }}
+        >
+          Domicilio
+          {pedidosPendientesCount > 0 ? ` (${pedidosPendientesCount})` : ""}
+        </button>
+        <button
           onClick={() => openMenu()}
           title="Abrir menú"
           style={{
@@ -7526,72 +7545,117 @@ export default function PuntoDeVentaView({
                   key={p.id}
                   onClick={() => agregarProducto(p)}
                   style={{
-                    background: theme === "lite" ? "#fff" : "#333",
-                    borderRadius: 18,
-                    padding: 16,
+                    background: theme === "lite" ? "#fff" : "#1f2937",
+                    border:
+                      theme === "lite"
+                        ? "1px solid #e2e8f0"
+                        : "1px solid #334155",
+                    borderRadius: 22,
+                    padding: 18,
                     boxShadow:
                       theme === "lite"
-                        ? "0 4px 16px rgba(0,0,0,0.12)"
-                        : "0 4px 16px #0008",
+                        ? "0 8px 24px rgba(15,23,42,0.08)"
+                        : "0 8px 28px rgba(0,0,0,0.45)",
                     cursor: "pointer",
                     display: "flex",
                     flexDirection: "column",
-                    alignItems: "center",
+                    alignItems: "stretch",
                     transition:
-                      "transform 0.2s, background 0.3s', color 0.3s', box-shadow 0.3s', border 0.3s',",
-                    minHeight: 180,
-                    color: theme === "lite" ? "#222" : "#f5f5f5",
+                      "transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease",
+                    minHeight: 220,
+                    color: theme === "lite" ? "#111827" : "#f5f5f5",
                   }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.transform = "scale(1.07)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.transform = "scale(1)")
-                  }
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "scale(1.03)";
+                    e.currentTarget.style.boxShadow =
+                      theme === "lite"
+                        ? "0 12px 32px rgba(15,23,42,0.14)"
+                        : "0 12px 36px rgba(0,0,0,0.55)";
+                    e.currentTarget.style.borderColor =
+                      theme === "lite" ? "#cbd5e1" : "#475569";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                    e.currentTarget.style.boxShadow =
+                      theme === "lite"
+                        ? "0 4px 16px rgba(0,0,0,0.12)"
+                        : "0 4px 16px #0008";
+                    e.currentTarget.style.borderColor =
+                      theme === "lite" ? "#e2e8f0" : "#334155";
+                  }}
                 >
                   <div
                     style={{
-                      width: "100%",
                       display: "flex",
-                      justifyContent: "center",
+                      justifyContent: "space-between",
+                      alignItems: "center",
                       marginBottom: 12,
                     }}
                   >
                     <div
                       style={{
-                        background: theme === "lite" ? "#fff7cc" : "#2b2b2b",
-                        color: theme === "lite" ? "#3b2f00" : "#f5f5f5",
-                        padding: "6px 12px",
                         borderRadius: 999,
-                        fontWeight: 800,
+                        padding: "8px 14px",
+                        background: theme === "lite" ? "#feffee" : "#111827",
+                        color: theme === "lite" ? "#1e40af" : "#fef5bf",
+                        fontWeight: 700,
+                        fontSize: 16,
                         boxShadow:
                           theme === "lite"
-                            ? "0 6px 18px rgba(251,192,45,0.12)"
-                            : "0 6px 18px rgba(0,0,0,0.6)",
-                        fontSize: 18,
+                            ? "inset 0 1px 0 rgba(255,255,255,0.75)"
+                            : "inset 0 1px 0 rgba(255,255,255,0.08)",
                       }}
                     >
                       L {p.precio.toFixed(2)}
                     </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme === "lite" ? "#64748b" : "#94a3b8",
+                        fontWeight: 600,
+                      }}
+                    ></div>
                   </div>
 
-                  {p.imagen && (
-                    <img
-                      src={p.imagen}
-                      alt={p.nombre}
-                      style={{
-                        width: "100%",
-                        height: 140,
-                        objectFit: "cover",
-                        borderRadius: 12,
-                        marginBottom: 12,
-                        boxShadow:
-                          theme === "lite"
-                            ? "0 8px 24px rgba(16,24,40,0.08)"
-                            : "0 8px 24px rgba(0,0,0,0.6)",
-                      }}
-                    />
-                  )}
+                  <div
+                    style={{
+                      width: "100%",
+                      height: 150,
+                      borderRadius: 16,
+                      overflow: "hidden",
+                      marginBottom: 14,
+                      background: theme === "lite" ? "#f8fafc" : "#1b2632",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {p.imagen ? (
+                      <img
+                        src={p.imagen}
+                        alt={p.nombre}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: theme === "lite" ? "#94a3b8" : "#64748b",
+                          fontSize: 24,
+                        }}
+                      >
+                        📦
+                      </div>
+                    )}
+                  </div>
 
                   <div style={{ textAlign: "center", width: "100%" }}>
                     <div
@@ -7599,14 +7663,14 @@ export default function PuntoDeVentaView({
                         fontWeight: 800,
                         fontSize: 18,
                         color: theme === "lite" ? "#111827" : "#f5f5f5",
-                        marginBottom: 6,
-                        lineHeight: 1.1,
+                        marginBottom: 4,
+                        lineHeight: 1.2,
+                        minHeight: 48,
                       }}
                     >
                       {p.nombre}
                     </div>
                   </div>
-                  {/* precio mostrado arriba en badge; eliminado aquí para evitar duplicado */}
                 </div>
               ))}
             </div>
@@ -12620,7 +12684,7 @@ export default function PuntoDeVentaView({
                 <div style={{ fontWeight: 800, marginBottom: 8 }}>
                   Nuevo chequeo
                 </div>
-                <div style={{ marginBottom: 8 }}>Valor actual (supabase):</div>
+                <div style={{ marginBottom: 8 }}>Valor de efectivo actual:</div>
                 <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>
                   {chequeoActual === null
                     ? chequeoLoading
@@ -12629,7 +12693,7 @@ export default function PuntoDeVentaView({
                     : `${chequeoActual.toFixed(2)} LPS`}
                 </div>
                 <div style={{ marginBottom: 8 }}>
-                  Valor registrado (contado en caja):
+                  Valor a registrar (contado en caja):
                 </div>
                 <input
                   type="number"
