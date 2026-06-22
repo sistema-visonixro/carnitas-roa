@@ -7597,7 +7597,7 @@ export default function PuntoDeVentaView({
                         borderRadius: 999,
                         padding: "8px 14px",
                         background: theme === "lite" ? "#feffee" : "#111827",
-                        color: theme === "lite" ? "#1e40af" : "#fef5bf",
+                        color: theme === "lite" ? "#1b2853" : "#f7b80b",
                         fontWeight: 700,
                         fontSize: 16,
                         boxShadow:
