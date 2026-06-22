@@ -3230,6 +3230,40 @@ export default function PuntoDeVentaView({
     setShowOptionsMenu(true);
   };
 
+  const openPedidosModal = async () => {
+    setShowPedidosModal(true);
+    let localesFormateados: any[] = [];
+
+    try {
+      const locales = await obtenerEnviosPendientes();
+      localesFormateados = locales.map((e: any) => ({
+        ...e,
+        id: `local-${e.id}`,
+        local_id: e.id,
+        __localPending: true,
+      }));
+    } catch (_localErr) {
+      // ignore local pending load errors
+    }
+
+    setPedidosList(localesFormateados);
+
+    try {
+      const { data, error } = await supabase
+        .from("pedidos_envio")
+        .select("*")
+        .eq("cajero_id", usuarioActual?.id)
+        .order("id", { ascending: false })
+        .limit(100);
+
+      if (!error && data) {
+        setPedidosList([...localesFormateados, ...data]);
+      }
+    } catch (_err) {
+      // ignore supabase load errors
+    }
+  };
+
   useEffect(() => {
     if (aperturaRegistrada) fetchConteoTurno();
   }, [aperturaRegistrada]);
@@ -5320,7 +5354,7 @@ export default function PuntoDeVentaView({
         }}
       >
         <button
-          onClick={() => setShowPedidosModal(true)}
+          onClick={openPedidosModal}
           title="Pedidos a domicilio (últimos)"
           style={{
             background: "#16a34a",
