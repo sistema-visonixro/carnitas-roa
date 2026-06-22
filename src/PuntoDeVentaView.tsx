@@ -2961,8 +2961,9 @@ export default function PuntoDeVentaView({
   );
 
   // Estados conteo del turno (chips del header)
-  const [platillosTurno, setPlatillosTurno] = useState(0);
-  const [bebidasTurno, setBebidasTurno] = useState(0);
+  // Solo usamos los setters en este componente; evitar TS6133 por variables no leídas.
+  const [, setPlatillosTurno] = useState(0);
+  const [, setBebidasTurno] = useState(0);
 
   // Estados para control de apertura
   const [aperturaRegistrada, setAperturaRegistrada] = useState<boolean | null>(
