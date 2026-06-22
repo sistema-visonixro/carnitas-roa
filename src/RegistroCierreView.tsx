@@ -336,13 +336,19 @@ export default function RegistroCierreView({
                 nombre: String(r.nombre_producto || r.nombre || "Bebida"),
                 vendido: Number(r.vendidos_dia) || 0,
               }))
-              .sort((a, b) => b.vendido - a.vendido || a.nombre.localeCompare(b.nombre));
+              .sort(
+                (a, b) =>
+                  b.vendido - a.vendido || a.nombre.localeCompare(b.nombre),
+              );
 
             return rows;
           }
         } catch (e) {
           // Si falla la consulta a la vista, caerá al fallback de movimientos
-          console.warn("[RegistroCierre] v_bebidas_periodos falló, usando fallback:", e);
+          console.warn(
+            "[RegistroCierre] v_bebidas_periodos falló, usando fallback:",
+            e,
+          );
         }
       }
 

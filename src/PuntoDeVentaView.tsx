@@ -229,6 +229,13 @@ export default function PuntoDeVentaView({
   const [bebidasPeriodoRows, setBebidasPeriodoRows] = useState<
     PlatilloPeriodoRow[]
   >([]);
+  // Chequeo de efectivo
+  const [showChequeoModal, setShowChequeoModal] = useState(false);
+  const [chequeoLoading, setChequeoLoading] = useState(false);
+  const [chequeosHistory, setChequeosHistory] = useState<any[]>([]);
+  const [chequeoRegistrado, setChequeoRegistrado] = useState<string>("");
+  const [chequeoActual, setChequeoActual] = useState<number | null>(null);
+  const [chequeoAlertOn, setChequeoAlertOn] = useState(false);
   // Modal DATOS DE FACTURACIÓN
   const [showDatosFactModal, setShowDatosFactModal] = useState(false);
   const [caiFactData, setCaiFactData] = useState<any>(null);
@@ -622,6 +629,142 @@ export default function PuntoDeVentaView({
 
     return data?.[0] ?? null;
   }
+
+  // ── Chequeo de efectivo: obtener 'actual' desde v_resumen_turnos
+  async function fetchActualEfectivo(): Promise<number | null> {
+    try {
+      if (!usuarioActual?.id) return null;
+      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      if (!apertura) return null;
+      const { data, error } = await supabase
+        .from("v_resumen_turnos")
+        .select("efectivo_bruto, cambio_devuelto")
+        .eq("apertura_id", apertura.id)
+        .limit(1);
+      if (error || !data || !data[0]) return null;
+      const row: any = data[0];
+      const efectivo =
+        Number(row.efectivo_bruto || 0) - Number(row.cambio_devuelto || 0);
+      return Number(efectivo.toFixed(2));
+    } catch (err) {
+      console.warn("fetchActualEfectivo err", err);
+      return null;
+    }
+  }
+
+  function formatDateTime12(value: any) {
+    if (!value) return "";
+    const d = new Date(value);
+    try {
+      const datePart = d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      });
+      const timePart = d
+        .toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+        .toLowerCase();
+      return `${datePart} ${timePart}`;
+    } catch {
+      return d.toLocaleString();
+    }
+  }
+
+  async function fetchChequeosHistory() {
+    setChequeoLoading(true);
+    try {
+      if (!usuarioActual?.id) {
+        setChequeosHistory([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("chequeos_efectivo")
+        .select("*")
+        .eq("cajero_id", usuarioActual.id)
+        .order("fecha_utc", { ascending: false })
+        .limit(200);
+      if (error) {
+        console.warn("Error leyendo chequeos_efectivo:", error);
+        setChequeosHistory([]);
+        return;
+      }
+      setChequeosHistory(data || []);
+    } finally {
+      setChequeoLoading(false);
+    }
+  }
+
+  async function saveChequeo() {
+    if (!usuarioActual?.id) return alert("Usuario no identificado");
+    setChequeoLoading(true);
+    try {
+      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      const registro = {
+        cajero_id: usuarioActual.id,
+        cajero_nombre: usuarioActual.nombre || "",
+        caja: apertura?.caja || "",
+        apertura_id: apertura?.id ?? null,
+        registrado: Number(parseFloat(chequeoRegistrado || "0") || 0),
+        actual: chequeoActual ?? 0,
+        notas: null,
+        metadata: {},
+      } as any;
+
+      const { error } = await supabase
+        .from("chequeos_efectivo")
+        .insert([registro])
+        .select()
+        .limit(1);
+      if (error) throw error;
+      alert("Chequeo guardado correctamente");
+      setChequeoRegistrado("");
+      await fetchChequeosHistory();
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Error guardando chequeo");
+    } finally {
+      setChequeoLoading(false);
+    }
+  }
+
+  // programar alertas cada 2 horas desde la apertura (visual)
+  useEffect(() => {
+    let timerId: any = null;
+    let intervalId: any = null;
+    async function schedule() {
+      if (!usuarioActual?.id) return;
+      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      if (!apertura) return;
+      const fecha = apertura.fecha_apertura ?? apertura.fecha;
+      if (!fecha) return;
+      const tsAp = new Date(fecha).getTime();
+      const now = Date.now();
+      const hoursSince = Math.floor((now - tsAp) / (1000 * 60 * 60));
+      const nextMultiple = Math.floor(hoursSince / 2) * 2 + 2;
+      const nextTs = tsAp + nextMultiple * 60 * 60 * 1000;
+      const delay = Math.max(0, nextTs - now);
+      timerId = setTimeout(() => {
+        setChequeoAlertOn(true);
+        setTimeout(() => setChequeoAlertOn(false), 12000);
+        intervalId = setInterval(
+          () => {
+            setChequeoAlertOn(true);
+            setTimeout(() => setChequeoAlertOn(false), 12000);
+          },
+          2 * 60 * 60 * 1000,
+        );
+      }, delay);
+    }
+    schedule();
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [usuarioActual]);
 
   async function obtenerPrecioDolarSupabase() {
     const { data, error } = await supabase
@@ -5193,6 +5336,32 @@ export default function PuntoDeVentaView({
         >
           ☰ Menú
         </button>
+        <button
+          onClick={async () => {
+            setShowChequeoModal(true);
+            setChequeoLoading(true);
+            const actual = await fetchActualEfectivo();
+            setChequeoActual(actual);
+            await fetchChequeosHistory();
+            setChequeoLoading(false);
+          }}
+          title="Chequeo de Efectivo"
+          style={{
+            marginLeft: 10,
+            background: chequeoAlertOn ? "#f59e0b" : "#0b74de",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 14px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px #0003",
+            animation: chequeoAlertOn ? "pulse 1s ease-in-out" : "none",
+          }}
+        >
+          {chequeoAlertOn ? "¡Chequeo!" : "Chequeo de Efectivo"}
+        </button>
         {/* Chips de conteo del turno (ocultos) */}
         <div style={{ display: "none" }} />
       </div>
@@ -7357,127 +7526,87 @@ export default function PuntoDeVentaView({
                   key={p.id}
                   onClick={() => agregarProducto(p)}
                   style={{
-                    position: "relative",
-                    background:
-                      theme === "lite"
-                        ? "linear-gradient(180deg,#ffffff,#f7fbff)"
-                        : "#2b2b2b",
-                    borderRadius: 14,
-                    padding: 12,
+                    background: theme === "lite" ? "#fff" : "#333",
+                    borderRadius: 18,
+                    padding: 16,
                     boxShadow:
                       theme === "lite"
-                        ? "0 8px 28px rgba(16,24,40,0.08)"
-                        : "0 10px 30px rgba(0,0,0,0.6)",
+                        ? "0 4px 16px rgba(0,0,0,0.12)"
+                        : "0 4px 16px #0008",
                     cursor: "pointer",
                     display: "flex",
                     flexDirection: "column",
-                    alignItems: "stretch",
-                    transition: "transform 160ms ease, box-shadow 160ms ease",
-                    minHeight: 200,
-                    color: theme === "lite" ? "#111827" : "#f5f5f5",
-                    overflow: "hidden",
+                    alignItems: "center",
+                    transition:
+                      "transform 0.2s, background 0.3s', color 0.3s', box-shadow 0.3s', border 0.3s',",
+                    minHeight: 180,
+                    color: theme === "lite" ? "#222" : "#f5f5f5",
                   }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "translateY(-6px) scale(1.02)";
-                    e.currentTarget.style.boxShadow =
-                      theme === "lite"
-                        ? "0 18px 48px rgba(16,24,40,0.12)"
-                        : "0 20px 60px rgba(0,0,0,0.7)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "translateY(0) scale(1)";
-                    e.currentTarget.style.boxShadow =
-                      theme === "lite"
-                        ? "0 8px 28px rgba(16,24,40,0.08)"
-                        : "0 10px 30px rgba(0,0,0,0.6)";
-                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.transform = "scale(1.07)")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.transform = "scale(1)")
+                  }
                 >
-                  {/* Price badge */}
                   <div
                     style={{
-                      position: "absolute",
-                      top: 12,
-                      left: 12,
-                      zIndex: 2,
-                      padding: "6px 10px",
-                      borderRadius: 12,
-                      fontWeight: 800,
-                      fontSize: 14,
-                      color: theme === "lite" ? "#0b1220" : "#fff",
-                      background:
-                        theme === "lite"
-                          ? "linear-gradient(90deg,#ffd86b,#ffb347)"
-                          : "linear-gradient(90deg,#1976d2,#1565c0)",
-                      boxShadow:
-                        theme === "lite"
-                          ? "0 6px 18px rgba(25,118,210,0.06)"
-                          : "0 8px 26px rgba(0,0,0,0.6)",
+                      width: "100%",
+                      display: "flex",
+                      justifyContent: "center",
+                      marginBottom: 12,
                     }}
-                    aria-hidden
                   >
-                    L {p.precio.toFixed(2)}
+                    <div
+                      style={{
+                        background: theme === "lite" ? "#fff7cc" : "#2b2b2b",
+                        color: theme === "lite" ? "#3b2f00" : "#f5f5f5",
+                        padding: "6px 12px",
+                        borderRadius: 999,
+                        fontWeight: 800,
+                        boxShadow:
+                          theme === "lite"
+                            ? "0 6px 18px rgba(251,192,45,0.12)"
+                            : "0 6px 18px rgba(0,0,0,0.6)",
+                        fontSize: 18,
+                      }}
+                    >
+                      L {p.precio.toFixed(2)}
+                    </div>
                   </div>
 
-                  {/* Image */}
-                  {p.imagen ? (
-                    <div
+                  {p.imagen && (
+                    <img
+                      src={p.imagen}
+                      alt={p.nombre}
                       style={{
+                        width: "100%",
                         height: 140,
-                        borderRadius: 10,
-                        overflow: "hidden",
+                        objectFit: "cover",
+                        borderRadius: 12,
                         marginBottom: 12,
-                        background: theme === "lite" ? "#fff" : "#1f1f1f",
+                        boxShadow:
+                          theme === "lite"
+                            ? "0 8px 24px rgba(16,24,40,0.08)"
+                            : "0 8px 24px rgba(0,0,0,0.6)",
                       }}
-                    >
-                      <img
-                        src={p.imagen}
-                        alt={p.nombre}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        height: 140,
-                        borderRadius: 10,
-                        overflow: "hidden",
-                        marginBottom: 12,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: theme === "lite" ? "#f3f6fb" : "#222",
-                        color: theme === "lite" ? "#94a3b8" : "#9ca3af",
-                      }}
-                    >
-                      Sin imagen
-                    </div>
+                    />
                   )}
 
-                  {/* Name */}
                   <div style={{ textAlign: "center", width: "100%" }}>
                     <div
                       style={{
                         fontWeight: 800,
-                        fontSize: 16,
-                        color: theme === "lite" ? "#0f1724" : "#f5f5f5",
+                        fontSize: 18,
+                        color: theme === "lite" ? "#111827" : "#f5f5f5",
                         marginBottom: 6,
-                        lineHeight: 1.15,
-                        minHeight: 44,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: "0 6px",
-                        textAlign: "center",
+                        lineHeight: 1.1,
                       }}
                     >
                       {p.nombre}
                     </div>
                   </div>
+                  {/* precio mostrado arriba en badge; eliminado aquí para evitar duplicado */}
                 </div>
               ))}
             </div>
@@ -12419,6 +12548,216 @@ export default function PuntoDeVentaView({
         fetchProductosComida={fetchProductosComida}
         onCanjear={handleCanjearPorPuntos}
       />
+
+      {/* Modal Chequeo de Efectivo */}
+      {showChequeoModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 160000,
+          }}
+          onClick={() => setShowChequeoModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: theme === "lite" ? "#fff" : "#232526",
+              borderRadius: 14,
+              padding: 18,
+              width: "92%",
+              maxWidth: 820,
+              maxHeight: "86vh",
+              overflow: "auto",
+              color: theme === "lite" ? "#111" : "#f5f5f5",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 800 }}>
+                Chequeo de Efectivo
+              </div>
+              <button
+                onClick={() => setShowChequeoModal(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 18,
+                  cursor: "pointer",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  background: theme === "lite" ? "#fafafa" : "#2b2f33",
+                  borderRadius: 10,
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                  Nuevo chequeo
+                </div>
+                <div style={{ marginBottom: 8 }}>Valor actual (supabase):</div>
+                <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>
+                  {chequeoActual === null
+                    ? chequeoLoading
+                      ? "Cargando..."
+                      : "—"
+                    : `${chequeoActual.toFixed(2)} LPS`}
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  Valor registrado (contado en caja):
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={chequeoRegistrado}
+                  onChange={(e) => setChequeoRegistrado(e.target.value)}
+                  placeholder="0.00"
+                  style={{
+                    width: "100%",
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "1px solid #ccc",
+                    marginBottom: 12,
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={saveChequeo}
+                    disabled={chequeoLoading}
+                    style={{
+                      flex: 1,
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: "#059669",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Guardar chequeo
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const actual = await fetchActualEfectivo();
+                      setChequeoActual(actual);
+                    }}
+                    disabled={chequeoLoading}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid #cbd5e1",
+                      background: theme === "lite" ? "#fff" : "#1f2937",
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Actualizar
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: theme === "lite" ? "#fafafa" : "#2b2f33",
+                  borderRadius: 10,
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                  Historial de chequeos
+                </div>
+                {chequeoLoading ? (
+                  <div>Cargando...</div>
+                ) : chequeosHistory.length === 0 ? (
+                  <div style={{ color: "#9ca3af" }}>Sin registros</div>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 8,
+                      maxHeight: 256,
+                      overflowY: "auto",
+                      paddingRight: 6,
+                    }}
+                  >
+                    {chequeosHistory.map((r: any) => {
+                      const registradoNum = Number(r.registrado || 0);
+                      const actualNum = Number(r.actual || 0);
+                      const diff = actualNum - registradoNum;
+                      const diffText = (diff >= 0 ? "+" : "") + diff.toFixed(2);
+                      const diffColor = diff >= 0 ? "#16a34a" : "#ef4444";
+                      return (
+                        <div
+                          key={r.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            padding: "8px 10px",
+                            background: theme === "lite" ? "#fff" : "#111",
+                            borderRadius: 8,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700 }}>
+                              {r.cajero_nombre || r.cajero_id}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                              {formatDateTime12(r.fecha_utc)}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontWeight: 800 }}>
+                              {registradoNum.toFixed(2)}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                              Actual: {actualNum.toFixed(2)}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: diffColor,
+                              }}
+                            >
+                              Dif: {diffText}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showInventarioBebidasView && (
         <div
