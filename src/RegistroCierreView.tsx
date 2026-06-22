@@ -322,6 +322,31 @@ export default function RegistroCierreView({
 
   async function obtenerBebidasDelDiaImpresion(): Promise<BebidaDiaPrintRow[]> {
     try {
+      // Preferir la vista agregada de ventas de bebidas (misma fuente que el modal)
+      if (usuarioActual?.id && navigator.onLine) {
+        try {
+          const { data, error } = await supabase
+            .from("v_bebidas_periodos")
+            .select("nombre_producto, vendidos_dia")
+            .eq("cajero_id", usuarioActual.id);
+
+          if (!error && data && Array.isArray(data)) {
+            const rows: BebidaDiaPrintRow[] = (data || [])
+              .map((r: any) => ({
+                nombre: String(r.nombre_producto || r.nombre || "Bebida"),
+                vendido: Number(r.vendidos_dia) || 0,
+              }))
+              .sort((a, b) => b.vendido - a.vendido || a.nombre.localeCompare(b.nombre));
+
+            return rows;
+          }
+        } catch (e) {
+          // Si falla la consulta a la vista, caerá al fallback de movimientos
+          console.warn("[RegistroCierre] v_bebidas_periodos falló, usando fallback:", e);
+        }
+      }
+
+      // Fallback: calcular desde movimientos de inventario (compatibilidad con offline)
       const { start, end } = getLocalDayRange();
       const tsStart = Date.parse(start);
       const tsEnd = Date.parse(end);
