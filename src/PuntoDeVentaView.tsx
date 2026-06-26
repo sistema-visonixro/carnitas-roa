@@ -593,14 +593,20 @@ export default function PuntoDeVentaView({
   }
 
   // Función para obtener resumen de caja del día (EFECTIVO/TARJETA/TRANSFERENCIA)
-  async function obtenerAperturaActivaSupabase(cajeroId: string) {
-    const { data, error } = await supabase
+  async function obtenerAperturaActivaSupabase(cajeroId: string, caja?: string) {
+    let query = supabase
       .from("cierres")
       .select(
         "id, cajero_id, caja, fecha, fecha_apertura, fecha_cierre, estado",
       )
       .eq("cajero_id", cajeroId)
-      .eq("estado", "APERTURA")
+      .eq("estado", "APERTURA");
+
+    if (caja) {
+      query = query.eq("caja", caja);
+    }
+
+    const { data, error } = await query
       .order("fecha_apertura", { ascending: false, nullsFirst: false })
       .order("fecha", { ascending: false })
       .limit(1);
@@ -634,7 +640,10 @@ export default function PuntoDeVentaView({
   async function fetchActualEfectivo(): Promise<number | null> {
     try {
       if (!usuarioActual?.id) return null;
-      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      const apertura = await obtenerAperturaActivaSupabase(
+        usuarioActual.id,
+        caiInfo?.caja_asignada || undefined,
+      );
       if (!apertura) return null;
       const { data, error } = await supabase
         .from("v_resumen_turnos")
@@ -702,7 +711,10 @@ export default function PuntoDeVentaView({
     if (!usuarioActual?.id) return alert("Usuario no identificado");
     setChequeoLoading(true);
     try {
-      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      const apertura = await obtenerAperturaActivaSupabase(
+        usuarioActual.id,
+        caiInfo?.caja_asignada || undefined,
+      );
       const registro = {
         cajero_id: usuarioActual.id,
         cajero_nombre: usuarioActual.nombre || "",
@@ -737,7 +749,10 @@ export default function PuntoDeVentaView({
     let intervalId: any = null;
     async function schedule() {
       if (!usuarioActual?.id) return;
-      const apertura = await obtenerAperturaActivaSupabase(usuarioActual.id);
+      const apertura = await obtenerAperturaActivaSupabase(
+        usuarioActual.id,
+        caiInfo?.caja_asignada || undefined,
+      );
       if (!apertura) return;
       const fecha = apertura.fecha_apertura ?? apertura.fecha;
       if (!fecha) return;
@@ -823,6 +838,7 @@ export default function PuntoDeVentaView({
 
       const aperturaSupabase = await obtenerAperturaActivaSupabase(
         usuarioActual.id,
+        caiInfo?.caja_asignada || undefined,
       );
       if (!aperturaSupabase) {
         alert(
@@ -3125,6 +3141,7 @@ export default function PuntoDeVentaView({
 
       const aperturaSupabase = await obtenerAperturaActivaSupabase(
         usuarioActual.id,
+        caiInfo?.caja_asignada || undefined,
       );
       if (aperturaSupabase?.id) {
         const conteoTurno = await obtenerConteoTurnoSupabase(

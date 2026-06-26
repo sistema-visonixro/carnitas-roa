@@ -1182,9 +1182,10 @@ export default function RegistroCierreView({
 
   const diferenciaDolaresUSDLive = dolaresConteoNum - dolaresSistema;
   const diferenciaDolaresLpsLive = diferenciaDolaresUSDLive * precioDolarActual;
+  const efectivoNetoSistema = efectivoSistema - gastosSistema;
   const diferenciaLive =
     efectivoConteoNum -
-    efectivoSistema +
+    efectivoNetoSistema +
     (tarjetaConteoNum - tarjetaSistema) +
     (transferenciasConteoNum - transferenciasSistema) +
     diferenciaDolaresLpsLive;
@@ -1583,7 +1584,7 @@ export default function RegistroCierreView({
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  L {efectivoSistema.toFixed(2)}
+                  L {efectivoNetoSistema.toFixed(2)}
                 </div>
               </div>
 
