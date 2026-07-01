@@ -2268,6 +2268,11 @@ export default function PuntoDeVentaView({
   const [clientePuntosCargando, setClientePuntosCargando] =
     useState<boolean>(false);
   const [clientePuntosError, setClientePuntosError] = useState<string>("");
+  const [sugerenciasClientesPuntos, setSugerenciasClientesPuntos] = useState<
+    any[]
+  >([]);
+  const [cargandoSugerenciasClientes, setCargandoSugerenciasClientes] =
+    useState(false);
   const [pointsPerPlatillo, setPointsPerPlatillo] = useState<number>(7);
   const nombreClienteInputRef = useRef<HTMLInputElement | null>(null);
   const identidadClienteInputRef = useRef<HTMLInputElement | null>(null);
@@ -2933,6 +2938,52 @@ export default function PuntoDeVentaView({
       }
     }, 80);
   }, [showClienteModal, acumularPuntosChoice]);
+
+  // Consultar coincidencias de clientes mientras se escribe la identidad en el modal de puntos
+  useEffect(() => {
+    if (acumularPuntosChoice !== true) {
+      setSugerenciasClientesPuntos([]);
+      setCargandoSugerenciasClientes(false);
+      return;
+    }
+
+    const query = identidadClienteParaPuntos.trim();
+    if (!query) {
+      setSugerenciasClientesPuntos([]);
+      setCargandoSugerenciasClientes(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        setCargandoSugerenciasClientes(true);
+        const { data, error } = await supabase
+          .from("puntos_clientes")
+          .select("identidad, nombre, puntos")
+          .or(`identidad.ilike.%${query}%,nombre.ilike.%${query}%`)
+          .limit(6);
+
+        if (!error) {
+          const vistos = new Set<string>();
+          const resultados = (data || []).filter((row: any) => {
+            const identidad = String(row?.identidad || "").trim();
+            if (!identidad || vistos.has(identidad)) return false;
+            vistos.add(identidad);
+            return true;
+          });
+          setSugerenciasClientesPuntos(resultados);
+        } else {
+          setSugerenciasClientesPuntos([]);
+        }
+      } catch {
+        setSugerenciasClientesPuntos([]);
+      } finally {
+        setCargandoSugerenciasClientes(false);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [acumularPuntosChoice, identidadClienteParaPuntos]);
 
   useEffect(() => {
     const actualizarPuntosCliente = async () => {
@@ -8840,8 +8891,8 @@ export default function PuntoDeVentaView({
                   ? "0 8px 32px rgba(25, 118, 210, 0.18)"
                   : "0 8px 32px #0008",
               padding: 32,
-              minWidth: 350,
-              maxWidth: 420,
+              minWidth: 360,
+              maxWidth: 760,
               width: "100%",
               position: "relative",
               display: "flex",
@@ -8854,74 +8905,155 @@ export default function PuntoDeVentaView({
             <h3 style={{ color: "#1976d2", marginBottom: 12 }}>
               Nombre del Cliente
             </h3>
-            <input
-              ref={(el) => {
-                nombreClienteInputRef.current = el;
-              }}
-              type="text"
-              placeholder="Ingrese el nombre del cliente"
-              value={nombreCliente}
-              onChange={(e) => setNombreCliente(e.target.value.toUpperCase())}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && nombreCliente.trim()) {
-                  // Si se eligió acumular puntos, identidad es requerida
-                  if (
-                    acumularPuntosChoice === true &&
-                    !identidadClienteParaPuntos.trim()
-                  ) {
-                    alert(
-                      "Ingrese la identidad del cliente para acumular puntos.",
-                    );
-                    return;
-                  }
-                  // preventDefault evita que el evento llegue al botón
-                  // "Continuar" si tiene el foco, disparando dos veces
-                  e.preventDefault();
-                  setShowClienteModal(false);
-                  continuarFlujoDocumento();
-                }
-              }}
+            <div
               style={{
-                padding: "10px",
-                borderRadius: 8,
-                border: "1px solid #ccc",
-                fontSize: 16,
-                marginBottom: 18,
+                display: "flex",
+                gap: 18,
+                alignItems: "flex-start",
+                flexWrap: "wrap",
               }}
-            />
-            {acumularPuntosChoice === true && (
-              <div style={{ marginTop: 6 }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: 6,
-                    color: theme === "lite" ? "#333" : "#f5f5f5",
-                  }}
-                >
-                  Identidad (requerido para puntos)
-                </label>
+            >
+              <div style={{ flex: 1, minWidth: 280 }}>
                 <input
                   ref={(el) => {
-                    identidadClienteInputRef.current = el;
+                    nombreClienteInputRef.current = el;
                   }}
                   type="text"
-                  placeholder="08011999..."
-                  value={identidadClienteParaPuntos}
-                  onChange={(e) => {
-                    const onlyDigits = String(e.target.value || "")
-                      .replace(/\D/g, "")
-                      .slice(0, 14);
-                    setIdentidadClienteParaPuntos(onlyDigits);
+                  placeholder="Ingrese el nombre del cliente"
+                  value={nombreCliente}
+                  onChange={(e) => setNombreCliente(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && nombreCliente.trim()) {
+                      if (
+                        acumularPuntosChoice === true &&
+                        !identidadClienteParaPuntos.trim()
+                      ) {
+                        alert(
+                          "Ingrese la identidad del cliente para acumular puntos.",
+                        );
+                        return;
+                      }
+                      e.preventDefault();
+                      setShowClienteModal(false);
+                      continuarFlujoDocumento();
+                    }
                   }}
                   style={{
-                    padding: "8px",
+                    padding: "10px",
                     borderRadius: 8,
                     border: "1px solid #ccc",
+                    fontSize: 16,
+                    marginBottom: 18,
                     width: "100%",
                   }}
                 />
+                {acumularPuntosChoice === true && (
+                  <div style={{ marginTop: 6 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        marginBottom: 6,
+                        color: theme === "lite" ? "#333" : "#f5f5f5",
+                      }}
+                    >
+                      Identidad (requerido para puntos)
+                    </label>
+                    <input
+                      ref={(el) => {
+                        identidadClienteInputRef.current = el;
+                      }}
+                      type="text"
+                      placeholder="08011999..."
+                      value={identidadClienteParaPuntos}
+                      onChange={(e) => {
+                        const onlyDigits = String(e.target.value || "")
+                          .replace(/\D/g, "")
+                          .slice(0, 14);
+                        setIdentidadClienteParaPuntos(onlyDigits);
+                      }}
+                      style={{
+                        padding: "8px",
+                        borderRadius: 8,
+                        border: "1px solid #ccc",
+                        width: "100%",
+                      }}
+                    />
+                  </div>
+                )}
               </div>
-            )}
+
+              {acumularPuntosChoice === true && (
+                <div
+                  style={{
+                    minWidth: 240,
+                    maxWidth: 280,
+                    border: "1px solid #e0e0e0",
+                    borderRadius: 12,
+                    padding: 12,
+                    background: theme === "lite" ? "#f8fbff" : "#2b2b2b",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1976d2" }}>
+                    Coincidencias
+                  </div>
+                  {cargandoSugerenciasClientes ? (
+                    <div style={{ fontSize: 12, color: "#666" }}>
+                      Buscando coincidencias...
+                    </div>
+                  ) : sugerenciasClientesPuntos.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#666" }}>
+                      Escribe la identidad para ver nombres registrados.
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        maxHeight: 180,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {sugerenciasClientesPuntos.map((cliente: any) => (
+                        <button
+                          key={cliente.identidad}
+                          type="button"
+                          onClick={() => {
+                            setIdentidadClienteParaPuntos(
+                              String(cliente.identidad || ""),
+                            );
+                            if (cliente.nombre) {
+                              setNombreCliente(
+                                String(cliente.nombre).toUpperCase(),
+                              );
+                            }
+                          }}
+                          style={{
+                            textAlign: "left",
+                            border: "1px solid #dbeafe",
+                            borderRadius: 8,
+                            background: "#fff",
+                            padding: "8px 10px",
+                            cursor: "pointer",
+                            color: "#222",
+                          }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>
+                            {cliente.nombre || "Sin nombre"}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#666" }}>
+                            {cliente.identidad}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
               <button
                 onClick={() => setShowClienteModal(false)}

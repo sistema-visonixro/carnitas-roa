@@ -475,6 +475,7 @@ export default function RegistroCierreView({
       const difSign =
         diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
       const difAbs = Math.abs(diferencia).toFixed(2);
+      const efectivoNetoParaReporte = Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
 
       const fmtFecha = (d: string) => {
         if (!d) return "—";
@@ -612,7 +613,7 @@ export default function RegistroCierreView({
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
             <div class="row"><span>Fondo Fijo:</span><span>L ${Number(registro.fondo_fijo).toFixed(2)}</span></div>
-            <div class="row"><span>Efectivo (Neto):</span><span>L ${Number(registro.efectivo_dia).toFixed(2)}</span></div>
+            <div class="row"><span>Efectivo (Neto):</span><span>L ${efectivoNetoParaReporte.toFixed(2)}</span></div>
             <div class="row"><span>Tarjeta:</span><span>L ${Number(registro.monto_tarjeta_dia).toFixed(2)}</span></div>
             <div class="row"><span>Transferencia:</span><span>L ${Number(registro.transferencias_dia).toFixed(2)}</span></div>
             <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(registro.dolares_dia).toFixed(2)}</span></div>
@@ -795,19 +796,31 @@ export default function RegistroCierreView({
       const precioDolar = await obtenerPrecioDolarSupabase();
 
       // Calcular diferencia de dólares en Lempiras
-      const diferenciaDolaresUSD = dolaresRegistrado - dolaresDia;
-      const diferenciaDolaresLps = diferenciaDolaresUSD * precioDolar;
+      const dolaresRegistradoRedondeado = Number(dolaresRegistrado.toFixed(2));
+      const diferenciaDolaresUSD =
+        dolaresRegistradoRedondeado - Number(dolaresDia.toFixed(2));
+      const diferenciaDolaresLps = Number(
+        (diferenciaDolaresUSD * precioDolar).toFixed(2),
+      );
 
       // Calcular diferencias (todo en Lempiras)
       // Fondo fijo siempre es 0
+      const efectivoRegistrado = Number(parseFloat(efectivo).toFixed(2));
+      const tarjetaRegistrada = Number(parseFloat(tarjeta).toFixed(2));
+      const transferenciasRegistradas = Number(
+        parseFloat(transferencias).toFixed(2),
+      );
       const fondoFijoRegistrado = 0;
-      const diferencia =
-        fondoFijoRegistrado -
-        fondoFijoDia +
-        (parseFloat(efectivo) - efectivoDia) +
-        (parseFloat(tarjeta) - tarjetaDia) +
-        (parseFloat(transferencias) - transferenciasDia) +
-        diferenciaDolaresLps;
+      const diferencia = Number(
+        (
+          fondoFijoRegistrado -
+          fondoFijoDia +
+          (efectivoRegistrado - efectivoDia - gastosDia) +
+          (tarjetaRegistrada - tarjetaDia) +
+          (transferenciasRegistradas - transferenciasDia) +
+          diferenciaDolaresLps
+        ).toFixed(2),
+      );
       let observacion = "";
       if (diferencia === 0) {
         observacion = "cuadrado";
@@ -850,13 +863,13 @@ export default function RegistroCierreView({
         fecha: formatToHondurasLocal(),
         fondo_fijo_registrado: fondoFijoRegistrado,
         fondo_fijo: fondoFijoDia,
-        efectivo_registrado: parseFloat(efectivo),
+        efectivo_registrado: efectivoRegistrado,
         efectivo_dia: efectivoDia,
-        monto_tarjeta_registrado: parseFloat(tarjeta),
+        monto_tarjeta_registrado: tarjetaRegistrada,
         monto_tarjeta_dia: tarjetaDia,
-        transferencias_registradas: parseFloat(transferencias),
+        transferencias_registradas: transferenciasRegistradas,
         transferencias_dia: transferenciasDia,
-        dolares_registrado: dolaresRegistrado,
+        dolares_registrado: dolaresRegistradoRedondeado,
         dolares_dia: dolaresDia,
         diferencia,
         observacion,

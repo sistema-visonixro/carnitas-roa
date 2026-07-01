@@ -229,6 +229,11 @@ export default function ResultadosCajaView() {
         Number(cierre.efectivo_dia || 0) +
         Number(cierre.monto_tarjeta_dia || 0) +
         Number(cierre.transferencias_dia || 0);
+      const gastosParaReporte = Number(
+        (cierre as any).gastos_dia ?? (cierre as any).gastos ?? 0,
+      );
+      const efectivoNetoParaReporte =
+        Number(cierre.efectivo_dia || 0) - gastosParaReporte;
 
       const fmtFecha = (d: string) => {
         if (!d) return "—";
@@ -273,7 +278,7 @@ export default function ResultadosCajaView() {
             <div class="divider"></div>
             <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">SISTEMA</div>
             <div class="row"><span>Fondo Fijo:</span><span>L ${Number(cierre.fondo_fijo || 0).toFixed(2)}</span></div>
-            <div class="row"><span>Efectivo (Neto):</span><span>L ${Number(cierre.efectivo_dia || 0).toFixed(2)}</span></div>
+            <div class="row"><span>Efectivo (Neto):</span><span>L ${efectivoNetoParaReporte.toFixed(2)}</span></div>
             <div class="row"><span>Tarjeta:</span><span>L ${Number(cierre.monto_tarjeta_dia || 0).toFixed(2)}</span></div>
             <div class="row"><span>Transferencia:</span><span>L ${Number(cierre.transferencias_dia || 0).toFixed(2)}</span></div>
             <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(cierre.dolares_dia || 0).toFixed(2)}</span></div>
