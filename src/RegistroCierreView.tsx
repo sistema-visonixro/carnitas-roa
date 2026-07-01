@@ -815,7 +815,7 @@ export default function RegistroCierreView({
         (
           fondoFijoRegistrado -
           fondoFijoDia +
-          (efectivoRegistrado - efectivoDia - gastosDia) +
+          (efectivoRegistrado - efectivoDia + gastosDia) +
           (tarjetaRegistrada - tarjetaDia) +
           (transferenciasRegistradas - transferenciasDia) +
           diferenciaDolaresLps

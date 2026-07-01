@@ -362,12 +362,12 @@ export default function CierresAdminView({
       const transfDia = Number(sistemaCorreccion.transferencias_dia || 0);
       const dolaresDia = Number(sistemaCorreccion.dolares_dia || 0);
 
-      // Restamos gastos_dia explícitamente del efectivo para garantizar que
-      // el resultado coincida con el cierre real (neto = registrado − gastos_turno)
+      // Sumamos gastos_dia al comparar el efectivo registrado contra el efectivo
+      // neto del sistema. El cierre real espera efectivo neto = efectivo_bruto - gastos.
       const diferencia =
         fondoReg -
         fondoDia +
-        (efectivoReg - efectivoDia - gastosDia) +
+        (efectivoReg - efectivoDia + gastosDia) +
         (tarjetaReg - tarjetaDia) +
         (transfReg - transfDia) +
         (dolaresReg - dolaresDia);
@@ -425,7 +425,7 @@ export default function CierresAdminView({
       (
         fondoReg -
         fondoDia +
-        (efectivoReg - efectivoDia - gastosDia) +
+        (efectivoReg - efectivoDia + gastosDia) +
         (tarjetaReg - tarjetaDia) +
         (transfReg - transfDia) +
         (dolaresReg - dolaresDia)
