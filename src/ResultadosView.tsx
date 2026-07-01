@@ -198,8 +198,8 @@ export default function ResultadosView({
         gastos: resumenTurno.gastos,
         cambio: resumenTurno.cambio_devuelto,
         delivery: deliverySum,
-        platillos: Math.round(resumenTurno.platillos_vendidos),
-        bebidas: Math.round(resumenTurno.bebidas_vendidas),
+        platillos: Math.round(resumenTurno.total_platillos),
+        bebidas: Math.round(resumenTurno.total_bebidas),
         platillos_donados: Math.round(resumenTurno.platillos_donados),
         bebidas_donadas: Math.round(resumenTurno.bebidas_donadas),
       });

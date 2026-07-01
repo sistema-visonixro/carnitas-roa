@@ -593,7 +593,10 @@ export default function PuntoDeVentaView({
   }
 
   // Función para obtener resumen de caja del día (EFECTIVO/TARJETA/TRANSFERENCIA)
-  async function obtenerAperturaActivaSupabase(cajeroId: string, caja?: string) {
+  async function obtenerAperturaActivaSupabase(
+    cajeroId: string,
+    caja?: string,
+  ) {
     let query = supabase
       .from("cierres")
       .select(
@@ -636,7 +639,7 @@ export default function PuntoDeVentaView({
     return data?.[0] ?? null;
   }
 
-  // ── Chequeo de efectivo: obtener 'actual' desde v_resumen_turnos
+  // ── Chequeo de efectivo: obtener 'actual' desde v_resumen_turnos3
   async function fetchActualEfectivo(): Promise<number | null> {
     try {
       if (!usuarioActual?.id) return null;
@@ -646,7 +649,7 @@ export default function PuntoDeVentaView({
       );
       if (!apertura) return null;
       const { data, error } = await supabase
-        .from("v_resumen_turnos")
+        .from("v_resumen_turnos3")
         .select("efectivo_bruto, cambio_devuelto")
         .eq("apertura_id", apertura.id)
         .limit(1);
@@ -850,9 +853,9 @@ export default function PuntoDeVentaView({
 
       const { data: resumenRemotoRows, error: resumenRemotoError } =
         await supabase
-          .from("v_resumen_turnos")
+          .from("v_resumen_turnos3")
           .select(
-            "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas",
+            "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas, total_platillos, total_bebidas",
           )
           .eq("apertura_id", aperturaSupabase.id)
           .limit(1);
@@ -907,12 +910,12 @@ export default function PuntoDeVentaView({
         cambio: Number(resumenRemoto.cambio_devuelto) || 0,
         delivery: Number(deliverySum.toFixed(2)),
         platillos:
-          Number(conteoTurno?.platillos_vendidos) ||
-          Number(resumenRemoto.platillos_vendidos) ||
+          Number(resumenRemoto.total_platillos) ||
+          Number(conteoTurno?.total_platillos) ||
           0,
         bebidas:
-          Number(conteoTurno?.bebidas_vendidas) ||
-          Number(resumenRemoto.bebidas_vendidas) ||
+          Number(resumenRemoto.total_bebidas) ||
+          Number(conteoTurno?.total_bebidas) ||
           0,
         platillos_donados:
           Number(conteoTurno?.platillos_donados) ||

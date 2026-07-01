@@ -148,9 +148,9 @@ export default function RegistroCierreView({
     );
 
     const { data: resumenRows, error: resumenError } = await supabase
-      .from("v_resumen_turnos")
+      .from("v_resumen_turnos3")
       .select(
-        "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas",
+        "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, total_platillos, total_bebidas",
       )
       .eq("apertura_id", aperturaActual.id)
       .limit(1);
@@ -163,7 +163,9 @@ export default function RegistroCierreView({
 
     const { data: conteoRows, error: conteoError } = await supabase
       .from("v_conteo_items_turno")
-      .select("platillos_vendidos, bebidas_vendidas")
+      .select(
+        "platillos_vendidos, bebidas_vendidas, total_platillos, total_bebidas",
+      )
       .eq("apertura_id", aperturaActual.id)
       .limit(1);
 
@@ -184,12 +186,12 @@ export default function RegistroCierreView({
     const dolaresDia = Number((resumen as any).dolares_usd) || 0;
     const gastosDia = Number((resumen as any).gastos) || 0;
     const platillosDia =
-      Number((conteo as any).platillos_vendidos) ||
-      Number((resumen as any).platillos_vendidos) ||
+      Number((resumen as any).total_platillos) ||
+      Number((conteo as any).total_platillos) ||
       0;
     const bebidasDia =
-      Number((conteo as any).bebidas_vendidas) ||
-      Number((resumen as any).bebidas_vendidas) ||
+      Number((resumen as any).total_bebidas) ||
+      Number((conteo as any).total_bebidas) ||
       0;
     const totalVentasDia =
       efectivoDia +

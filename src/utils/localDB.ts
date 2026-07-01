@@ -78,10 +78,14 @@ export interface ResumenTurno {
   total_ventas: number;
   platillos_vendidos: number;
   bebidas_vendidas: number;
+  platillos_devueltos: number;
+  bebidas_devueltas: number;
   platillos_donados: number;
   bebidas_donadas: number;
   total_platillos: number;
   total_bebidas: number;
+  platillos_neto: number;
+  bebidas_neto: number;
 }
 
 export interface ColaEscritura {
@@ -981,12 +985,10 @@ export async function calcularResumenTurno(
     const sumar = (arr: any[], campo: string) =>
       arr.reduce((acc, v) => acc + parseFloat(v[campo] ?? 0), 0);
 
-    // Tipo real en BD es 'comida' (no 'platillo')
-    // factor: -1 para devoluciones (restan), +1 para ventas normales
+    // Contar tipo simple (para donaciones)
     const contarTipo = (arr: any[], tipo: string) => {
       let count = 0;
       arr.forEach((v) => {
-        const factor = v.tipo === "DEVOLUCION" ? -1 : 1;
         try {
           const prods: any[] =
             typeof v.productos === "string"
@@ -994,7 +996,7 @@ export async function calcularResumenTurno(
               : (v.productos ?? []);
           prods.forEach((p) => {
             if ((p.tipo ?? "").toLowerCase() === tipo.toLowerCase()) {
-              count += factor * parseInt(p.cantidad ?? p.qty ?? 1);
+              count += parseInt(p.cantidad ?? p.qty ?? 1);
             }
           });
         } catch {
@@ -1004,8 +1006,38 @@ export async function calcularResumenTurno(
       return count;
     };
 
-    const platillosVendidos = contarTipo(ventasNormales, "comida");
-    const bebidasVendidas = contarTipo(ventasNormales, "bebida");
+    // Tipo real en BD es 'comida' (no 'platillo')
+    // Separar vendidos de devueltos para mayor claridad
+    const contarTipoPorCategoria = (arr: any[], tipo: string) => {
+      let vendidos = 0;
+      let devueltos = 0;
+      arr.forEach((v) => {
+        try {
+          const prods: any[] =
+            typeof v.productos === "string"
+              ? JSON.parse(v.productos)
+              : (v.productos ?? []);
+          prods.forEach((p) => {
+            if ((p.tipo ?? "").toLowerCase() === tipo.toLowerCase()) {
+              const cantidad = parseInt(p.cantidad ?? p.qty ?? 1);
+              if (v.tipo === "DEVOLUCION") {
+                devueltos += cantidad;
+              } else {
+                vendidos += cantidad;
+              }
+            }
+          });
+        } catch {
+          /* ignorar */
+        }
+      });
+      return { vendidos, devueltos };
+    };
+
+    const { vendidos: platillosVendidos, devueltos: platillosDevueltos } =
+      contarTipoPorCategoria(ventasNormales, "comida");
+    const { vendidos: bebidasVendidas, devueltos: bebidasDevueltas } =
+      contarTipoPorCategoria(ventasNormales, "bebida");
     const platillosDonados = contarTipo(donaciones, "comida");
     const bebidasDonadas = contarTipo(donaciones, "bebida");
     const gastosSum = gastosDia;
@@ -1036,10 +1068,14 @@ export async function calcularResumenTurno(
       total_ventas: sumar(ventasNormales, "total"),
       platillos_vendidos: platillosVendidos,
       bebidas_vendidas: bebidasVendidas,
+      platillos_devueltos: platillosDevueltos,
+      bebidas_devueltas: bebidasDevueltas,
       platillos_donados: platillosDonados,
       bebidas_donadas: bebidasDonadas,
       total_platillos: platillosVendidos + platillosDonados,
       total_bebidas: bebidasVendidas + bebidasDonadas,
+      platillos_neto: platillosVendidos - platillosDevueltos + platillosDonados,
+      bebidas_neto: bebidasVendidas - bebidasDevueltas + bebidasDonadas,
     };
 
     await upsertOne(STORE.RESUMEN_TURNOS, resumen);

@@ -1,9 +1,9 @@
 -- =============================================================
---  FIX v_resumen_turnos: DEVOLUCION resta platillos/bebidas
+--  FIX v_resumen_turnos3: DEVOLUCION resta platillos/bebidas
 --  Ejecutar en Supabase SQL Editor
 -- =============================================================
 
-CREATE OR REPLACE VIEW public.v_resumen_turnos AS
+CREATE OR REPLACE VIEW public.v_resumen_turnos3 AS
 
 -- 1) Base de turnos desde la misma tabla cierres
 --    Nuevo esquema: fecha_apertura / fecha_cierre
@@ -103,23 +103,41 @@ items_expandidos AS (
   ) AS item
 ),
 
--- 6. Agregar conteos — DEVOLUCION resta (factor -1)
+-- 6. Agregar conteos — separa vendidos, devueltos y donados
 conteos AS (
   SELECT
     apertura_id,
+    -- Platillos solo vendidos (sin devoluciones)
     SUM(
-      CASE WHEN item_tipo = 'comida' AND (es_donacion IS NOT TRUE)
-        THEN CASE WHEN venta_tipo = 'DEVOLUCION' THEN -cantidad ELSE cantidad END
+      CASE WHEN item_tipo = 'comida' AND (es_donacion IS NOT TRUE) AND venta_tipo != 'DEVOLUCION'
+        THEN cantidad
         ELSE 0
       END
     ) AS platillos_vendidos,
+    -- Bebidas solo vendidas (sin devoluciones)
     SUM(
-      CASE WHEN item_tipo = 'bebida' AND (es_donacion IS NOT TRUE)
-        THEN CASE WHEN venta_tipo = 'DEVOLUCION' THEN -cantidad ELSE cantidad END
+      CASE WHEN item_tipo = 'bebida' AND (es_donacion IS NOT TRUE) AND venta_tipo != 'DEVOLUCION'
+        THEN cantidad
         ELSE 0
       END
     ) AS bebidas_vendidas,
+    -- Platillos devueltos (como número positivo)
+    SUM(
+      CASE WHEN item_tipo = 'comida' AND (es_donacion IS NOT TRUE) AND venta_tipo = 'DEVOLUCION'
+        THEN cantidad
+        ELSE 0
+      END
+    ) AS platillos_devueltos,
+    -- Bebidas devueltas (como número positivo)
+    SUM(
+      CASE WHEN item_tipo = 'bebida' AND (es_donacion IS NOT TRUE) AND venta_tipo = 'DEVOLUCION'
+        THEN cantidad
+        ELSE 0
+      END
+    ) AS bebidas_devueltas,
+    -- Platillos donados
     SUM(CASE WHEN item_tipo = 'comida' AND es_donacion = TRUE THEN cantidad ELSE 0 END) AS platillos_donados,
+    -- Bebidas donadas
     SUM(CASE WHEN item_tipo = 'bebida' AND es_donacion = TRUE THEN cantidad ELSE 0 END) AS bebidas_donadas
   FROM items_expandidos
   GROUP BY apertura_id
@@ -134,21 +152,34 @@ SELECT
   t.fecha_apertura,
   t.fecha_cierre,
   ROUND(COALESCE(sv.efectivo_bruto,  0) - COALESCE(sv.cambio_devuelto, 0)
-        - COALESCE(sg.total_gastos, 0), 2)                AS efectivo_neto,
-  ROUND(COALESCE(sv.efectivo_bruto,  0), 2)               AS efectivo_bruto,
-  ROUND(COALESCE(sv.cambio_devuelto, 0), 2)               AS cambio_devuelto,
-  ROUND(COALESCE(sg.total_gastos,    0), 2)               AS gastos,
-  ROUND(COALESCE(sv.tarjeta,         0), 2)               AS tarjeta,
-  ROUND(COALESCE(sv.transferencia,   0), 2)               AS transferencia,
-  ROUND(COALESCE(sv.dolares_usd,     0), 2)               AS dolares_usd,
-  ROUND(COALESCE(sv.dolares_lps,     0), 2)               AS dolares_lps,
-  ROUND(COALESCE(sv.total_ventas,    0), 2)               AS total_ventas,
-  COALESCE(c.platillos_vendidos, 0)                        AS platillos_vendidos,
-  COALESCE(c.bebidas_vendidas,   0)                        AS bebidas_vendidas,
-  COALESCE(c.platillos_donados,  0)                        AS platillos_donados,
-  COALESCE(c.bebidas_donadas,    0)                        AS bebidas_donadas,
-  COALESCE(c.platillos_vendidos, 0) + COALESCE(c.platillos_donados, 0) AS total_platillos,
-  COALESCE(c.bebidas_vendidas,   0) + COALESCE(c.bebidas_donadas,   0) AS total_bebidas
+        - COALESCE(sg.total_gastos, 0), 2)                                AS efectivo_neto,
+  ROUND(COALESCE(sv.efectivo_bruto,  0), 2)                               AS efectivo_bruto,
+  ROUND(COALESCE(sv.cambio_devuelto, 0), 2)                               AS cambio_devuelto,
+  ROUND(COALESCE(sg.total_gastos,    0), 2)                               AS gastos,
+  ROUND(COALESCE(sv.tarjeta,         0), 2)                               AS tarjeta,
+  ROUND(COALESCE(sv.transferencia,   0), 2)                               AS transferencia,
+  ROUND(COALESCE(sv.dolares_usd,     0), 2)                               AS dolares_usd,
+  ROUND(COALESCE(sv.dolares_lps,     0), 2)                               AS dolares_lps,
+  ROUND(COALESCE(sv.total_ventas,    0), 2)                               AS total_ventas,
+  -- Platillos: solo vendidos
+  COALESCE(c.platillos_vendidos, 0)                                        AS platillos_vendidos,
+  -- Bebidas: solo vendidas
+  COALESCE(c.bebidas_vendidas,   0)                                        AS bebidas_vendidas,
+  -- Devoluciones de platillos
+  COALESCE(c.platillos_devueltos, 0)                                       AS platillos_devueltos,
+  -- Devoluciones de bebidas
+  COALESCE(c.bebidas_devueltas, 0)                                         AS bebidas_devueltas,
+  -- Donaciones
+  COALESCE(c.platillos_donados,  0)                                        AS platillos_donados,
+  COALESCE(c.bebidas_donadas,    0)                                        AS bebidas_donadas,
+  -- Total platillos: vendidos + donados (SIN restar devueltos)
+  COALESCE(c.platillos_vendidos, 0) + COALESCE(c.platillos_donados, 0)     AS total_platillos,
+  -- Total bebidas: vendidas + donadas (SIN restar devueltas)
+  COALESCE(c.bebidas_vendidas,   0) + COALESCE(c.bebidas_donadas,   0)     AS total_bebidas,
+  -- Neto de platillos: vendidos - devueltos + donados
+  COALESCE(c.platillos_vendidos, 0) - COALESCE(c.platillos_devueltos, 0) + COALESCE(c.platillos_donados, 0) AS platillos_neto,
+  -- Neto de bebidas: vendidas - devueltas + donadas
+  COALESCE(c.bebidas_vendidas,   0) - COALESCE(c.bebidas_devueltas, 0) + COALESCE(c.bebidas_donadas,   0) AS bebidas_neto
 
 FROM turnos t
 LEFT JOIN sumas_ventas sv ON sv.apertura_id = t.apertura_id
@@ -157,6 +188,6 @@ LEFT JOIN conteos        c ON  c.apertura_id = t.apertura_id
 
 ORDER BY t.fecha_apertura DESC;
 
-GRANT SELECT ON public.v_resumen_turnos TO authenticated;
-GRANT SELECT ON public.v_resumen_turnos TO anon;
-GRANT SELECT ON public.v_resumen_turnos TO service_role;
+GRANT SELECT ON public.v_resumen_turnos3 TO authenticated;
+GRANT SELECT ON public.v_resumen_turnos3 TO anon;
+GRANT SELECT ON public.v_resumen_turnos3 TO service_role;
