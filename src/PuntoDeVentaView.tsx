@@ -201,6 +201,17 @@ export default function PuntoDeVentaView({
   const [historialFiltroTipo, setHistorialFiltroTipo] = useState<string | null>(
     null,
   );
+  const [showMetodoPagoModal, setShowMetodoPagoModal] = useState(false);
+  const [selectedVentaForPago, setSelectedVentaForPago] = useState<any | null>(
+    null,
+  );
+  const [metodoPagoValores, setMetodoPagoValores] = useState({
+    efectivo: 0,
+    tarjeta: 0,
+    transferencia: 0,
+    dolares: 0,
+  });
+  const [metodoPagoError, setMetodoPagoError] = useState<string>("");
   // Estados para historial de facturas de crédito del turno
   const [showHistorialCreditos, setShowHistorialCreditos] = useState(false);
   const [historialCreditos, setHistorialCreditos] = useState<any[]>([]);
@@ -1170,6 +1181,130 @@ export default function PuntoDeVentaView({
     } finally {
       setHistorialLoading(false);
     }
+  }
+
+  function normalizarPagosDesdeVentas(ventas: any[]): any[] {
+    const pagos: any[] = [];
+    for (const v of ventas) {
+      if (parseFloat(v.efectivo || 0) > 0)
+        pagos.push({
+          tipo: "efectivo",
+          monto: v.efectivo,
+          usd_monto: 0,
+          factura: v.factura,
+          factura_venta: v.factura,
+        });
+      if (parseFloat(v.tarjeta || 0) > 0)
+        pagos.push({
+          tipo: "tarjeta",
+          monto: v.tarjeta,
+          usd_monto: 0,
+          factura: v.factura,
+          factura_venta: v.factura,
+        });
+      if (parseFloat(v.transferencia || 0) > 0)
+        pagos.push({
+          tipo: "transferencia",
+          monto: v.transferencia,
+          usd_monto: 0,
+          factura: v.factura,
+          factura_venta: v.factura,
+        });
+      if (parseFloat(v.dolares || 0) > 0)
+        pagos.push({
+          tipo: "dolares",
+          monto: v.dolares,
+          usd_monto: v.dolares_usd || 0,
+          factura: v.factura,
+          factura_venta: v.factura,
+        });
+    }
+    return pagos;
+  }
+
+  async function guardarMetodoPagoVenta() {
+    if (!selectedVentaForPago) return;
+
+    const totalVenta = Number(selectedVentaForPago.total || 0);
+    const cambioVenta = Number(selectedVentaForPago.cambio || 0);
+    const totalRecibido = Number((totalVenta + cambioVenta).toFixed(2));
+    const pagoEfectivo = Number(metodoPagoValores.efectivo || 0);
+    const pagoTarjeta = Number(metodoPagoValores.tarjeta || 0);
+    const pagoTransferencia = Number(metodoPagoValores.transferencia || 0);
+    const pagoDolares = Number(metodoPagoValores.dolares || 0);
+    const sumaPagos =
+      Number((pagoEfectivo + pagoTarjeta + pagoTransferencia + pagoDolares).toFixed(2));
+
+    if (totalRecibido !== sumaPagos) {
+      setMetodoPagoError(
+        `La suma debe ser exactamente L ${totalRecibido.toFixed(2)}`,
+      );
+      return;
+    }
+
+    const ventaActualizada = {
+      ...selectedVentaForPago,
+      efectivo: pagoEfectivo,
+      tarjeta: pagoTarjeta,
+      transferencia: pagoTransferencia,
+      dolares: pagoDolares,
+      dolares_usd: selectedVentaForPago.dolares_usd || 0,
+    };
+
+    try {
+      if (estaConectado() && selectedVentaForPago?.id != null) {
+        const { error } = await supabase
+          .from("ventas")
+          .update({
+            efectivo: pagoEfectivo,
+            tarjeta: pagoTarjeta,
+            transferencia: pagoTransferencia,
+            dolares: pagoDolares,
+          })
+          .eq("id", selectedVentaForPago.id);
+        if (error) {
+          console.warn("No se pudo actualizar la venta en Supabase:", error);
+        }
+      }
+    } catch (err) {
+      console.warn("Error actualizando venta en Supabase:", err);
+    }
+
+    try {
+      await upsertOne(STORE.VENTAS, ventaActualizada);
+    } catch (err) {
+      console.error("Error actualizando venta en localDB:", err);
+      alert("No se pudo guardar la actualización en la base local.");
+    }
+
+    const ventasActualizadas = historialVentas.map((v) =>
+      String(v.id) === String(selectedVentaForPago.id)
+        ? ventaActualizada
+        : v,
+    );
+    setHistorialVentas(ventasActualizadas);
+    setHistorialPagos(normalizarPagosDesdeVentas(ventasActualizadas));
+    setShowMetodoPagoModal(false);
+    setSelectedVentaForPago(null);
+    setMetodoPagoError("");
+  }
+
+  function abrirMetodoPagoModal(venta: any) {
+    setSelectedVentaForPago(venta);
+    setMetodoPagoValores({
+      efectivo: Number(venta.efectivo || 0),
+      tarjeta: Number(venta.tarjeta || 0),
+      transferencia: Number(venta.transferencia || 0),
+      dolares: Number(venta.dolares || 0),
+    });
+    setMetodoPagoError("");
+    setShowMetodoPagoModal(true);
+  }
+
+  function cerrarMetodoPagoModal() {
+    setSelectedVentaForPago(null);
+    setShowMetodoPagoModal(false);
+    setMetodoPagoError("");
   }
 
   async function cargarInsumosBebidasDelDia(tipo: InventarioDiaTipo) {
@@ -13106,9 +13241,6 @@ export default function PuntoDeVentaView({
             dólares: { icon: "💱", color: "#f59e0b" },
           };
 
-          const fmt = (n: number) =>
-            n.toLocaleString("de-DE", { minimumFractionDigits: 2 });
-
           return (
             <div
               style={{
@@ -13202,35 +13334,35 @@ export default function PuntoDeVentaView({
                           label: "Efectivo",
                           icon: "💵",
                           color: "#10b981",
-                          totalTxt: `L ${fmt(hTotales.efectivo)}`,
+                          totalTxt: "",
                         },
                         {
                           key: "tarjeta",
                           label: "Tarjeta",
                           icon: "💳",
                           color: "#3b82f6",
-                          totalTxt: `L ${fmt(hTotales.tarjeta)}`,
+                          totalTxt: "",
                         },
                         {
                           key: "transferencia",
                           label: "Transferencia",
                           icon: "🏦",
                           color: "#8b5cf6",
-                          totalTxt: `L ${fmt(hTotales.transferencia)}`,
+                          totalTxt: "",
                         },
                         {
                           key: "dolares",
                           label: "Dólares",
                           icon: "💱",
                           color: "#f59e0b",
-                          totalTxt: `L ${fmt(hTotales.dolares_lps)}`,
+                          totalTxt: "",
                         },
                         {
                           key: "delivery",
                           label: "Delivery",
                           icon: "🛵",
                           color: "#f43f5e",
-                          totalTxt: `L ${fmt(hTotales.delivery)}`,
+                          totalTxt: "",
                         },
                         {
                           key: "donaciones",
@@ -13270,9 +13402,13 @@ export default function PuntoDeVentaView({
                           <span style={{ fontSize: "0.9rem" }}>
                             {icon} {label}
                           </span>
-                          <span style={{ fontSize: "0.68rem", opacity: 0.85 }}>
-                            {totalTxt}
-                          </span>
+                          {totalTxt ? (
+                            <span
+                              style={{ fontSize: "0.68rem", opacity: 0.85 }}
+                            >
+                              {totalTxt}
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}
@@ -13501,6 +13637,21 @@ export default function PuntoDeVentaView({
                               </td>
                               <td style={{ padding: 8 }}>
                                 <button
+                                  onClick={() => abrirMetodoPagoModal(venta)}
+                                  style={{
+                                    marginRight: 6,
+                                    padding: "5px 10px",
+                                    borderRadius: 8,
+                                    border: "none",
+                                    background: "#0f172a",
+                                    color: "#fff",
+                                    cursor: "pointer",
+                                    fontSize: "0.78rem",
+                                  }}
+                                >
+                                  Método de pago
+                                </button>
+                                <button
                                   onClick={() =>
                                     imprimirFacturaHistorial(venta)
                                   }
@@ -13546,6 +13697,160 @@ export default function PuntoDeVentaView({
             </div>
           );
         })()}
+
+      {showMetodoPagoModal && selectedVentaForPago && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 150000,
+          }}
+          onClick={cerrarMetodoPagoModal}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff",
+              color: "#111",
+              borderRadius: 12,
+              padding: 20,
+              width: "90%",
+              maxWidth: 520,
+              maxHeight: "90vh",
+              overflow: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>
+                Método de pago — Factura {selectedVentaForPago.factura}
+              </h3>
+              <button
+                onClick={cerrarMetodoPagoModal}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  fontSize: 18,
+                  cursor: "pointer",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                marginBottom: 14,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.95rem",
+                  color: "#334155",
+                }}
+              >
+                Total a distribuir: <strong>L {(Number(selectedVentaForPago.total || 0) + Number(selectedVentaForPago.cambio || 0)).toFixed(2)}</strong>
+                {Number(selectedVentaForPago.cambio || 0) > 0 && (
+                  <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem", color: "#64748b" }}>
+                    Total factura: L {Number(selectedVentaForPago.total || 0).toFixed(2)} + Cambio: L {Number(selectedVentaForPago.cambio || 0).toFixed(2)}
+                  </span>
+                )}
+              </div>
+
+              {[
+                { key: "efectivo", label: "Efectivo" },
+                { key: "tarjeta", label: "Tarjeta" },
+                { key: "transferencia", label: "Transferencia" },
+                { key: "dolares", label: "Dólares" },
+              ].map(({ key, label }) => (
+                <label
+                  key={key}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{label}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={metodoPagoValores[key as keyof typeof metodoPagoValores]}
+                    onChange={(event) => {
+                      const value = Number(event.target.value || 0);
+                      setMetodoPagoValores((prev) => ({
+                        ...prev,
+                        [key]: Number.isFinite(value) ? value : 0,
+                      }));
+                      setMetodoPagoError("");
+                    }}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid #cbd5e1",
+                      width: "100%",
+                      fontSize: "0.95rem",
+                    }}
+                  />
+                </label>
+              ))}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <div style={{ color: "#475569" }}>
+                  Suma actual: <strong>L {(
+                    Number(metodoPagoValores.efectivo || 0) +
+                    Number(metodoPagoValores.tarjeta || 0) +
+                    Number(metodoPagoValores.transferencia || 0) +
+                    Number(metodoPagoValores.dolares || 0)
+                  ).toFixed(2)}</strong>
+                </div>
+                <button
+                  onClick={guardarMetodoPagoVenta}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: "#0f172a",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  Aceptar
+                </button>
+              </div>
+              {metodoPagoError && (
+                <div style={{ color: "#b91c1c", fontSize: "0.92rem" }}>
+                  {metodoPagoError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Historial de Facturas de Crédito */}
       {showHistorialCreditos && (
