@@ -2538,6 +2538,8 @@ export default function PuntoDeVentaView({
   const [showClienteModal, setShowClienteModal] = useState(false);
   // Modal para envíos de pedido
   const [showEnvioModal, setShowEnvioModal] = useState(false);
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [deliveryCostoInput, setDeliveryCostoInput] = useState("");
   const [envioCliente, setEnvioCliente] = useState("");
   const [envioCelular, setEnvioCelular] = useState("");
   const [envioTipoPago, setEnvioTipoPago] = useState<
@@ -8105,6 +8107,38 @@ export default function PuntoDeVentaView({
                   Pedido por Teléfono
                 </button>
 
+                <button
+                  style={{
+                    background:
+                      theme === "lite"
+                        ? "linear-gradient(90deg,#f59e0b,#d97706)"
+                        : "#92400e",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "10px 20px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: "pointer",
+                    boxShadow: "0 6px 18px rgba(16,24,40,0.06)",
+                    transition: "transform 0.18s, box-shadow 0.18s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-3px)";
+                    e.currentTarget.style.boxShadow = "0 10px 30px rgba(16,24,40,0.12)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 6px 18px rgba(16,24,40,0.06)";
+                  }}
+                  onClick={() => {
+                    setDeliveryCostoInput("");
+                    setShowDeliveryModal(true);
+                  }}
+                >
+                  🛵 Delivery
+                </button>
+
                 {posConfig.credito_habilitado && (
                   <>
                     <button
@@ -9561,6 +9595,192 @@ export default function PuntoDeVentaView({
                   ? "🏛️ Continuar con Factura SAR"
                   : "🧾 Continuar con Recibo"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de costo de Delivery */}
+      {showDeliveryModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 12000,
+          }}
+        >
+          <div
+            style={{
+              background: theme === "lite" ? "#fff" : "#1e1e2e",
+              borderRadius: 16,
+              padding: 0,
+              width: 360,
+              maxWidth: "95vw",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
+              overflow: "hidden",
+            }}
+          >
+            {/* Encabezado */}
+            <div
+              style={{
+                background: "linear-gradient(135deg,#f59e0b,#d97706)",
+                padding: "16px 20px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span style={{ color: "#fff", fontWeight: 800, fontSize: 18 }}>
+                🛵 Costo de Delivery
+              </span>
+              <button
+                onClick={() => setShowDeliveryModal(false)}
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  border: "1px solid rgba(255,255,255,0.4)",
+                  color: "#fff",
+                  borderRadius: 8,
+                  padding: "4px 12px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            {/* Cuerpo */}
+            <div style={{ padding: "20px 24px" }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 8,
+                  fontWeight: 600,
+                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                  fontSize: 14,
+                }}
+              >
+                Ingresa el costo de envío (L)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                autoFocus
+                value={deliveryCostoInput}
+                onChange={(e) => setDeliveryCostoInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const costo = parseFloat(deliveryCostoInput);
+                    if (!isNaN(costo) && costo > 0) {
+                      setSeleccionados((prev) => [
+                        ...prev,
+                        {
+                          id: "DELIVERY_" + Date.now(),
+                          nombre: "Delivery",
+                          precio: costo,
+                          cantidad: 1,
+                          tipo: "comida" as const,
+                        },
+                      ]);
+                      setShowDeliveryModal(false);
+                    }
+                  }
+                }}
+                placeholder="0.00"
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  fontSize: 22,
+                  fontWeight: 700,
+                  borderRadius: 10,
+                  border: "2px solid #f59e0b",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  background: theme === "lite" ? "#fffbeb" : "#2a2000",
+                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                  textAlign: "center",
+                }}
+              />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: 8,
+                  marginTop: 12,
+                }}
+              >
+                {[20, 30, 40, 50, 60, 80].map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setDeliveryCostoInput(String(v))}
+                    style={{
+                      padding: "8px",
+                      borderRadius: 8,
+                      border: "1px solid #f59e0b",
+                      background: deliveryCostoInput === String(v) ? "#f59e0b" : theme === "lite" ? "#fff" : "#2a2a2a",
+                      color: deliveryCostoInput === String(v) ? "#fff" : theme === "lite" ? "#111" : "#f5f5f5",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 14,
+                    }}
+                  >
+                    L {v}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button
+                  onClick={() => setShowDeliveryModal(false)}
+                  style={{
+                    flex: 1,
+                    padding: "11px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: "transparent",
+                    color: theme === "lite" ? "#555" : "#aaa",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontSize: 14,
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    const costo = parseFloat(deliveryCostoInput);
+                    if (!isNaN(costo) && costo > 0) {
+                      setSeleccionados((prev) => [
+                        ...prev,
+                        {
+                          id: "DELIVERY_" + Date.now(),
+                          nombre: "Delivery",
+                          precio: costo,
+                          cantidad: 1,
+                          tipo: "comida" as const,
+                        },
+                      ]);
+                      setShowDeliveryModal(false);
+                    }
+                  }}
+                  style={{
+                    flex: 2,
+                    padding: "11px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "linear-gradient(135deg,#f59e0b,#d97706)",
+                    color: "#fff",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    fontSize: 15,
+                  }}
+                >
+                  ✓ Agregar al pedido
+                </button>
+              </div>
             </div>
           </div>
         </div>
