@@ -2184,7 +2184,7 @@ export default function PuntoDeVentaView({
         if (transferenciaTotal > 0)
           pagosHtml += `<div style='font-size:14px; margin-bottom:3px;'><span style='float:left;'>Transferencia:</span><span style='float:right;'>L ${transferenciaTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
         if (cambioTotal > 0)
-          pagosHtml += `<div style='font-size:15px; margin-top:6px; padding-top:6px; border-top:1px solid #000; font-weight:700;'><span style='float:left;'>CAMBIO:</span><span style='float:right;'>L ${cambioTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
+          pagosHtml += `<div style='margin-top:10px; padding:8px 6px; border-top:2px solid #000; border-bottom:2px solid #000;'><span style='float:left; font-size:15px; font-weight:900;'>CAMBIO:</span><span style='float:right; font-size:22px; font-weight:900;'>L ${cambioTotal.toFixed(2)}</span><div style='clear:both;'></div></div>`;
         pagosHtml += "</div>";
       }
       const comprobanteHtml = `
@@ -5640,7 +5640,7 @@ export default function PuntoDeVentaView({
         exchangeRate={tasaCambio}
         theme={theme}
         clientePuntosActuales={clientePuntosActuales}
-        puntosAAcumular={puntosAAcumularVenta}
+        puntosAAcumular={acumularPuntosChoice === true ? puntosAAcumularVenta : undefined}
         puntosCargando={clientePuntosCargando}
         puntosError={clientePuntosError}
         onPagoConfirmado={async (paymentData) => {
@@ -6262,7 +6262,7 @@ export default function PuntoDeVentaView({
                           (pdMontoProductos + pdCostoEnvio),
                       );
                       if (pdCambio > 0)
-                        ph += `<div style='font-size:13px; font-weight:700; display:flex; justify-content:space-between; border-top:1px solid #000; margin-top:4px; padding-top:4px;'><span>CAMBIO:</span><span>L ${pdCambio.toFixed(2)}</span></div>`;
+                        ph += `<div style='font-weight:900; display:flex; justify-content:space-between; align-items:baseline; border-top:2px solid #000; border-bottom:2px solid #000; margin-top:6px; padding:6px 0;'><span style='font-size:15px;'>CAMBIO:</span><span style='font-size:22px;'>L ${pdCambio.toFixed(2)}</span></div>`;
                       ph += "</div>";
                       return ph;
                     })()}
@@ -6587,11 +6587,10 @@ export default function PuntoDeVentaView({
               }
 
               if (cambioValue > 0) {
+                pagosHtml += "<div style='margin-top:8px; padding:6px 0; border-top:2px solid #000; border-bottom:2px solid #000;'>";
+                pagosHtml += "<span style='float:left; font-size:15px; font-weight:900;'>CAMBIO:</span>";
                 pagosHtml +=
-                  "<div style='font-size:15px; margin-top:6px; padding-top:6px; border-top:1px solid #000; font-weight:700;'>";
-                pagosHtml += "<span style='float:left;'>CAMBIO:</span>";
-                pagosHtml +=
-                  "<span style='float:right;'>L " +
+                  "<span style='float:right; font-size:22px; font-weight:900;'>L " +
                   cambioValue.toFixed(2) +
                   "</span>";
                 pagosHtml += "<div style='clear:both;'></div>";

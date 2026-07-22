@@ -305,7 +305,9 @@ export function buildRecibo(datos: DatosRecibo): Uint8Array {
 
   if (datos.tipoPago) push(fila2Cols("Pago:", datos.tipoPago));
   if (datos.cambio !== undefined && datos.cambio > 0) {
-    push(fila2Cols("Cambio:", "L " + datos.cambio.toFixed(2)));
+    push(negrita(true), tamanoDoble(true));
+    push(fila2Cols("CAMBIO:", "L " + datos.cambio.toFixed(2)));
+    push(tamanoDoble(false), negrita(false));
   }
 
   push(linea());

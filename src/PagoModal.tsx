@@ -329,16 +329,23 @@ export default function PaymentModal({
           style={{
             width: 1100,
             maxWidth: "99%",
-            background: theme === "lite" ? "white" : "#2a2a2a",
-            borderRadius: 10,
-            padding: 16,
+            background: theme === "lite" ? "#f8fafc" : "#1e1e2e",
+            borderRadius: 18,
+            padding: 0,
             maxHeight: "94vh",
             overflow: "auto",
             color: theme === "lite" ? "#111" : "#f5f5f5",
+            boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
           }}
         >
+          {/* Barra de título */}
           <div
             style={{
+              background: theme === "lite"
+                ? "linear-gradient(135deg,#1976d2,#0ea5e9)"
+                : "linear-gradient(135deg,#1e3a5f,#1976d2)",
+              borderRadius: "18px 18px 0 0",
+              padding: "16px 20px",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
@@ -347,23 +354,34 @@ export default function PaymentModal({
             <h3
               style={{
                 margin: 0,
-                color: theme === "lite" ? "#111" : "#f5f5f5",
+                color: "#fff",
+                fontSize: 20,
+                fontWeight: 800,
+                letterSpacing: 0.5,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
               }}
             >
-              Registrar Pago
+              💰 Registrar Pago
             </h3>
             <button
               onClick={onClose}
               className="btn-opaque"
               style={{
-                border: theme === "lite" ? "1px solid #ddd" : "1px solid #555",
-                color: theme === "lite" ? "#111" : "#f5f5f5",
-                background: "transparent",
+                border: "1px solid rgba(255,255,255,0.4)",
+                color: "#fff",
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: 8,
+                padding: "6px 14px",
+                cursor: "pointer",
+                fontWeight: 600,
               }}
             >
-              Cerrar
+              ✕ Cerrar
             </button>
           </div>
+          <div style={{ padding: 18 }}>
 
           {/* Banner donación aprobada */}
           {isDonacion && (
@@ -407,7 +425,14 @@ export default function PaymentModal({
               style={{
                 gridColumn: "1 / -1",
                 textAlign: "center",
-                marginBottom: 8,
+                marginBottom: 12,
+                padding: "18px 24px",
+                borderRadius: 14,
+                background: theme === "lite"
+                  ? "linear-gradient(135deg,#eff6ff,#dbeafe)"
+                  : "linear-gradient(135deg,#1e3a5f,#1e2a4a)",
+                border: theme === "lite" ? "1px solid #bfdbfe" : "1px solid #1e40af",
+                boxShadow: theme === "lite" ? "0 2px 12px rgba(25,118,210,0.08)" : "none",
               }}
             >
               <div
@@ -421,14 +446,33 @@ export default function PaymentModal({
               </div>
               <div
                 style={{
-                  fontSize: 32,
+                  fontSize: 36,
                   fontWeight: 900,
                   color: "#1976d2",
                   marginTop: 4,
+                  letterSpacing: 1,
                 }}
               >
                 {currency(totalPedido)}
               </div>
+              {/* Cambio prominente debajo del total */}
+              {remaining < 0 && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: "10px 24px",
+                    borderRadius: 12,
+                    background: "linear-gradient(135deg,#d1fae5,#bbf7d0)",
+                    border: "2px solid #16a34a",
+                    display: "inline-block",
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#166534", fontWeight: 600, marginBottom: 2 }}>Cambio a devolver</div>
+                  <div style={{ fontSize: 30, fontWeight: 900, color: "#16a34a", letterSpacing: 1 }}>
+                    {currency(Math.abs(remaining))}
+                  </div>
+                </div>
+              )}
             </div>
             {typeof puntosAAcumular !== "undefined" &&
               (puntosCargando || puntosError || puntosAAcumular > 0) && (
@@ -516,7 +560,16 @@ export default function PaymentModal({
                 </div>
               )}
             {/* izquierda: mini tabla de pagos y totales */}
-            <div style={{ color: theme === "lite" ? "#111" : "#f5f5f5" }}>
+            <div
+              style={{
+                color: theme === "lite" ? "#111" : "#f5f5f5",
+                background: theme === "lite" ? "#fff" : "#252535",
+                border: theme === "lite" ? "1px solid #e0e7ef" : "1px solid #374151",
+                borderRadius: 14,
+                padding: 14,
+                boxShadow: theme === "lite" ? "0 2px 12px rgba(0,0,0,0.07)" : "0 2px 12px rgba(0,0,0,0.3)",
+              }}
+            >
               Pedido
               <div style={{ marginBottom: 8 }}>
                 Total a pagar: <strong>{currency(totalPedido)}</strong>
@@ -731,10 +784,12 @@ export default function PaymentModal({
             <div
               style={{
                 border:
-                  theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
-                borderRadius: 8,
-                padding: 10,
+                  theme === "lite" ? "1px solid #e0e7ef" : "1px solid #374151",
+                borderRadius: 14,
+                padding: 16,
                 fontSize: 13,
+                background: theme === "lite" ? "#fff" : "#252535",
+                boxShadow: theme === "lite" ? "0 2px 12px rgba(0,0,0,0.07)" : "0 2px 12px rgba(0,0,0,0.3)",
               }}
             >
               <div style={{ marginBottom: 16 }}>
@@ -1010,146 +1065,9 @@ export default function PaymentModal({
                 </div>
               )}
 
-              {tipo === "tarjeta" && (
-                <>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={labelStyle}>Banco</label>
-                    <select
-                      value={banco}
-                      onChange={(e) => setBanco(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="">-- Seleccionar banco --</option>
-                      <option value="BAC Honduras">BAC Honduras </option>
-                      <option value="Banco Atlántida">Banco Atlántida</option>
-                      <option value="Banco de Occidente">
-                        Banco de Occidente{" "}
-                      </option>
-                      <option value="Banco Ficohsa">Banco Ficohsa</option>
-                      <option value="Banco Banpaís">Banco Banpaís </option>
-                      <option value="Banco Davivienda">
-                        Banco Davivienda{" "}
-                      </option>
-                      <option value="Banco Promérica">Banco Promérica</option>
-                      <option value="Banco Lafise">Banco Lafise</option>
-                      <option value="Banco Ficensa">Banco Ficensa</option>
-                      <option value="Banco de los Trabajadores">
-                        Banco de los Trabajadores{" "}
-                      </option>
-                      <option value="Banco Azteca">Banco Azteca</option>
-                      <option value="Banrural Honduras">
-                        Banrural Honduras
-                      </option>
-                      <option value="Banco Hondureño del Café">
-                        Banco Hondureño del Café
-                      </option>
-                    </select>
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={labelStyle}>Tarjeta (últimos 4)</label>
-                    <input
-                      value={tarjeta}
-                      onChange={(e) => setTarjeta(e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 8,
-                    }}
-                  >
-                    <div>
-                      <label style={labelStyle}>Factura</label>
-                      <input
-                        value={factura}
-                        onChange={(e) => setFactura(e.target.value)}
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div>
-                      <label style={labelStyle}>Autorizador</label>
-                      <input
-                        value={autorizador}
-                        onChange={(e) => setAutorizador(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            parseNumber(monto) > 0 &&
-                            banco &&
-                            tarjeta &&
-                            autorizador
-                          ) {
-                            agregarPago();
-                          }
-                        }}
-                        style={inputStyle}
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
+              {/* Campos banco/tarjeta/factura/autorizador ocultos intencionalmente */}
 
-              {tipo === "transferencia" && (
-                <>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={labelStyle}>Banco</label>
-                    <select
-                      value={banco}
-                      onChange={(e) => setBanco(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="">-- Seleccionar banco --</option>
-                      <option value="BAC Honduras">
-                        BAC Honduras — (Banco de América Central Honduras)
-                      </option>
-                      <option value="Banco Atlántida">Banco Atlántida</option>
-                      <option value="Banco de Occidente">
-                        Banco de Occidente — Banocc
-                      </option>
-                      <option value="Banco Ficohsa">Banco Ficohsa</option>
-                      <option value="Banco Banpaís">
-                        Banco Banpaís — (Banco del País)
-                      </option>
-                      <option value="Banco Davivienda">
-                        Banco Davivienda — Davi
-                      </option>
-                      <option value="Banco Promérica">Banco Promérica</option>
-                      <option value="Banco Lafise">Banco Lafise</option>
-                      <option value="Banco Ficensa">Banco Ficensa</option>
-                      <option value="Banco de los Trabajadores">
-                        Banco de los Trabajadores — BanTrab
-                      </option>
-                      <option value="Banco Azteca">Banco Azteca</option>
-                      <option value="Banrural Honduras">
-                        Banrural Honduras
-                      </option>
-                      <option value="Banco Hondureño del Café">
-                        Banco Hondureño del Café
-                      </option>
-                    </select>
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={labelStyle}>Referencia</label>
-                    <input
-                      value={referencia}
-                      onChange={(e) => setReferencia(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (
-                          e.key === "Enter" &&
-                          parseNumber(monto) > 0 &&
-                          banco &&
-                          referencia
-                        ) {
-                          agregarPago();
-                        }
-                      }}
-                      style={inputStyle}
-                    />
-                  </div>
-                </>
-              )}
+              {/* Campos banco/referencia para transferencia ocultos intencionalmente */}
 
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button
@@ -1568,6 +1486,7 @@ export default function PaymentModal({
               </div>
             </div>
           )}
+          </div>{/* /padding wrapper */}
         </div>
       </ZoomWrapper>
     </div>
