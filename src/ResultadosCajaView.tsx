@@ -223,7 +223,6 @@ export default function ResultadosCajaView() {
       const diferencia = Number(cierre.diferencia || 0);
       const difSign =
         diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
-      const difAbs = Math.abs(diferencia).toFixed(2);
 
       const totalVentasDia =
         Number(cierre.efectivo_dia || 0) +
@@ -234,6 +233,17 @@ export default function ResultadosCajaView() {
       );
       const efectivoNetoParaReporte =
         Number(cierre.efectivo_dia || 0) - gastosParaReporte;
+
+      // Diferencias por tipo — usando efectivo NETO (igual que la vista)
+      const efectivoDiaNetoR = Number(cierre.efectivo_dia || 0) - gastosParaReporte;
+      const efDiffR = Number(cierre.efectivo_registrado || 0) - efectivoDiaNetoR;
+      const taDiffR = Number(cierre.monto_tarjeta_registrado || 0) - Number(cierre.monto_tarjeta_dia || 0);
+      const trDiffR = Number(cierre.transferencias_registradas || 0) - Number(cierre.transferencias_dia || 0);
+      const usdDiffUSDR = Number(cierre.dolares_registrado || 0) - Number(cierre.dolares_dia || 0);
+      // Contribución de dólares en LPS derivada del total guardado para que el desglose cuadre exactamente
+      const usdDiffLpsR = Number((diferencia - efDiffR - taDiffR - trDiffR).toFixed(2));
+      const signR = (v: number) => v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+      const colorR = (v: number) => v < 0 ? "color:#c00;" : v > 0 ? "color:#16a34a;" : "";
 
       const fmtFecha = (d: string) => {
         if (!d) return "—";
@@ -295,9 +305,15 @@ export default function ResultadosCajaView() {
             <div class="row"><span>Transferencia:</span><span>L ${Number(cierre.transferencias_registradas || 0).toFixed(2)}</span></div>
             <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(cierre.dolares_registrado || 0).toFixed(2)}</span></div>
             <div class="divider"></div>
-            <div class="row" style="font-size: 16px;">
-              <span>DIFERENCIA:</span>
-              <span>L ${difAbs}</span>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">DIFERENCIA POR TIPO</div>
+            <div class="row"><span>Efectivo:</span><span style="${colorR(efDiffR)}">L ${signR(efDiffR)}</span></div>
+            <div class="row"><span>Tarjeta:</span><span style="${colorR(taDiffR)}">L ${signR(taDiffR)}</span></div>
+            <div class="row"><span>Transferencia:</span><span style="${colorR(trDiffR)}">L ${signR(trDiffR)}</span></div>
+            <div class="row"><span>D&#xf3;lares ($ ${signR(usdDiffUSDR)}):</span><span style="${colorR(usdDiffLpsR)}">L ${signR(usdDiffLpsR)}</span></div>
+            <div class="divider"></div>
+            <div class="row" style="font-size: 16px; font-weight: bold;">
+              <span>DIFERENCIA TOTAL:</span>
+              <span style="${colorR(diferencia)}">L ${diferencia > 0 ? "+" : ""}${diferencia.toFixed(2)}</span>
             </div>
             <div style="text-align: right; font-size: 15px; font-weight: bold;">${difSign}</div>
             ${cierre.observacion ? `<div class="row" style="font-size:13px"><span>Obs:</span><span>${cierre.observacion}</span></div>` : ""}

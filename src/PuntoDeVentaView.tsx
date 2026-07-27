@@ -246,7 +246,7 @@ export default function PuntoDeVentaView({
   const [chequeosHistory, setChequeosHistory] = useState<any[]>([]);
   const [chequeoRegistrado, setChequeoRegistrado] = useState<string>("");
   const [chequeoActual, setChequeoActual] = useState<number | null>(null);
-  const [chequeoAlertOn, setChequeoAlertOn] = useState(false);
+  const [_chequeoAlertOn, setChequeoAlertOn] = useState(false);
   // Modal DATOS DE FACTURACIÓN
   const [showDatosFactModal, setShowDatosFactModal] = useState(false);
   const [caiFactData, setCaiFactData] = useState<any>(null);
@@ -1232,8 +1232,9 @@ export default function PuntoDeVentaView({
     const pagoTarjeta = Number(metodoPagoValores.tarjeta || 0);
     const pagoTransferencia = Number(metodoPagoValores.transferencia || 0);
     const pagoDolares = Number(metodoPagoValores.dolares || 0);
-    const sumaPagos =
-      Number((pagoEfectivo + pagoTarjeta + pagoTransferencia + pagoDolares).toFixed(2));
+    const sumaPagos = Number(
+      (pagoEfectivo + pagoTarjeta + pagoTransferencia + pagoDolares).toFixed(2),
+    );
 
     if (totalRecibido !== sumaPagos) {
       setMetodoPagoError(
@@ -1278,9 +1279,7 @@ export default function PuntoDeVentaView({
     }
 
     const ventasActualizadas = historialVentas.map((v) =>
-      String(v.id) === String(selectedVentaForPago.id)
-        ? ventaActualizada
-        : v,
+      String(v.id) === String(selectedVentaForPago.id) ? ventaActualizada : v,
     );
     setHistorialVentas(ventasActualizadas);
     setHistorialPagos(normalizarPagosDesdeVentas(ventasActualizadas));
@@ -5597,32 +5596,6 @@ export default function PuntoDeVentaView({
         >
           ☰ Menú
         </button>
-        <button
-          onClick={async () => {
-            setShowChequeoModal(true);
-            setChequeoLoading(true);
-            const actual = await fetchActualEfectivo();
-            setChequeoActual(actual);
-            await fetchChequeosHistory();
-            setChequeoLoading(false);
-          }}
-          title="Chequeo de Efectivo"
-          style={{
-            marginLeft: 10,
-            background: chequeoAlertOn ? "#f59e0b" : "#0b74de",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 14px",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: "pointer",
-            boxShadow: "0 2px 8px #0003",
-            animation: chequeoAlertOn ? "pulse 1s ease-in-out" : "none",
-          }}
-        >
-          {chequeoAlertOn ? "¡Chequeo!" : "Chequeo de Efectivo"}
-        </button>
         {/* Chips de conteo del turno (ocultos) */}
         <div style={{ display: "none" }} />
       </div>
@@ -5642,7 +5615,9 @@ export default function PuntoDeVentaView({
         exchangeRate={tasaCambio}
         theme={theme}
         clientePuntosActuales={clientePuntosActuales}
-        puntosAAcumular={acumularPuntosChoice === true ? puntosAAcumularVenta : undefined}
+        puntosAAcumular={
+          acumularPuntosChoice === true ? puntosAAcumularVenta : undefined
+        }
         puntosCargando={clientePuntosCargando}
         puntosError={clientePuntosError}
         onPagoConfirmado={async (paymentData) => {
@@ -6589,8 +6564,10 @@ export default function PuntoDeVentaView({
               }
 
               if (cambioValue > 0) {
-                pagosHtml += "<div style='margin-top:8px; padding:6px 0; border-top:2px solid #000; border-bottom:2px solid #000;'>";
-                pagosHtml += "<span style='float:left; font-size:15px; font-weight:900;'>CAMBIO:</span>";
+                pagosHtml +=
+                  "<div style='margin-top:8px; padding:6px 0; border-top:2px solid #000; border-bottom:2px solid #000;'>";
+                pagosHtml +=
+                  "<span style='float:left; font-size:15px; font-weight:900;'>CAMBIO:</span>";
                 pagosHtml +=
                   "<span style='float:right; font-size:22px; font-weight:900;'>L " +
                   cambioValue.toFixed(2) +
@@ -8125,11 +8102,13 @@ export default function PuntoDeVentaView({
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.transform = "translateY(-3px)";
-                    e.currentTarget.style.boxShadow = "0 10px 30px rgba(16,24,40,0.12)";
+                    e.currentTarget.style.boxShadow =
+                      "0 10px 30px rgba(16,24,40,0.12)";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.transform = "translateY(0)";
-                    e.currentTarget.style.boxShadow = "0 6px 18px rgba(16,24,40,0.06)";
+                    e.currentTarget.style.boxShadow =
+                      "0 6px 18px rgba(16,24,40,0.06)";
                   }}
                   onClick={() => {
                     setDeliveryCostoInput("");
@@ -9089,7 +9068,9 @@ export default function PuntoDeVentaView({
                   type="text"
                   placeholder="Ingrese el nombre del cliente"
                   value={nombreCliente}
-                  onChange={(e) => setNombreCliente(e.target.value.toUpperCase())}
+                  onChange={(e) =>
+                    setNombreCliente(e.target.value.toUpperCase())
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && nombreCliente.trim()) {
                       if (
@@ -9164,7 +9145,9 @@ export default function PuntoDeVentaView({
                     gap: 8,
                   }}
                 >
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1976d2" }}>
+                  <div
+                    style={{ fontSize: 13, fontWeight: 700, color: "#1976d2" }}
+                  >
                     Coincidencias
                   </div>
                   {cargandoSugerenciasClientes ? (
@@ -9721,8 +9704,18 @@ export default function PuntoDeVentaView({
                       padding: "8px",
                       borderRadius: 8,
                       border: "1px solid #f59e0b",
-                      background: deliveryCostoInput === String(v) ? "#f59e0b" : theme === "lite" ? "#fff" : "#2a2a2a",
-                      color: deliveryCostoInput === String(v) ? "#fff" : theme === "lite" ? "#111" : "#f5f5f5",
+                      background:
+                        deliveryCostoInput === String(v)
+                          ? "#f59e0b"
+                          : theme === "lite"
+                            ? "#fff"
+                            : "#2a2a2a",
+                      color:
+                        deliveryCostoInput === String(v)
+                          ? "#fff"
+                          : theme === "lite"
+                            ? "#111"
+                            : "#f5f5f5",
                       cursor: "pointer",
                       fontWeight: 600,
                       fontSize: 14,
@@ -13983,10 +13976,27 @@ export default function PuntoDeVentaView({
                   color: "#334155",
                 }}
               >
-                Total a distribuir: <strong>L {(Number(selectedVentaForPago.total || 0) + Number(selectedVentaForPago.cambio || 0)).toFixed(2)}</strong>
+                Total a distribuir:{" "}
+                <strong>
+                  L{" "}
+                  {(
+                    Number(selectedVentaForPago.total || 0) +
+                    Number(selectedVentaForPago.cambio || 0)
+                  ).toFixed(2)}
+                </strong>
                 {Number(selectedVentaForPago.cambio || 0) > 0 && (
-                  <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem", color: "#64748b" }}>
-                    Total factura: L {Number(selectedVentaForPago.total || 0).toFixed(2)} + Cambio: L {Number(selectedVentaForPago.cambio || 0).toFixed(2)}
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: 4,
+                      fontSize: "0.85rem",
+                      color: "#64748b",
+                    }}
+                  >
+                    Total factura: L{" "}
+                    {Number(selectedVentaForPago.total || 0).toFixed(2)} +
+                    Cambio: L{" "}
+                    {Number(selectedVentaForPago.cambio || 0).toFixed(2)}
                   </span>
                 )}
               </div>
@@ -14010,7 +14020,9 @@ export default function PuntoDeVentaView({
                     type="number"
                     step="0.01"
                     min="0"
-                    value={metodoPagoValores[key as keyof typeof metodoPagoValores]}
+                    value={
+                      metodoPagoValores[key as keyof typeof metodoPagoValores]
+                    }
                     onChange={(event) => {
                       const value = Number(event.target.value || 0);
                       setMetodoPagoValores((prev) => ({
@@ -14039,12 +14051,16 @@ export default function PuntoDeVentaView({
                 }}
               >
                 <div style={{ color: "#475569" }}>
-                  Suma actual: <strong>L {(
-                    Number(metodoPagoValores.efectivo || 0) +
-                    Number(metodoPagoValores.tarjeta || 0) +
-                    Number(metodoPagoValores.transferencia || 0) +
-                    Number(metodoPagoValores.dolares || 0)
-                  ).toFixed(2)}</strong>
+                  Suma actual:{" "}
+                  <strong>
+                    L{" "}
+                    {(
+                      Number(metodoPagoValores.efectivo || 0) +
+                      Number(metodoPagoValores.tarjeta || 0) +
+                      Number(metodoPagoValores.transferencia || 0) +
+                      Number(metodoPagoValores.dolares || 0)
+                    ).toFixed(2)}
+                  </strong>
                 </div>
                 <button
                   onClick={guardarMetodoPagoVenta}

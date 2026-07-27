@@ -474,7 +474,6 @@ export default function RegistroCierreView({
       const diferencia = Number(registro.diferencia);
       const difSign =
         diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
-      const difAbs = Math.abs(diferencia).toFixed(2);
       const efectivoNetoParaReporte = Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
 
       const fmtFecha = (d: string) => {
@@ -567,6 +566,17 @@ export default function RegistroCierreView({
           ? Math.round(totalBebidasReporte)
           : Math.round(bebidasDia);
 
+      // Diferencias por tipo para el impreso — usando efectivo NETO (igual que la vista)
+      const efectivoDiaNeto = Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
+      const efDiffPrint = Number(registro.efectivo_registrado || 0) - efectivoDiaNeto;
+      const taDiffPrint = Number(registro.monto_tarjeta_registrado || 0) - Number(registro.monto_tarjeta_dia || 0);
+      const trDiffPrint = Number(registro.transferencias_registradas || 0) - Number(registro.transferencias_dia || 0);
+      const usdDiffUSD = Number(registro.dolares_registrado || 0) - Number(registro.dolares_dia || 0);
+      // Contribución de dólares en LPS derivada del total guardado para que el desglose cuadre exactamente
+      const usdDiffLpsPrint = Number((diferencia - efDiffPrint - taDiffPrint - trDiffPrint).toFixed(2));
+      const signPrint = (v: number) => v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+      const colorPrint = (v: number) => v < 0 ? "color:#c00;" : v > 0 ? "color:#16a34a;" : "";
+
       const html = `
         <html>
           <head>
@@ -634,9 +644,15 @@ export default function RegistroCierreView({
             <div class="row"><span>D&#xf3;lares (USD):</span><span>$ ${Number(registro.dolares_registrado).toFixed(2)}</span></div>
 
             <div class="divider"></div>
-            <div class="row" style="font-size: 16px;">
-              <span>DIFERENCIA:</span>
-              <span>L ${difAbs}</span>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 10px;">DIFERENCIA POR TIPO</div>
+            <div class="row"><span>Efectivo:</span><span style="${colorPrint(efDiffPrint)}">L ${signPrint(efDiffPrint)}</span></div>
+            <div class="row"><span>Tarjeta:</span><span style="${colorPrint(taDiffPrint)}">L ${signPrint(taDiffPrint)}</span></div>
+            <div class="row"><span>Transferencia:</span><span style="${colorPrint(trDiffPrint)}">L ${signPrint(trDiffPrint)}</span></div>
+            <div class="row"><span>D&#xf3;lares ($ ${signPrint(usdDiffUSD)}):</span><span style="${colorPrint(usdDiffLpsPrint)}">L ${signPrint(usdDiffLpsPrint)}</span></div>
+            <div class="divider"></div>
+            <div class="row" style="font-size: 16px; font-weight: bold;">
+              <span>DIFERENCIA TOTAL:</span>
+              <span style="${colorPrint(diferencia)}">L ${diferencia > 0 ? "+" : ""}${diferencia.toFixed(2)}</span>
             </div>
             <div style="text-align: right; font-size: 15px; font-weight: bold;">${difSign}</div>
 
@@ -811,11 +827,13 @@ export default function RegistroCierreView({
         parseFloat(transferencias).toFixed(2),
       );
       const fondoFijoRegistrado = 0;
+      // Usar efectivo NETO (igual que "Resultado en vivo" de la vista)
+      const efectivoDiaNeto = Number((efectivoDia - gastosDia).toFixed(2));
       const diferencia = Number(
         (
           fondoFijoRegistrado -
           fondoFijoDia +
-          (efectivoRegistrado - efectivoDia) +
+          (efectivoRegistrado - efectivoDiaNeto) +
           (tarjetaRegistrada - tarjetaDia) +
           (transferenciasRegistradas - transferenciasDia) +
           diferenciaDolaresLps
@@ -1552,229 +1570,105 @@ export default function RegistroCierreView({
           {/* Divisor */}
           <div style={{ height: 1, background: "#e2e8f0", margin: "2px 0" }} />
 
-          {/* Tarjetas de valores */}
+          {/* Tabla comparativa Sistema vs Contado */}
           {!loading && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                flex: 1,
-              }}
-            >
-              {/* Efectivo Neto */}
-              <div
-                style={{
-                  background: "#f0fdf4",
-                  border: "1.5px solid #86efac",
-                  borderRadius: 11,
-                  padding: "13px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "#15803d",
-                      letterSpacing: 1.5,
-                      textTransform: "uppercase",
-                      fontWeight: 700,
-                      marginBottom: 2,
-                    }}
-                  >
-                    Efectivo Neto
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+              {/* Encabezados columnas */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, padding: "0 2px" }}>
+                <div style={{ fontSize: 9, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1 }}>Tipo</div>
+                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Sistema</div>
+                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Contado</div>
+                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Diferencia</div>
+              </div>
+
+              {/* Fila Efectivo */}
+              {(() => {
+                const diff = efectivoConteoNum - efectivoNetoSistema;
+                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg = diff > 0 ? "#f0fdf4" : diff < 0 ? "#fef2f2" : "#f8fafc";
+                const border = diff > 0 ? "#86efac" : diff < 0 ? "#fca5a5" : "#e2e8f0";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#15803d" }}>Efectivo</div>
+                      <div style={{ fontSize: 9, color: "#6b7280" }}>neto de gastos</div>
+                    </div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#15803d", fontVariantNumeric: "tabular-nums" }}>L {efectivoNetoSistema.toFixed(2)}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: efectivoFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{efectivoFilled ? `L ${efectivoConteoNum.toFixed(2)}` : "—"}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{efectivoFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
                   </div>
-                  <div style={{ fontSize: 10, color: "#4ade80" }}>
-                    ventas − cambio − gastos
+                );
+              })()}
+
+              {/* Fila Tarjeta */}
+              {(() => {
+                const diff = tarjetaConteoNum - tarjetaSistema;
+                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg = diff > 0 ? "#eff6ff" : diff < 0 ? "#fef2f2" : "#eff6ff";
+                const border = diff > 0 ? "#93c5fd" : diff < 0 ? "#fca5a5" : "#93c5fd";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#1d4ed8" }}>Tarjeta</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#1d4ed8", fontVariantNumeric: "tabular-nums" }}>L {tarjetaSistema.toFixed(2)}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: tarjetaFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{tarjetaFilled ? `L ${tarjetaConteoNum.toFixed(2)}` : "—"}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{tarjetaFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
                   </div>
-                </div>
-                <div
-                  style={{
-                    fontSize: 23,
-                    fontWeight: 800,
-                    color: "#15803d",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  L {efectivoNetoSistema.toFixed(2)}
-                </div>
+                );
+              })()}
+
+              {/* Fila Transferencias */}
+              {(() => {
+                const diff = transferenciasConteoNum - transferenciasSistema;
+                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg = diff > 0 ? "#f5f3ff" : diff < 0 ? "#fef2f2" : "#f5f3ff";
+                const border = diff > 0 ? "#c4b5fd" : diff < 0 ? "#fca5a5" : "#c4b5fd";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#6d28d9" }}>Transfer.</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#6d28d9", fontVariantNumeric: "tabular-nums" }}>L {transferenciasSistema.toFixed(2)}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: transferenciasFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{transferenciasFilled ? `L ${transferenciasConteoNum.toFixed(2)}` : "—"}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{transferenciasFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
+                  </div>
+                );
+              })()}
+
+              {/* Fila Dólares */}
+              {(() => {
+                const diffUSD = dolaresConteoNum - dolaresSistema;
+                const diffLps = diffUSD * precioDolarActual;
+                const diffColor = diffUSD > 0 ? "#166534" : diffUSD < 0 ? "#b91c1c" : "#0f172a";
+                const bg = diffUSD > 0 ? "#fefce8" : diffUSD < 0 ? "#fef2f2" : "#fefce8";
+                const border = diffUSD > 0 ? "#fde047" : diffUSD < 0 ? "#fca5a5" : "#fde047";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#a16207" }}>Dólares</div>
+                      <div style={{ fontSize: 9, color: "#6b7280" }}>USD · tasa L {precioDolarActual.toFixed(2)}</div>
+                    </div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#a16207", fontVariantNumeric: "tabular-nums" }}>$ {dolaresSistema.toFixed(2)}</div>
+                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: dolaresFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{dolaresFilled ? `$ ${dolaresConteoNum.toFixed(2)}` : "—"}</div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{dolaresFilled ? `$ ${diffUSD.toFixed(2)}` : "—"}</div>
+                      {dolaresFilled && precioDolarActual > 0 && <div style={{ fontSize: 10, color: diffColor, fontVariantNumeric: "tabular-nums" }}>L {diffLps.toFixed(2)}</div>}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Fila Gastos */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: "#fff1f2", border: "1.5px solid #fda4af", borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#be123c" }}>Gastos</div>
+                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#be123c", fontVariantNumeric: "tabular-nums" }}>L {gastosSistema.toFixed(2)}</div>
+                <div style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}>—</div>
+                <div style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}>—</div>
               </div>
 
-              {/* Tarjeta */}
-              <div
-                style={{
-                  background: "#eff6ff",
-                  border: "1.5px solid #93c5fd",
-                  borderRadius: 11,
-                  padding: "12px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "#1d4ed8",
-                    letterSpacing: 1.5,
-                    textTransform: "uppercase",
-                    fontWeight: 700,
-                  }}
-                >
-                  Tarjeta
+              {/* Total ventas y diferencia total */}
+              <div style={{ marginTop: 4, borderTop: "2px solid #e2e8f0", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1 }}>Total Ventas Brutas</span>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>L {totalVentasSistema.toFixed(2)}</span>
                 </div>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 800,
-                    color: "#1d4ed8",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  L {tarjetaSistema.toFixed(2)}
-                </div>
-              </div>
-
-              {/* Transferencias */}
-              <div
-                style={{
-                  background: "#f5f3ff",
-                  border: "1.5px solid #c4b5fd",
-                  borderRadius: 11,
-                  padding: "12px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "#6d28d9",
-                    letterSpacing: 1.5,
-                    textTransform: "uppercase",
-                    fontWeight: 700,
-                  }}
-                >
-                  Transferencia
-                </div>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 800,
-                    color: "#6d28d9",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  L {transferenciasSistema.toFixed(2)}
-                </div>
-              </div>
-
-              {/* Dólares */}
-              <div
-                style={{
-                  background: "#fefce8",
-                  border: "1.5px solid #fde047",
-                  borderRadius: 11,
-                  padding: "12px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "#a16207",
-                    letterSpacing: 1.5,
-                    textTransform: "uppercase",
-                    fontWeight: 700,
-                  }}
-                >
-                  Dólares (USD)
-                </div>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 800,
-                    color: "#a16207",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  $ {dolaresSistema.toFixed(2)}
-                </div>
-              </div>
-
-              {/* Gastos */}
-              <div
-                style={{
-                  background: "#fff1f2",
-                  border: "1.5px solid #fda4af",
-                  borderRadius: 11,
-                  padding: "12px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "#be123c",
-                    letterSpacing: 1.5,
-                    textTransform: "uppercase",
-                    fontWeight: 700,
-                  }}
-                >
-                  Gastos del Turno
-                </div>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 800,
-                    color: "#be123c",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  L {gastosSistema.toFixed(2)}
-                </div>
-              </div>
-
-              {/* Total Ventas */}
-              <div
-                style={{
-                  marginTop: 6,
-                  borderTop: "1.5px solid #e2e8f0",
-                  paddingTop: 12,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: "#64748b",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.2,
-                  }}
-                >
-                  Total Ventas Brutas
-                </span>
-                <span
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 900,
-                    color: "#0f172a",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  L {totalVentasSistema.toFixed(2)}
-                </span>
               </div>
             </div>
           )}
