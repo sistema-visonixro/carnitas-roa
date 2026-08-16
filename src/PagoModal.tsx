@@ -341,9 +341,10 @@ export default function PaymentModal({
           {/* Barra de título */}
           <div
             style={{
-              background: theme === "lite"
-                ? "linear-gradient(135deg,#1976d2,#0ea5e9)"
-                : "linear-gradient(135deg,#1e3a5f,#1976d2)",
+              background:
+                theme === "lite"
+                  ? "linear-gradient(135deg,#1976d2,#0ea5e9)"
+                  : "linear-gradient(135deg,#1e3a5f,#1976d2)",
               borderRadius: "18px 18px 0 0",
               padding: "16px 20px",
               display: "flex",
@@ -382,591 +383,463 @@ export default function PaymentModal({
             </button>
           </div>
           <div style={{ padding: 18 }}>
+            {/* Banner donación aprobada */}
+            {isDonacion && (
+              <div
+                style={{
+                  marginTop: 10,
+                  background: "linear-gradient(135deg,#4ade80,#22c55e)",
+                  color: "#fff",
+                  borderRadius: 10,
+                  padding: "14px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  fontWeight: 700,
+                  fontSize: 16,
+                  boxShadow: "0 4px 16px #22c55e44",
+                }}
+              >
+                <span style={{ fontSize: 28 }}>🎁</span>
+                <div>
+                  <div>DONACIÓN APROBADA — Platillo Regalado</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, opacity: 0.9 }}>
+                    Total registrado: L 0.00 &bull; Autorizado por Admin
+                  </div>
+                </div>
+              </div>
+            )}
 
-          {/* Banner donación aprobada */}
-          {isDonacion && (
             <div
               style={{
                 marginTop: 10,
-                background: "linear-gradient(135deg,#4ade80,#22c55e)",
-                color: "#fff",
-                borderRadius: 10,
-                padding: "14px 18px",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                fontWeight: 700,
-                fontSize: 16,
-                boxShadow: "0 4px 16px #22c55e44",
+                display: "grid",
+                gridTemplateColumns: "1fr 420px",
+                gap: 14,
+                fontSize: 13,
               }}
             >
-              <span style={{ fontSize: 28 }}>🎁</span>
-              <div>
-                <div>DONACIÓN APROBADA — Platillo Regalado</div>
-                <div style={{ fontSize: 13, fontWeight: 500, opacity: 0.9 }}>
-                  Total registrado: L 0.00 &bull; Autorizado por Admin
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div
-            style={{
-              marginTop: 10,
-              display: "grid",
-              gridTemplateColumns: "1fr 420px",
-              gap: 14,
-              fontSize: 13,
-            }}
-          >
-            <div />
-            {/* Encabezado prominente con Total a pagar */}
-            <div
-              style={{
-                gridColumn: "1 / -1",
-                textAlign: "center",
-                marginBottom: 12,
-                padding: "18px 24px",
-                borderRadius: 14,
-                background: theme === "lite"
-                  ? "linear-gradient(135deg,#eff6ff,#dbeafe)"
-                  : "linear-gradient(135deg,#1e3a5f,#1e2a4a)",
-                border: theme === "lite" ? "1px solid #bfdbfe" : "1px solid #1e40af",
-                boxShadow: theme === "lite" ? "0 2px 12px rgba(25,118,210,0.08)" : "none",
-              }}
-            >
+              <div />
+              {/* Encabezado prominente con Total a pagar */}
               <div
                 style={{
-                  fontSize: 18,
-                  fontWeight: 700,
-                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                  gridColumn: "1 / -1",
+                  textAlign: "center",
+                  marginBottom: 12,
+                  padding: "18px 24px",
+                  borderRadius: 14,
+                  background:
+                    theme === "lite"
+                      ? "linear-gradient(135deg,#eff6ff,#dbeafe)"
+                      : "linear-gradient(135deg,#1e3a5f,#1e2a4a)",
+                  border:
+                    theme === "lite"
+                      ? "1px solid #bfdbfe"
+                      : "1px solid #1e40af",
+                  boxShadow:
+                    theme === "lite"
+                      ? "0 2px 12px rgba(25,118,210,0.08)"
+                      : "none",
                 }}
               >
-                Total a pagar:
-              </div>
-              <div
-                style={{
-                  fontSize: 36,
-                  fontWeight: 900,
-                  color: "#1976d2",
-                  marginTop: 4,
-                  letterSpacing: 1,
-                }}
-              >
-                {currency(totalPedido)}
-              </div>
-              {/* Cambio prominente debajo del total */}
-              {remaining < 0 && (
                 <div
                   style={{
-                    marginTop: 12,
-                    padding: "10px 24px",
-                    borderRadius: 12,
-                    background: "linear-gradient(135deg,#d1fae5,#bbf7d0)",
-                    border: "2px solid #16a34a",
-                    display: "inline-block",
+                    fontSize: 18,
+                    fontWeight: 700,
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
                   }}
                 >
-                  <div style={{ fontSize: 13, color: "#166534", fontWeight: 600, marginBottom: 2 }}>Cambio a devolver</div>
-                  <div style={{ fontSize: 30, fontWeight: 900, color: "#16a34a", letterSpacing: 1 }}>
-                    {currency(Math.abs(remaining))}
-                  </div>
+                  Total a pagar:
                 </div>
-              )}
-            </div>
-            {typeof puntosAAcumular !== "undefined" &&
-              (puntosCargando || puntosError || puntosAAcumular > 0) && (
                 <div
                   style={{
-                    gridColumn: "1 / -1",
-                    marginBottom: 14,
-                    padding: 12,
-                    borderRadius: 10,
-                    background:
-                      theme === "lite" ? "#f7f9fc" : "rgba(255,255,255,0.05)",
-                    border:
-                      theme === "lite"
-                        ? "1px solid #e2e8f0"
-                        : "1px solid #334155",
+                    fontSize: 36,
+                    fontWeight: 900,
+                    color: "#1976d2",
+                    marginTop: 4,
+                    letterSpacing: 1,
                   }}
                 >
+                  {currency(totalPedido)}
+                </div>
+                {/* Cambio prominente debajo del total */}
+                {remaining < 0 && (
                   <div
                     style={{
-                      fontSize: 14,
-                      fontWeight: 700,
-                      marginBottom: 8,
-                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      marginTop: 12,
+                      padding: "10px 24px",
+                      borderRadius: 12,
+                      background: "linear-gradient(135deg,#d1fae5,#bbf7d0)",
+                      border: "2px solid #16a34a",
+                      display: "inline-block",
                     }}
                   >
-                    Puntos del cliente
-                  </div>
-                  {puntosCargando ? (
-                    <div style={{ color: "#2563eb" }}>
-                      Consultando puntos...
-                    </div>
-                  ) : puntosError ? (
-                    <div style={{ color: "#dc2626" }}>{puntosError}</div>
-                  ) : clientePuntosActuales !== null ? (
-                    <>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: 4,
-                          fontSize: 13,
-                        }}
-                      >
-                        <span>Puntos actuales</span>
-                        <span>{clientePuntosActuales} pts</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: 4,
-                          fontSize: 13,
-                        }}
-                      >
-                        <span>Puntos a acumular</span>
-                        <span>{puntosAAcumular} pts</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginTop: 6,
-                          fontSize: 14,
-                          fontWeight: 700,
-                          color: "#15803d",
-                        }}
-                      >
-                        <span>Puntos totales</span>
-                        <span>
-                          {(clientePuntosActuales ?? 0) +
-                            (puntosAAcumular ?? 0)}{" "}
-                          pts
-                        </span>
-                      </div>
-                    </>
-                  ) : (
                     <div
                       style={{
-                        color: theme === "lite" ? "#475569" : "#cbd5e1",
+                        fontSize: 13,
+                        color: "#166534",
+                        fontWeight: 600,
+                        marginBottom: 2,
                       }}
                     >
-                      Puntos a acumular: {puntosAAcumular} pts
+                      Cambio a devolver
                     </div>
-                  )}
-                </div>
-              )}
-            {/* izquierda: mini tabla de pagos y totales */}
-            <div
-              style={{
-                color: theme === "lite" ? "#111" : "#f5f5f5",
-                background: theme === "lite" ? "#fff" : "#252535",
-                border: theme === "lite" ? "1px solid #e0e7ef" : "1px solid #374151",
-                borderRadius: 14,
-                padding: 14,
-                boxShadow: theme === "lite" ? "0 2px 12px rgba(0,0,0,0.07)" : "0 2px 12px rgba(0,0,0,0.3)",
-              }}
-            >
-              Pedido
-              <div style={{ marginBottom: 8 }}>
-                Total a pagar: <strong>{currency(totalPedido)}</strong>
+                    <div
+                      style={{
+                        fontSize: 30,
+                        fontWeight: 900,
+                        color: "#16a34a",
+                        letterSpacing: 1,
+                      }}
+                    >
+                      {currency(Math.abs(remaining))}
+                    </div>
+                  </div>
+                )}
               </div>
+              {typeof puntosAAcumular !== "undefined" &&
+                (puntosCargando || puntosError || puntosAAcumular > 0) && (
+                  <div
+                    style={{
+                      gridColumn: "1 / -1",
+                      marginBottom: 14,
+                      padding: 12,
+                      borderRadius: 10,
+                      background:
+                        theme === "lite" ? "#f7f9fc" : "rgba(255,255,255,0.05)",
+                      border:
+                        theme === "lite"
+                          ? "1px solid #e2e8f0"
+                          : "1px solid #334155",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 700,
+                        marginBottom: 8,
+                        color: theme === "lite" ? "#111" : "#f5f5f5",
+                      }}
+                    >
+                      Puntos del cliente
+                    </div>
+                    {puntosCargando ? (
+                      <div style={{ color: "#2563eb" }}>
+                        Consultando puntos...
+                      </div>
+                    ) : puntosError ? (
+                      <div style={{ color: "#dc2626" }}>{puntosError}</div>
+                    ) : clientePuntosActuales !== null ? (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            marginBottom: 4,
+                            fontSize: 13,
+                          }}
+                        >
+                          <span>Puntos actuales</span>
+                          <span>{clientePuntosActuales} pts</span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            marginBottom: 4,
+                            fontSize: 13,
+                          }}
+                        >
+                          <span>Puntos a acumular</span>
+                          <span>{puntosAAcumular} pts</span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            marginTop: 6,
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: "#15803d",
+                          }}
+                        >
+                          <span>Puntos totales</span>
+                          <span>
+                            {(clientePuntosActuales ?? 0) +
+                              (puntosAAcumular ?? 0)}{" "}
+                            pts
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div
+                        style={{
+                          color: theme === "lite" ? "#475569" : "#cbd5e1",
+                        }}
+                      >
+                        Puntos a acumular: {puntosAAcumular} pts
+                      </div>
+                    )}
+                  </div>
+                )}
+              {/* izquierda: mini tabla de pagos y totales */}
               <div
                 style={{
+                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                  background: theme === "lite" ? "#fff" : "#252535",
                   border:
-                    theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
-                  borderRadius: 8,
-                  padding: 6,
-                  marginBottom: 12,
-                  fontSize: 13,
+                    theme === "lite"
+                      ? "1px solid #e0e7ef"
+                      : "1px solid #374151",
+                  borderRadius: 14,
+                  padding: 14,
+                  boxShadow:
+                    theme === "lite"
+                      ? "0 2px 12px rgba(0,0,0,0.07)"
+                      : "0 2px 12px rgba(0,0,0,0.3)",
                 }}
               >
-                <table
+                Pedido
+                <div style={{ marginBottom: 8 }}>
+                  Total a pagar: <strong>{currency(totalPedido)}</strong>
+                </div>
+                <div
                   style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
+                    border:
+                      theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
+                    borderRadius: 8,
+                    padding: 6,
+                    marginBottom: 12,
                     fontSize: 13,
                   }}
                 >
-                  <thead>
-                    <tr
-                      style={{
-                        textAlign: "left",
-                        borderBottom:
-                          theme === "lite"
-                            ? "1px solid #efefef"
-                            : "1px solid #555",
-                      }}
-                    >
-                      <th>Tipo</th>
-                      <th>Monto</th>
-                      <th>Detalles</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagos.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          style={{
-                            padding: 12,
-                            color: theme === "lite" ? "#666" : "#999",
-                          }}
-                        >
-                          No hay pagos registrados
-                        </td>
-                      </tr>
-                    )}
-                    {pagos.map((p) => (
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 13,
+                    }}
+                  >
+                    <thead>
                       <tr
-                        key={p.id}
                         style={{
+                          textAlign: "left",
                           borderBottom:
                             theme === "lite"
-                              ? "1px solid #f5f5f5"
-                              : "1px solid #444",
+                              ? "1px solid #efefef"
+                              : "1px solid #555",
                         }}
                       >
-                        <td style={{ padding: "6px 4px" }}>{p.tipo}</td>
-                        <td style={{ padding: "6px 4px" }}>
-                          {currency(p.monto)}
-                        </td>
-                        <td style={{ padding: "6px 4px", fontSize: 12 }}>
-                          {p.tipo === "efectivo" && <span>—</span>}
-                          {p.tipo === "tarjeta" && (
-                            <span>
-                              {p.banco || "-"} / {p.tarjeta || "-"} /{" "}
-                              {p.factura || "-"}
-                            </span>
-                          )}
-                          {p.tipo === "transferencia" && (
-                            <span>
-                              {p.banco || "-"} / {p.referencia || "-"}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 4px", textAlign: "right" }}>
-                          <button
-                            onClick={() => setConfirmDeleteId(p.id)}
-                            className="btn-opaque"
-                            aria-label="Eliminar pago"
-                            title="Eliminar pago"
+                        <th>Tipo</th>
+                        <th>Monto</th>
+                        <th>Detalles</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagos.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={4}
                             style={{
-                              background: "transparent",
-                              border: "none",
-                              padding: 6,
-                              cursor: "pointer",
-                              color: "#ef4444",
+                              padding: 12,
+                              color: theme === "lite" ? "#666" : "#999",
                             }}
                           >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="16"
-                              height="16"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                              focusable="false"
+                            No hay pagos registrados
+                          </td>
+                        </tr>
+                      )}
+                      {pagos.map((p) => (
+                        <tr
+                          key={p.id}
+                          style={{
+                            borderBottom:
+                              theme === "lite"
+                                ? "1px solid #f5f5f5"
+                                : "1px solid #444",
+                          }}
+                        >
+                          <td style={{ padding: "6px 4px" }}>{p.tipo}</td>
+                          <td style={{ padding: "6px 4px" }}>
+                            {currency(p.monto)}
+                          </td>
+                          <td style={{ padding: "6px 4px", fontSize: 12 }}>
+                            {p.tipo === "efectivo" && <span>—</span>}
+                            {p.tipo === "tarjeta" && (
+                              <span>
+                                {p.banco || "-"} / {p.tarjeta || "-"} /{" "}
+                                {p.factura || "-"}
+                              </span>
+                            )}
+                            {p.tipo === "transferencia" && (
+                              <span>
+                                {p.banco || "-"} / {p.referencia || "-"}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            style={{ padding: "8px 4px", textAlign: "right" }}
+                          >
+                            <button
+                              onClick={() => setConfirmDeleteId(p.id)}
+                              className="btn-opaque"
+                              aria-label="Eliminar pago"
+                              title="Eliminar pago"
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                padding: 6,
+                                cursor: "pointer",
+                                color: "#ef4444",
+                              }}
                             >
-                              <polyline points="3 6 5 6 21 6" />
-                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                              <path d="M10 11v6" />
-                              <path d="M14 11v6" />
-                              <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-                            </svg>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                                focusable="false"
+                              >
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6" />
+                                <path d="M14 11v6" />
+                                <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    marginBottom: 8,
+                    fontSize: 13,
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: 6,
+                      borderRadius: 6,
+                      border:
+                        theme === "lite"
+                          ? "1px solid #e6edf3"
+                          : "1px solid #444",
+                      minWidth: 140,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme === "lite" ? "#666" : "#999",
+                      }}
+                    >
+                      Efectivo
+                    </div>
+                    <div style={{ fontWeight: 600 }}>
+                      {currency(efectivoSum)}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: 6,
+                      borderRadius: 6,
+                      border:
+                        theme === "lite"
+                          ? "1px solid #e6edf3"
+                          : "1px solid #444",
+                      minWidth: 140,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme === "lite" ? "#666" : "#999",
+                      }}
+                    >
+                      Tarjeta
+                    </div>
+                    <div style={{ fontWeight: 600 }}>
+                      {currency(tarjetaSum)}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: 6,
+                      borderRadius: 6,
+                      border:
+                        theme === "lite"
+                          ? "1px solid #e6edf3"
+                          : "1px solid #444",
+                      minWidth: 140,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme === "lite" ? "#666" : "#999",
+                      }}
+                    >
+                      Transferencia
+                    </div>
+                    <div style={{ fontWeight: 600 }}>
+                      {currency(transferenciaSum)}
+                    </div>
+                  </div>
+                  <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme === "lite" ? "#666" : "#999",
+                      }}
+                    >
+                      Total ingresado
+                    </div>
+                    <div style={{ fontWeight: 700 }}>{currency(totalPaid)}</div>
+                    <div
+                      style={{
+                        marginTop: 6,
+                        color: remaining > 0 ? "#ef4444" : "#16a34a",
+                      }}
+                    >
+                      {remaining > 0
+                        ? `Falta ${currency(remaining)}`
+                        : `Cambio ${currency(Math.abs(remaining))}`}
+                    </div>
+                  </div>
+                </div>
               </div>
+
+              {/* derecha: formulario para agregar pago */}
               <div
                 style={{
-                  display: "flex",
-                  gap: 10,
-                  marginBottom: 8,
+                  border:
+                    theme === "lite"
+                      ? "1px solid #e0e7ef"
+                      : "1px solid #374151",
+                  borderRadius: 14,
+                  padding: 16,
                   fontSize: 13,
+                  background: theme === "lite" ? "#fff" : "#252535",
+                  boxShadow:
+                    theme === "lite"
+                      ? "0 2px 12px rgba(0,0,0,0.07)"
+                      : "0 2px 12px rgba(0,0,0,0.3)",
                 }}
               >
-                <div
-                  style={{
-                    padding: 6,
-                    borderRadius: 6,
-                    border:
-                      theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
-                    minWidth: 140,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: theme === "lite" ? "#666" : "#999",
-                    }}
-                  >
-                    Efectivo
-                  </div>
-                  <div style={{ fontWeight: 600 }}>{currency(efectivoSum)}</div>
-                </div>
-                <div
-                  style={{
-                    padding: 6,
-                    borderRadius: 6,
-                    border:
-                      theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
-                    minWidth: 140,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: theme === "lite" ? "#666" : "#999",
-                    }}
-                  >
-                    Tarjeta
-                  </div>
-                  <div style={{ fontWeight: 600 }}>{currency(tarjetaSum)}</div>
-                </div>
-                <div
-                  style={{
-                    padding: 6,
-                    borderRadius: 6,
-                    border:
-                      theme === "lite" ? "1px solid #e6edf3" : "1px solid #444",
-                    minWidth: 140,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: theme === "lite" ? "#666" : "#999",
-                    }}
-                  >
-                    Transferencia
-                  </div>
-                  <div style={{ fontWeight: 600 }}>
-                    {currency(transferenciaSum)}
-                  </div>
-                </div>
-                <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: theme === "lite" ? "#666" : "#999",
-                    }}
-                  >
-                    Total ingresado
-                  </div>
-                  <div style={{ fontWeight: 700 }}>{currency(totalPaid)}</div>
-                  <div
-                    style={{
-                      marginTop: 6,
-                      color: remaining > 0 ? "#ef4444" : "#16a34a",
-                    }}
-                  >
-                    {remaining > 0
-                      ? `Falta ${currency(remaining)}`
-                      : `Cambio ${currency(Math.abs(remaining))}`}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* derecha: formulario para agregar pago */}
-            <div
-              style={{
-                border:
-                  theme === "lite" ? "1px solid #e0e7ef" : "1px solid #374151",
-                borderRadius: 14,
-                padding: 16,
-                fontSize: 13,
-                background: theme === "lite" ? "#fff" : "#252535",
-                boxShadow: theme === "lite" ? "0 2px 12px rgba(0,0,0,0.07)" : "0 2px 12px rgba(0,0,0,0.3)",
-              }}
-            >
-              <div style={{ marginBottom: 16 }}>
-                <label style={labelStyle}>Tipo de pago</label>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipo("efectivo");
-                      setMonto("");
-                      setUsdAmount(0);
-                      setBanco("");
-                      setTarjeta("");
-                      setFactura("");
-                      setAutorizador("");
-                      setReferencia("");
-                      setTimeout(() => montoInputRef.current?.focus(), 100);
-                    }}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                      border:
-                        tipo === "efectivo"
-                          ? "3px solid #1976d2"
-                          : "2px solid #ddd",
-                      background:
-                        tipo === "efectivo"
-                          ? "#e3f2fd"
-                          : theme === "lite"
-                            ? "#fff"
-                            : "#2a2a2a",
-                      color:
-                        tipo === "efectivo"
-                          ? "#1976d2"
-                          : theme === "lite"
-                            ? "#333"
-                            : "#f5f5f5",
-                      fontWeight: tipo === "efectivo" ? 700 : 600,
-                      fontSize: 15,
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    💵 Efectivo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipo("tarjeta");
-                      setMonto("");
-                      setUsdAmount(0);
-                      setBanco("");
-                      setTarjeta("");
-                      setFactura("");
-                      setAutorizador("");
-                      setReferencia("");
-                      setTimeout(() => montoInputRef.current?.focus(), 100);
-                    }}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                      border:
-                        tipo === "tarjeta"
-                          ? "3px solid #1976d2"
-                          : "2px solid #ddd",
-                      background:
-                        tipo === "tarjeta"
-                          ? "#e3f2fd"
-                          : theme === "lite"
-                            ? "#fff"
-                            : "#2a2a2a",
-                      color:
-                        tipo === "tarjeta"
-                          ? "#1976d2"
-                          : theme === "lite"
-                            ? "#333"
-                            : "#f5f5f5",
-                      fontWeight: tipo === "tarjeta" ? 700 : 600,
-                      fontSize: 15,
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    💳 Tarjeta
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipo("transferencia");
-                      setMonto("");
-                      setUsdAmount(0);
-                      setBanco("");
-                      setTarjeta("");
-                      setFactura("");
-                      setAutorizador("");
-                      setReferencia("");
-                      setTimeout(() => montoInputRef.current?.focus(), 100);
-                    }}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                      border:
-                        tipo === "transferencia"
-                          ? "3px solid #1976d2"
-                          : "2px solid #ddd",
-                      background:
-                        tipo === "transferencia"
-                          ? "#e3f2fd"
-                          : theme === "lite"
-                            ? "#fff"
-                            : "#2a2a2a",
-                      color:
-                        tipo === "transferencia"
-                          ? "#1976d2"
-                          : theme === "lite"
-                            ? "#333"
-                            : "#f5f5f5",
-                      fontWeight: tipo === "transferencia" ? 700 : 600,
-                      fontSize: 15,
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    🏦 Transferencia
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipo("dolares");
-                      setMonto("");
-                      setUsdAmount(0);
-                      setBanco("");
-                      setTarjeta("");
-                      setFactura("");
-                      setAutorizador("");
-                      setReferencia("");
-                      setTimeout(() => montoInputRef.current?.focus(), 100);
-                    }}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                      border:
-                        tipo === "dolares"
-                          ? "3px solid #1976d2"
-                          : "2px solid #ddd",
-                      background:
-                        tipo === "dolares"
-                          ? "#e3f2fd"
-                          : theme === "lite"
-                            ? "#fff"
-                            : "#2a2a2a",
-                      color:
-                        tipo === "dolares"
-                          ? "#1976d2"
-                          : theme === "lite"
-                            ? "#333"
-                            : "#f5f5f5",
-                      fontWeight: tipo === "dolares" ? 700 : 600,
-                      fontSize: 15,
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    💵 Dólares
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 8 }}>
-                <label style={labelStyle}>Monto</label>
-                {tipo === "dolares" ? (
+                <div style={{ marginBottom: 16 }}>
+                  <label style={labelStyle}>Tipo de pago</label>
                   <div
                     style={{
                       display: "grid",
@@ -974,519 +847,708 @@ export default function PaymentModal({
                       gap: 8,
                     }}
                   >
-                    <div>
-                      <label style={labelStyle}>$</label>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={usdAmount}
-                        onChange={(e) => {
-                          const v = parseNumber(e.target.value);
-                          setUsdAmount(v);
-                          const converted = Number(
-                            (v * exchangeRate).toFixed(2),
-                          );
-                          setMonto(String(converted));
-                        }}
-                        onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            usdAmount > 0 &&
-                            parseNumber(monto) > 0
-                          ) {
-                            e.preventDefault();
-                            agregarPago();
-                          }
-                        }}
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div>
-                      <label style={labelStyle}>L (convertido)</label>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={monto}
-                        readOnly
-                        style={{
-                          width: "100%",
-                          padding: 6,
-                          borderRadius: 6,
-                          fontSize: 13,
-                          background: theme === "lite" ? "#f9fafb" : "#1a1a1a",
-                          color: theme === "lite" ? "#111" : "#f5f5f5",
-                        }}
-                      />
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTipo("efectivo");
+                        setMonto("");
+                        setUsdAmount(0);
+                        setBanco("");
+                        setTarjeta("");
+                        setFactura("");
+                        setAutorizador("");
+                        setReferencia("");
+                        setTimeout(() => montoInputRef.current?.focus(), 100);
+                      }}
+                      style={{
+                        padding: 12,
+                        borderRadius: 8,
+                        border:
+                          tipo === "efectivo"
+                            ? "3px solid #1976d2"
+                            : "2px solid #ddd",
+                        background:
+                          tipo === "efectivo"
+                            ? "#e3f2fd"
+                            : theme === "lite"
+                              ? "#fff"
+                              : "#2a2a2a",
+                        color:
+                          tipo === "efectivo"
+                            ? "#1976d2"
+                            : theme === "lite"
+                              ? "#333"
+                              : "#f5f5f5",
+                        fontWeight: tipo === "efectivo" ? 700 : 600,
+                        fontSize: 15,
+                        cursor: "pointer",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      💵 Efectivo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTipo("tarjeta");
+                        setMonto("");
+                        setUsdAmount(0);
+                        setBanco("");
+                        setTarjeta("");
+                        setFactura("");
+                        setAutorizador("");
+                        setReferencia("");
+                        setTimeout(() => montoInputRef.current?.focus(), 100);
+                      }}
+                      style={{
+                        padding: 12,
+                        borderRadius: 8,
+                        border:
+                          tipo === "tarjeta"
+                            ? "3px solid #1976d2"
+                            : "2px solid #ddd",
+                        background:
+                          tipo === "tarjeta"
+                            ? "#e3f2fd"
+                            : theme === "lite"
+                              ? "#fff"
+                              : "#2a2a2a",
+                        color:
+                          tipo === "tarjeta"
+                            ? "#1976d2"
+                            : theme === "lite"
+                              ? "#333"
+                              : "#f5f5f5",
+                        fontWeight: tipo === "tarjeta" ? 700 : 600,
+                        fontSize: 15,
+                        cursor: "pointer",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      💳 Tarjeta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTipo("transferencia");
+                        setMonto("");
+                        setUsdAmount(0);
+                        setBanco("");
+                        setTarjeta("");
+                        setFactura("");
+                        setAutorizador("");
+                        setReferencia("");
+                        setTimeout(() => montoInputRef.current?.focus(), 100);
+                      }}
+                      style={{
+                        padding: 12,
+                        borderRadius: 8,
+                        border:
+                          tipo === "transferencia"
+                            ? "3px solid #1976d2"
+                            : "2px solid #ddd",
+                        background:
+                          tipo === "transferencia"
+                            ? "#e3f2fd"
+                            : theme === "lite"
+                              ? "#fff"
+                              : "#2a2a2a",
+                        color:
+                          tipo === "transferencia"
+                            ? "#1976d2"
+                            : theme === "lite"
+                              ? "#333"
+                              : "#f5f5f5",
+                        fontWeight: tipo === "transferencia" ? 700 : 600,
+                        fontSize: 15,
+                        cursor: "pointer",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      🏦 Transferencia
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTipo("dolares");
+                        setMonto("");
+                        setUsdAmount(0);
+                        setBanco("");
+                        setTarjeta("");
+                        setFactura("");
+                        setAutorizador("");
+                        setReferencia("");
+                        setTimeout(() => montoInputRef.current?.focus(), 100);
+                      }}
+                      style={{
+                        padding: 12,
+                        borderRadius: 8,
+                        border:
+                          tipo === "dolares"
+                            ? "3px solid #1976d2"
+                            : "2px solid #ddd",
+                        background:
+                          tipo === "dolares"
+                            ? "#e3f2fd"
+                            : theme === "lite"
+                              ? "#fff"
+                              : "#2a2a2a",
+                        color:
+                          tipo === "dolares"
+                            ? "#1976d2"
+                            : theme === "lite"
+                              ? "#333"
+                              : "#f5f5f5",
+                        fontWeight: tipo === "dolares" ? 700 : 600,
+                        fontSize: 15,
+                        cursor: "pointer",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      💵 Dólares
+                    </button>
                   </div>
-                ) : (
-                  <input
-                    ref={montoInputRef}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={monto}
-                    onChange={(e) => setMonto(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const montoN = parseNumber(monto);
-                        if (montoN <= 0) return;
-                        agregarPago();
-                      }
-                    }}
-                    style={inputStyle}
-                  />
-                )}
-              </div>
+                </div>
 
-              {tipo === "dolares" && (
                 <div style={{ marginBottom: 8 }}>
-                  <label style={labelStyle}>
-                    Tipo de cambio (Lps : {exchangeRate.toFixed(2)} por $)
-                  </label>
-                  <div
-                    style={{ display: "flex", gap: 8, alignItems: "center" }}
-                  ></div>
+                  <label style={labelStyle}>Monto</label>
+                  {tipo === "dolares" ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 8,
+                      }}
+                    >
+                      <div>
+                        <label style={labelStyle}>$</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={usdAmount}
+                          onChange={(e) => {
+                            const v = parseNumber(e.target.value);
+                            setUsdAmount(v);
+                            const converted = Number(
+                              (v * exchangeRate).toFixed(2),
+                            );
+                            setMonto(String(converted));
+                          }}
+                          onKeyDown={(e) => {
+                            if (
+                              e.key === "Enter" &&
+                              usdAmount > 0 &&
+                              parseNumber(monto) > 0
+                            ) {
+                              e.preventDefault();
+                              agregarPago();
+                            }
+                          }}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>L (convertido)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={monto}
+                          readOnly
+                          style={{
+                            width: "100%",
+                            padding: 6,
+                            borderRadius: 6,
+                            fontSize: 13,
+                            background:
+                              theme === "lite" ? "#f9fafb" : "#1a1a1a",
+                            color: theme === "lite" ? "#111" : "#f5f5f5",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      ref={montoInputRef}
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={monto}
+                      onChange={(e) => setMonto(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const montoN = parseNumber(monto);
+                          if (montoN <= 0) return;
+                          agregarPago();
+                        }
+                      }}
+                      style={inputStyle}
+                    />
+                  )}
                 </div>
-              )}
 
-              {tipo === "efectivo" && (
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: theme === "lite" ? "#444" : "#aaa",
-                    marginBottom: 8,
-                  }}
-                >
-                  Pago en efectivo: solo indique el monto y presione "Agregar".
-                </div>
-              )}
-
-              {/* Campos banco/tarjeta/factura/autorizador ocultos intencionalmente */}
-
-              {/* Campos banco/referencia para transferencia ocultos intencionalmente */}
-
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button
-                  onClick={agregarPago}
-                  className="btn-opaque"
-                  style={{
-                    background: "#0ea5a4",
-                    color: "white",
-                    padding: "6px 10px",
-                    borderRadius: 6,
-                    fontSize: 13,
-                  }}
-                >
-                  Agregar
-                </button>
-                <button
-                  onClick={() => {
-                    setMonto(String((totalPedido - totalPaid).toFixed(2)));
-                  }}
-                  className="btn-opaque"
-                  style={{
-                    background: "transparent",
-                    fontSize: 13,
-                    border:
-                      theme === "lite" ? "1px solid #ddd" : "1px solid #555",
-                    color: theme === "lite" ? "#111" : "#f5f5f5",
-                  }}
-                >
-                  Exacto
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 8,
-              marginTop: 14,
-            }}
-          >
-            <button
-              onClick={onClose}
-              className="btn-opaque"
-              style={{
-                background: "transparent",
-                fontSize: 13,
-                padding: "6px 10px",
-                border: theme === "lite" ? "1px solid #ddd" : "1px solid #555",
-                color: theme === "lite" ? "#111" : "#f5f5f5",
-              }}
-            >
-              Cancelar
-            </button>
-            {/* Botón Realizar Donación */}
-            {!isDonacion && (
-              <button
-                onClick={() => {
-                  setDonCodigo("");
-                  setDonClave("");
-                  setDonError("");
-                  setShowDonacionModal(true);
-                }}
-                className="btn-opaque"
-                style={{
-                  background: "#7c3aed",
-                  color: "#fff",
-                  fontSize: 13,
-                  padding: "6px 12px",
-                  fontWeight: 700,
-                  border: "none",
-                }}
-              >
-                🎁 Realizar Donación
-              </button>
-            )}
-            <button
-              onClick={handleConfirm}
-              className="btn-opaque"
-              disabled={!canConfirm || loadingGenerating}
-              style={{
-                background:
-                  canConfirm && !loadingGenerating
-                    ? isDonacion
-                      ? "#22c55e"
-                      : "#16a34a"
-                    : "gray",
-                color: "white",
-                fontSize: 13,
-                padding: "6px 12px",
-                fontWeight: 700,
-              }}
-            >
-              {isDonacion
-                ? "🎁 Registrar Donación (L 0.00)"
-                : "Registrar y guardar venta"}
-            </button>
-          </div>
-          {/* Sub-modal: verificar contrase\u00f1a Admin para donaci\u00f3n */}
-          {showDonacionModal && (
-            <div
-              role="dialog"
-              aria-modal="true"
-              onClick={() => setShowDonacionModal(false)}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.6)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 13000,
-              }}
-            >
-              <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  width: 360,
-                  background: theme === "lite" ? "white" : "#2a2a2a",
-                  borderRadius: 12,
-                  padding: 24,
-                  boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
-                  color: theme === "lite" ? "#111" : "#f5f5f5",
-                }}
-              >
-                <div style={{ marginBottom: 12 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: 13,
-                    }}
-                  >
-                    Codigo Admin
-                  </label>
-                  <input
-                    type="text"
-                    autoFocus
-                    value={donCodigo}
-                    onChange={(e) => setDonCodigo(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") verificarAdmin();
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #7c3aed",
-                      fontSize: 14,
-                      background: theme === "lite" ? "#fff" : "#1a1a1a",
-                      color: theme === "lite" ? "#111" : "#f5f5f5",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: 16 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: 13,
-                    }}
-                  >
-                    Clave Admin
-                  </label>
-                  <input
-                    type="password"
-                    value={donClave}
-                    onChange={(e) => setDonClave(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") verificarAdmin();
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #7c3aed",
-                      fontSize: 14,
-                      background: theme === "lite" ? "#fff" : "#1a1a1a",
-                      color: theme === "lite" ? "#111" : "#f5f5f5",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-                {donError && (
-                  <div
-                    style={{
-                      background: "#fee2e2",
-                      color: "#dc2626",
-                      borderRadius: 8,
-                      padding: "8px 12px",
-                      fontSize: 13,
-                      marginBottom: 12,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {donError}
+                {tipo === "dolares" && (
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={labelStyle}>
+                      Tipo de cambio (Lps : {exchangeRate.toFixed(2)} por $)
+                    </label>
+                    <div
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                    ></div>
                   </div>
                 )}
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    justifyContent: "flex-end",
-                  }}
-                >
-                  <button
-                    onClick={() => setShowDonacionModal(false)}
-                    className="btn-opaque"
-                    style={{
-                      background: "transparent",
-                      padding: "8px 14px",
-                      border:
-                        theme === "lite" ? "1px solid #ddd" : "1px solid #555",
-                      color: theme === "lite" ? "#111" : "#f5f5f5",
-                      borderRadius: 8,
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={verificarAdmin}
-                    disabled={donLoading}
-                    className="btn-opaque"
-                    style={{
-                      background: donLoading ? "#a78bfa" : "#7c3aed",
-                      color: "#fff",
-                      padding: "8px 18px",
-                      border: "none",
-                      borderRadius: 8,
-                      fontWeight: 700,
-                      cursor: donLoading ? "default" : "pointer",
-                    }}
-                  >
-                    {donLoading
-                      ? "Verificando..."
-                      : "\u2705 Aprobar Donaci\u00f3n"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
-          {confirmDeleteId && (
-            <div
-              role="dialog"
-              aria-modal="true"
-              onClick={() => setConfirmDeleteId(null)}
-              style={{
-                position: "fixed",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 12000,
-              }}
-            >
-              <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  width: 360,
-                  background: theme === "lite" ? "white" : "#2a2a2a",
-                  borderRadius: 8,
-                  padding: 14,
-                  boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-                  position: "relative",
-                  color: theme === "lite" ? "#111" : "#f5f5f5",
-                }}
-              >
-                <button
-                  aria-label="Cerrar"
-                  title="Cerrar"
-                  onClick={() => setConfirmDeleteId(null)}
-                  style={{
-                    position: "absolute",
-                    right: 8,
-                    top: 8,
-                    background: "transparent",
-                    border: "none",
-                    padding: 6,
-                    cursor: "pointer",
-                    color: "#666",
-                  }}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                  Confirmar eliminación
-                </div>
-                <div style={{ marginBottom: 12 }}>
-                  ¿Eliminar este pago? Esta acción no se puede deshacer.
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="btn-opaque"
+                {tipo === "efectivo" && (
+                  <div
                     style={{
-                      background: "transparent",
-                      padding: "6px 10px",
-                      border:
-                        theme === "lite" ? "1px solid #ddd" : "1px solid #555",
-                      color: theme === "lite" ? "#111" : "#f5f5f5",
+                      fontSize: 13,
+                      color: theme === "lite" ? "#444" : "#aaa",
+                      marginBottom: 8,
                     }}
                   >
-                    Cancelar
+                    Pago en efectivo: solo indique el monto y presione
+                    "Agregar".
+                  </div>
+                )}
+
+                {/* Campos banco/tarjeta/factura/autorizador ocultos intencionalmente */}
+
+                {/* Campos banco/referencia para transferencia ocultos intencionalmente */}
+
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button
+                    onClick={agregarPago}
+                    className="btn-opaque"
+                    style={{
+                      background: "#0ea5a4",
+                      color: "white",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      fontSize: 13,
+                    }}
+                  >
+                    Agregar
                   </button>
                   <button
                     onClick={() => {
-                      if (confirmDeleteId) {
-                        eliminarPago(confirmDeleteId);
-                        setConfirmDeleteId(null);
-                      }
+                      setMonto(String((totalPedido - totalPaid).toFixed(2)));
                     }}
                     className="btn-opaque"
                     style={{
-                      background: "#ef4444",
-                      color: "white",
-                      padding: "6px 10px",
+                      background: "transparent",
+                      fontSize: 13,
+                      border:
+                        theme === "lite" ? "1px solid #ddd" : "1px solid #555",
+                      color: theme === "lite" ? "#111" : "#f5f5f5",
                     }}
                   >
-                    Eliminar
+                    Exacto
                   </button>
                 </div>
               </div>
             </div>
-          )}
-          {loadingGenerating && (
+
             <div
-              role="status"
-              aria-live="polite"
               style={{
-                position: "fixed",
-                inset: 0,
                 display: "flex",
-                alignItems: "center",
                 justifyContent: "center",
-                zIndex: 12500,
-                background: "rgba(2,6,23,0.6)",
+                gap: 12,
+                marginTop: 18,
+                flexWrap: "wrap",
               }}
             >
-              <div
+              <button
+                onClick={onClose}
+                className="btn-opaque"
                 style={{
-                  background:
-                    theme === "lite"
-                      ? "rgba(255,255,255,0.98)"
-                      : "rgba(42,42,42,0.98)",
-                  padding: 18,
+                  background: "transparent",
+                  fontSize: 16,
+                  padding: "12px 24px",
+                  border:
+                    theme === "lite" ? "2px solid #bbb" : "2px solid #666",
+                  color: theme === "lite" ? "#333" : "#f5f5f5",
                   borderRadius: 10,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
-                  boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-                  color: theme === "lite" ? "#111" : "#f5f5f5",
+                  fontWeight: 700,
+                  minWidth: 130,
                 }}
               >
-                <svg
-                  width="56"
-                  height="56"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
+                ✕ Cancelar
+              </button>
+              {/* Botón Realizar Donación */}
+              {!isDonacion && (
+                <button
+                  onClick={() => {
+                    setDonCodigo("");
+                    setDonClave("");
+                    setDonError("");
+                    setShowDonacionModal(true);
+                  }}
+                  className="btn-opaque"
+                  style={{
+                    background: "#7c3aed",
+                    color: "#fff",
+                    fontSize: 16,
+                    padding: "12px 24px",
+                    fontWeight: 700,
+                    border: "none",
+                    borderRadius: 10,
+                    minWidth: 180,
+                  }}
                 >
-                  <g transform="translate(0,0)">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="#e6edf3"
-                      strokeWidth="3"
-                      fill="none"
-                    />
-                    <path
-                      d="M22 12a10 10 0 0 1-10 10"
-                      stroke="#0ea5a4"
-                      strokeWidth="3"
-                      strokeLinecap="round"
+                  🎁 Realizar Donación
+                </button>
+              )}
+              <button
+                onClick={handleConfirm}
+                className="btn-opaque"
+                disabled={!canConfirm || loadingGenerating}
+                style={{
+                  background:
+                    canConfirm && !loadingGenerating
+                      ? isDonacion
+                        ? "#22c55e"
+                        : "#16a34a"
+                      : "gray",
+                  color: "white",
+                  fontSize: 16,
+                  padding: "12px 24px",
+                  fontWeight: 700,
+                  borderRadius: 10,
+                  minWidth: 220,
+                }}
+              >
+                {isDonacion
+                  ? "🎁 Registrar Donación (L 0.00)"
+                  : "✅ Registrar y guardar venta"}
+              </button>
+            </div>
+            {/* Sub-modal: verificar contrase\u00f1a Admin para donaci\u00f3n */}
+            {showDonacionModal && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setShowDonacionModal(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 13000,
+                }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: 360,
+                    background: theme === "lite" ? "white" : "#2a2a2a",
+                    borderRadius: 12,
+                    padding: 24,
+                    boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
+                  }}
+                >
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: 13,
+                      }}
                     >
-                      <animateTransform
-                        attributeName="transform"
-                        type="rotate"
-                        from="0 12 12"
-                        to="360 12 12"
-                        dur="1s"
-                        repeatCount="indefinite"
-                      />
-                    </path>
-                  </g>
-                </svg>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>
-                  Generando factura
+                      Codigo Admin
+                    </label>
+                    <input
+                      type="text"
+                      autoFocus
+                      value={donCodigo}
+                      onChange={(e) => setDonCodigo(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") verificarAdmin();
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #7c3aed",
+                        fontSize: 14,
+                        background: theme === "lite" ? "#fff" : "#1a1a1a",
+                        color: theme === "lite" ? "#111" : "#f5f5f5",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: 13,
+                      }}
+                    >
+                      Clave Admin
+                    </label>
+                    <input
+                      type="password"
+                      value={donClave}
+                      onChange={(e) => setDonClave(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") verificarAdmin();
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #7c3aed",
+                        fontSize: 14,
+                        background: theme === "lite" ? "#fff" : "#1a1a1a",
+                        color: theme === "lite" ? "#111" : "#f5f5f5",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                  {donError && (
+                    <div
+                      style={{
+                        background: "#fee2e2",
+                        color: "#dc2626",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        fontSize: 13,
+                        marginBottom: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {donError}
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      justifyContent: "flex-end",
+                    }}
+                  >
+                    <button
+                      onClick={() => setShowDonacionModal(false)}
+                      className="btn-opaque"
+                      style={{
+                        background: "transparent",
+                        padding: "8px 14px",
+                        border:
+                          theme === "lite"
+                            ? "1px solid #ddd"
+                            : "1px solid #555",
+                        color: theme === "lite" ? "#111" : "#f5f5f5",
+                        borderRadius: 8,
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={verificarAdmin}
+                      disabled={donLoading}
+                      className="btn-opaque"
+                      style={{
+                        background: donLoading ? "#a78bfa" : "#7c3aed",
+                        color: "#fff",
+                        padding: "8px 18px",
+                        border: "none",
+                        borderRadius: 8,
+                        fontWeight: 700,
+                        cursor: donLoading ? "default" : "pointer",
+                      }}
+                    >
+                      {donLoading
+                        ? "Verificando..."
+                        : "\u2705 Aprobar Donaci\u00f3n"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-          </div>{/* /padding wrapper */}
+            )}
+
+            {confirmDeleteId && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setConfirmDeleteId(null)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 12000,
+                }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: 360,
+                    background: theme === "lite" ? "white" : "#2a2a2a",
+                    borderRadius: 8,
+                    padding: 14,
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+                    position: "relative",
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
+                  }}
+                >
+                  <button
+                    aria-label="Cerrar"
+                    title="Cerrar"
+                    onClick={() => setConfirmDeleteId(null)}
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: 8,
+                      background: "transparent",
+                      border: "none",
+                      padding: 6,
+                      cursor: "pointer",
+                      color: "#666",
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    Confirmar eliminación
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    ¿Eliminar este pago? Esta acción no se puede deshacer.
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      gap: 8,
+                    }}
+                  >
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="btn-opaque"
+                      style={{
+                        background: "transparent",
+                        padding: "6px 10px",
+                        border:
+                          theme === "lite"
+                            ? "1px solid #ddd"
+                            : "1px solid #555",
+                        color: theme === "lite" ? "#111" : "#f5f5f5",
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirmDeleteId) {
+                          eliminarPago(confirmDeleteId);
+                          setConfirmDeleteId(null);
+                        }
+                      }}
+                      className="btn-opaque"
+                      style={{
+                        background: "#ef4444",
+                        color: "white",
+                        padding: "6px 10px",
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {loadingGenerating && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 12500,
+                  background: "rgba(2,6,23,0.6)",
+                }}
+              >
+                <div
+                  style={{
+                    background:
+                      theme === "lite"
+                        ? "rgba(255,255,255,0.98)"
+                        : "rgba(42,42,42,0.98)",
+                    padding: 18,
+                    borderRadius: 10,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 12,
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
+                  }}
+                >
+                  <svg
+                    width="56"
+                    height="56"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <g transform="translate(0,0)">
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="#e6edf3"
+                        strokeWidth="3"
+                        fill="none"
+                      />
+                      <path
+                        d="M22 12a10 10 0 0 1-10 10"
+                        stroke="#0ea5a4"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                      >
+                        <animateTransform
+                          attributeName="transform"
+                          type="rotate"
+                          from="0 12 12"
+                          to="360 12 12"
+                          dur="1s"
+                          repeatCount="indefinite"
+                        />
+                      </path>
+                    </g>
+                  </svg>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>
+                    Generando factura
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* /padding wrapper */}
         </div>
       </ZoomWrapper>
     </div>

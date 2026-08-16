@@ -114,24 +114,45 @@ export default function PagoCreditoPOSModal({
   async function buscarClientes(term: string) {
     setCargandoBusq(true);
     try {
+      // Normalizar: quitar guiones para comparar DNI con o sin ellos
+      const termNorm = term.toLowerCase().replace(/-/g, "");
+
       // ── IDB primero ─────────────────────────────────────────
       const todosIdb = await getAll<ClienteCredito>(STORE.CLIENTES_CREDITO);
       if (todosIdb.length > 0) {
         const t = term.toLowerCase();
-        const filtrados = todosIdb.filter(
-          (c) =>
-            c.activo !== false &&
-            (c.nombre?.toLowerCase().includes(t) ||
-              c.dni?.toLowerCase().includes(t)),
+        const filtrados = todosIdb.filter((c) => {
+          if (c.activo === false) return false;
+          const dniNorm = (c.dni ?? "").toLowerCase().replace(/-/g, "");
+          return (
+            c.nombre?.toLowerCase().includes(t) ||
+            c.dni?.toLowerCase().includes(t) ||
+            dniNorm.includes(termNorm)
+          );
+        });
+        filtrados.sort((a, b) =>
+          (a.nombre ?? "").localeCompare(b.nombre ?? ""),
         );
-        filtrados.sort((a, b) => (a.nombre ?? "").localeCompare(b.nombre ?? ""));
         setClientes(filtrados.slice(0, 20));
         setCargandoBusq(false);
         return;
       }
 
       // ── Fallback Supabase ───────────────────────────────────
+      // Intentar búsqueda con el término original y también con guiones formateados
       const data = await buscarClientesCredito(term);
+      if (data.length === 0 && termNorm.length >= 4) {
+        // Reformatear sin guiones como 1807-1997-00239 e intentar de nuevo
+        const conGuiones = termNorm.replace(
+          /^(\d{4})(\d{4})(\d{5})$/,
+          "$1-$2-$3",
+        );
+        if (conGuiones !== termNorm) {
+          const data2 = await buscarClientesCredito(conGuiones);
+          setClientes(data2);
+          return;
+        }
+      }
       setClientes(data);
     } catch (e: any) {
       setError(e.message);
@@ -153,7 +174,9 @@ export default function PagoCreditoPOSModal({
           cli.id,
         );
         if (cuentasIdb.length > 0) cta = cuentasIdb[0];
-      } catch { /* IDB no disponible */ }
+      } catch {
+        /* IDB no disponible */
+      }
 
       // ── IDB primero para facturas pendientes ───────────────
       let facs: FacturaCredito[] = [];
@@ -183,18 +206,24 @@ export default function PagoCreditoPOSModal({
             isv_15: row.isv_15 ?? 0,
             isv_18: row.isv_18 ?? 0,
           }));
-      } catch { /* IDB no disponible */ }
+      } catch {
+        /* IDB no disponible */
+      }
 
       // ── Fallback Supabase si IDB no tiene datos ─────────────
       if (!cta && navigator.onLine) {
         try {
           cta = await obtenerCuentaCobrar(cli.id);
-        } catch { /* sin conexión real */ }
+        } catch {
+          /* sin conexión real */
+        }
       }
       if (facs.length === 0 && navigator.onLine) {
         try {
           facs = await obtenerFacturasCliente(cli.id, true);
-        } catch { /* sin conexión real */ }
+        } catch {
+          /* sin conexión real */
+        }
       }
 
       setClienteSlc(cli);
@@ -339,7 +368,6 @@ export default function PagoCreditoPOSModal({
         zIndex: 11000,
         backdropFilter: "blur(4px)",
       }}
-      onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -499,9 +527,30 @@ export default function PagoCreditoPOSModal({
                 <div style={{ fontSize: 32, fontWeight: 900, color: accent }}>
                   L {cuenta.saldo_actual.toFixed(2)}
                 </div>
-                <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
-                  Total facturado: L {cuenta.total_facturado.toFixed(2)} · Total
-                  pagado: L {cuenta.total_pagado.toFixed(2)}
+                <div
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 800,
+                    color: text,
+                    marginTop: 8,
+                    display: "flex",
+                    gap: 16,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span>
+                    Total facturado:{" "}
+                    <span style={{ color: accent }}>
+                      L {cuenta.total_facturado.toFixed(2)}
+                    </span>
+                  </span>
+                  <span style={{ color: sub }}>·</span>
+                  <span>
+                    Total pagado:{" "}
+                    <span style={{ color: "#16a34a" }}>
+                      L {cuenta.total_pagado.toFixed(2)}
+                    </span>
+                  </span>
                 </div>
               </div>
 
@@ -510,13 +559,15 @@ export default function PagoCreditoPOSModal({
                 <>
                   <div
                     style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: sub,
-                      marginBottom: 8,
+                      fontSize: 15,
+                      fontWeight: 800,
+                      color: text,
+                      marginBottom: 10,
+                      borderBottom: `1px solid ${border}`,
+                      paddingBottom: 8,
                     }}
                   >
-                    Facturas pendientes (opcional - abonar a):
+                    📋 Historial de compras al crédito
                   </div>
                   <div
                     style={{
@@ -526,21 +577,6 @@ export default function PagoCreditoPOSModal({
                       marginBottom: 16,
                     }}
                   >
-                    <button
-                      onClick={() => setFacturaSlc(null)}
-                      style={{
-                        padding: "10px 14px",
-                        border: `2px solid ${facturaSlc === null ? accent : border}`,
-                        borderRadius: 10,
-                        background: facturaSlc === null ? `${accent}15` : bg2,
-                        color: text,
-                        cursor: "pointer",
-                        textAlign: "left",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Abono general al saldo
-                    </button>
                     {facturas.map((f) => (
                       <button
                         key={f.id}
@@ -559,7 +595,7 @@ export default function PagoCreditoPOSModal({
                           Factura #{f.factura_numero}
                         </div>
                         <div style={{ fontSize: 12, color: sub }}>
-                          Total: L {f.total.toFixed(2)} · Estado: {f.estado} ·
+                          Total: L {f.total.toFixed(2)} ·{" "}
                           {f.fecha_hora
                             ? new Date(f.fecha_hora).toLocaleDateString("es-HN")
                             : ""}

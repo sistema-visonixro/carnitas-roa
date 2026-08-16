@@ -6,7 +6,16 @@ import {
   getLocalDayRange,
 } from "./utils/fechas";
 import { useDatosNegocio } from "./useDatosNegocio";
-import { getAperturaActiva, upsertOne, getAll, STORE } from "./utils/localDB";
+import {
+  getAperturaActiva,
+  upsertOne,
+  getAll,
+  getByIndex,
+  STORE,
+  getResumenVentasIndex,
+  limpiarVentasIndex,
+  limpiarPlatillosIndex,
+} from "./utils/localDB";
 import {
   limpiarAperturaCache,
   limpiarAperturaLocalStorage,
@@ -106,98 +115,64 @@ export default function RegistroCierreView({
       };
     }
 
-    const { data: aperturaActual, error: aperturaError } = await supabase
-      .from("cierres")
-      .select("id, fecha, fecha_apertura, fondo_fijo_registrado")
-      .eq("cajero_id", usuarioActual.id)
-      .eq("caja", caja)
-      .eq("estado", "APERTURA")
-      .order("fecha_apertura", { ascending: false, nullsFirst: false })
-      .order("fecha", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (aperturaError) {
-      throw aperturaError;
+    // ── Obtener apertura desde IDB (offline-first) o Supabase ────────────────
+    let aperturaFechaStr = "";
+    let fondoFijoDia = 0;
+    const aperturaIdb = await getAperturaActiva(usuarioActual.id);
+    if (aperturaIdb) {
+      aperturaFechaStr = aperturaIdb.fecha_apertura ?? aperturaIdb.fecha ?? "";
+      fondoFijoDia = parseFloat(aperturaIdb.fondo_fijo_registrado || "0");
+    } else if (navigator.onLine) {
+      const { data: aperturaActual } = await supabase
+        .from("cierres")
+        .select("id, fecha, fecha_apertura, fondo_fijo_registrado")
+        .eq("cajero_id", usuarioActual.id)
+        .eq("caja", caja)
+        .eq("estado", "APERTURA")
+        .order("fecha_apertura", { ascending: false, nullsFirst: false })
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (aperturaActual) {
+        aperturaFechaStr =
+          aperturaActual.fecha_apertura ?? aperturaActual.fecha ?? "";
+        fondoFijoDia = parseFloat(aperturaActual.fondo_fijo_registrado || "0");
+      }
     }
 
-    if (!aperturaActual) {
-      setEfectivoSistema(0);
-      setTarjetaSistema(0);
-      setTransferenciasSistema(0);
-      setDolaresSistema(0);
-      setGastosSistema(0);
-      setTotalVentasSistema(0);
-      setFechaAperturaSistema("");
-      return {
-        fondoFijoDia: 0,
-        efectivoDia: 0,
-        tarjetaDia: 0,
-        transferenciasDia: 0,
-        dolaresDia: 0,
-        gastosDia: 0,
-        platillosDia: 0,
-        bebidasDia: 0,
-        totalVentasDia: 0,
-        fechaApertura: "",
-      };
-    }
+    // ── Totales desde ventasindex (IndexedDB turno activo) ──────────────────
+    const resumenIdx = await getResumenVentasIndex();
 
-    const fondoFijoDia = parseFloat(
-      aperturaActual.fondo_fijo_registrado || "0",
-    );
+    const efectivoBruto = resumenIdx.efectivo;
+    const cambioTotal = resumenIdx.cambio;
+    const efectivoDia = efectivoBruto - cambioTotal;
+    const tarjetaDia = resumenIdx.tarjeta;
+    const transferenciasDia = resumenIdx.transferencia;
+    const dolaresDia = resumenIdx.dolares_usd;
 
-    const { data: resumenRows, error: resumenError } = await supabase
-      .from("v_resumen_turnos3")
-      .select(
-        "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, total_platillos, total_bebidas",
-      )
-      .eq("apertura_id", aperturaActual.id)
-      .limit(1);
+    // ── Gastos del turno desde IDB ──────────────────────────────────────────
+    let gastosDia = 0;
+    let platillosDia = 0;
+    let bebidasDia = 0;
+    try {
+      if (aperturaIdb || aperturaFechaStr) {
+        const tsAp = new Date(aperturaFechaStr || 0).getTime();
+        const gastosList = await getByIndex<any>(
+          STORE.GASTOS,
+          "cajero_id",
+          usuarioActual.id,
+        );
+        gastosDia = gastosList
+          .filter((g) => {
+            const ts = new Date(g.fecha_hora ?? g.fecha ?? 0).getTime();
+            return ts >= tsAp && (g.caja === caja || !g.caja);
+          })
+          .reduce((acc, g) => acc + parseFloat(g.monto ?? 0), 0);
+      }
+    } catch (_) {}
 
-    if (resumenError) {
-      throw resumenError;
-    }
-
-    const resumen = resumenRows?.[0] ?? {};
-
-    const { data: conteoRows, error: conteoError } = await supabase
-      .from("v_conteo_items_turno")
-      .select(
-        "platillos_vendidos, bebidas_vendidas, total_platillos, total_bebidas",
-      )
-      .eq("apertura_id", aperturaActual.id)
-      .limit(1);
-
-    if (conteoError) {
-      console.warn(
-        "[RegistroCierre] No se pudo leer v_conteo_items_turno:",
-        conteoError,
-      );
-    }
-
-    const conteo = conteoRows?.[0] ?? {};
-
-    const efectivoDia =
-      (Number((resumen as any).efectivo_bruto) || 0) -
-      (Number((resumen as any).cambio_devuelto) || 0);
-    const tarjetaDia = Number((resumen as any).tarjeta) || 0;
-    const transferenciasDia = Number((resumen as any).transferencia) || 0;
-    const dolaresDia = Number((resumen as any).dolares_usd) || 0;
-    const gastosDia = Number((resumen as any).gastos) || 0;
-    const platillosDia =
-      Number((resumen as any).total_platillos) ||
-      Number((conteo as any).total_platillos) ||
-      0;
-    const bebidasDia =
-      Number((resumen as any).total_bebidas) ||
-      Number((conteo as any).total_bebidas) ||
-      0;
     const totalVentasDia =
-      efectivoDia +
-      tarjetaDia +
-      transferenciasDia +
-      (Number((resumen as any).dolares_lps) || 0);
+      efectivoDia + tarjetaDia + transferenciasDia + resumenIdx.dolares_lps;
 
     setEfectivoSistema(efectivoDia);
     setTarjetaSistema(tarjetaDia);
@@ -205,8 +180,7 @@ export default function RegistroCierreView({
     setDolaresSistema(dolaresDia);
     setGastosSistema(gastosDia);
     setTotalVentasSistema(totalVentasDia ?? 0);
-    const fa = aperturaActual.fecha_apertura ?? aperturaActual.fecha ?? "";
-    setFechaAperturaSistema(fa);
+    setFechaAperturaSistema(aperturaFechaStr);
 
     return {
       fondoFijoDia,
@@ -218,54 +192,54 @@ export default function RegistroCierreView({
       platillosDia,
       bebidasDia,
       totalVentasDia,
-      fechaApertura: aperturaActual.fecha_apertura ?? aperturaActual.fecha,
+      fechaApertura: aperturaFechaStr,
     };
   }
 
   async function sincronizarYCargarResumenExacto() {
     if (!usuarioActual?.id || !caja) return;
 
-    if (!navigator.onLine) {
-      setSyncError(
-        "Se requiere conexión a internet para cargar el cierre exacto desde Supabase.",
-      );
-      return;
-    }
-
     setLoading(true);
     setSincronizando(true);
     setSyncError("");
     try {
-      await Promise.all([
-        sincronizarTodo(),
-        new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-      ]);
+      // Cargar resumen desde ventasindex (IndexedDB) — funciona offline
+      await obtenerValoresAutomaticos();
 
-      const pendientes = await obtenerContadorPendientes();
-      const totalPendientes =
-        pendientes.facturas +
-        pendientes.pagos +
-        pendientes.gastos +
-        pendientes.envios +
-        pendientes.ventas +
-        pendientes.cierres;
+      // Si hay conexión, también sincronizar pendientes con Supabase
+      if (navigator.onLine) {
+        try {
+          await Promise.all([
+            sincronizarTodo(),
+            new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+          ]);
 
-      if (totalPendientes > 0) {
-        throw new Error(
-          `Aún hay ${totalPendientes} registros pendientes por sincronizar.`,
-        );
+          const pendientes = await obtenerContadorPendientes();
+          const totalPendientes =
+            pendientes.facturas +
+            pendientes.pagos +
+            pendientes.gastos +
+            pendientes.envios +
+            pendientes.ventas +
+            pendientes.cierres;
+
+          if (totalPendientes > 0) {
+            setSyncError(
+              `⚠ Hay ${totalPendientes} registros pendientes por sincronizar.`,
+            );
+          }
+
+          const tasa = await obtenerPrecioDolarSupabase();
+          setPrecioDolarActual(Number(tasa) || 0);
+        } catch (_) {
+          /* sincronización no crítica */
+        }
       }
 
-      await obtenerValoresAutomaticos();
-      const tasa = await obtenerPrecioDolarSupabase();
-      setPrecioDolarActual(Number(tasa) || 0);
       setUltimaSync(new Date());
     } catch (err: any) {
-      console.error("Error cargando resumen exacto de cierre:", err);
-      setSyncError(
-        err?.message ||
-          "No se pudo completar la sincronización para mostrar datos exactos.",
-      );
+      console.error("Error cargando resumen de cierre:", err);
+      setSyncError(err?.message || "No se pudo cargar el resumen.");
     } finally {
       setSincronizando(false);
       setLoading(false);
@@ -474,7 +448,8 @@ export default function RegistroCierreView({
       const diferencia = Number(registro.diferencia);
       const difSign =
         diferencia > 0 ? "A FAVOR" : diferencia < 0 ? "EN CONTRA" : "CUADRADO";
-      const efectivoNetoParaReporte = Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
+      const efectivoNetoParaReporte =
+        Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
 
       const fmtFecha = (d: string) => {
         if (!d) return "—";
@@ -567,15 +542,27 @@ export default function RegistroCierreView({
           : Math.round(bebidasDia);
 
       // Diferencias por tipo para el impreso — usando efectivo NETO (igual que la vista)
-      const efectivoDiaNeto = Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
-      const efDiffPrint = Number(registro.efectivo_registrado || 0) - efectivoDiaNeto;
-      const taDiffPrint = Number(registro.monto_tarjeta_registrado || 0) - Number(registro.monto_tarjeta_dia || 0);
-      const trDiffPrint = Number(registro.transferencias_registradas || 0) - Number(registro.transferencias_dia || 0);
-      const usdDiffUSD = Number(registro.dolares_registrado || 0) - Number(registro.dolares_dia || 0);
+      const efectivoDiaNeto =
+        Number(registro.efectivo_dia || 0) - Number(gastosDia || 0);
+      const efDiffPrint =
+        Number(registro.efectivo_registrado || 0) - efectivoDiaNeto;
+      const taDiffPrint =
+        Number(registro.monto_tarjeta_registrado || 0) -
+        Number(registro.monto_tarjeta_dia || 0);
+      const trDiffPrint =
+        Number(registro.transferencias_registradas || 0) -
+        Number(registro.transferencias_dia || 0);
+      const usdDiffUSD =
+        Number(registro.dolares_registrado || 0) -
+        Number(registro.dolares_dia || 0);
       // Contribución de dólares en LPS derivada del total guardado para que el desglose cuadre exactamente
-      const usdDiffLpsPrint = Number((diferencia - efDiffPrint - taDiffPrint - trDiffPrint).toFixed(2));
-      const signPrint = (v: number) => v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
-      const colorPrint = (v: number) => v < 0 ? "color:#c00;" : v > 0 ? "color:#16a34a;" : "";
+      const usdDiffLpsPrint = Number(
+        (diferencia - efDiffPrint - taDiffPrint - trDiffPrint).toFixed(2),
+      );
+      const signPrint = (v: number) =>
+        v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+      const colorPrint = (v: number) =>
+        v < 0 ? "color:#c00;" : v > 0 ? "color:#16a34a;" : "";
 
       const html = `
         <html>
@@ -956,6 +943,17 @@ export default function RegistroCierreView({
         }
         await limpiarAperturaCache();
         limpiarAperturaLocalStorage();
+        // Limpiar tablas auxiliares del turno
+        try {
+          await limpiarVentasIndex();
+          await limpiarPlatillosIndex();
+          // Limpiar conteo de platos iniciales del cajero
+          if (usuarioActual?.id) {
+            localStorage.removeItem(`apertura_platos_${usuarioActual.id}`);
+          }
+        } catch (_) {
+          /* no crítico */
+        }
         idbOk = true;
       } catch (idbErr) {
         console.warn("[RegistroCierre] Error guardando en IDB:", idbErr);
@@ -1572,30 +1570,143 @@ export default function RegistroCierreView({
 
           {/* Tabla comparativa Sistema vs Contado */}
           {!loading && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                flex: 1,
+              }}
+            >
               {/* Encabezados columnas */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, padding: "0 2px" }}>
-                <div style={{ fontSize: 9, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1 }}>Tipo</div>
-                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Sistema</div>
-                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Contado</div>
-                <div style={{ fontSize: 9, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: 1, textAlign: "right" }}>Diferencia</div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                  gap: 4,
+                  padding: "0 2px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: "#94a3b8",
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                  }}
+                >
+                  Tipo
+                </div>
+                <div
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: "#475569",
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    textAlign: "right",
+                  }}
+                >
+                  Sistema
+                </div>
+                <div
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: "#475569",
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    textAlign: "right",
+                  }}
+                >
+                  Contado
+                </div>
+                <div
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: "#475569",
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    textAlign: "right",
+                  }}
+                >
+                  Diferencia
+                </div>
               </div>
 
               {/* Fila Efectivo */}
               {(() => {
                 const diff = efectivoConteoNum - efectivoNetoSistema;
-                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
-                const bg = diff > 0 ? "#f0fdf4" : diff < 0 ? "#fef2f2" : "#f8fafc";
-                const border = diff > 0 ? "#86efac" : diff < 0 ? "#fca5a5" : "#e2e8f0";
+                const diffColor =
+                  diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg =
+                  diff > 0 ? "#f0fdf4" : diff < 0 ? "#fef2f2" : "#f8fafc";
+                const border =
+                  diff > 0 ? "#86efac" : diff < 0 ? "#fca5a5" : "#e2e8f0";
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                      gap: 4,
+                      background: bg,
+                      border: `1.5px solid ${border}`,
+                      borderRadius: 9,
+                      padding: "9px 10px",
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#15803d" }}>Efectivo</div>
-                      <div style={{ fontSize: 9, color: "#6b7280" }}>neto de gastos</div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color: "#15803d",
+                        }}
+                      >
+                        Efectivo
+                      </div>
+                      <div style={{ fontSize: 9, color: "#6b7280" }}>
+                        neto de gastos
+                      </div>
                     </div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#15803d", fontVariantNumeric: "tabular-nums" }}>L {efectivoNetoSistema.toFixed(2)}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: efectivoFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{efectivoFilled ? `L ${efectivoConteoNum.toFixed(2)}` : "—"}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{efectivoFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#15803d",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      L {efectivoNetoSistema.toFixed(2)}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: efectivoFilled ? "#0f172a" : "#94a3b8",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {efectivoFilled
+                        ? `L ${efectivoConteoNum.toFixed(2)}`
+                        : "—"}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: diffColor,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {efectivoFilled ? `L ${diff.toFixed(2)}` : "—"}
+                    </div>
                   </div>
                 );
               })()}
@@ -1603,15 +1714,67 @@ export default function RegistroCierreView({
               {/* Fila Tarjeta */}
               {(() => {
                 const diff = tarjetaConteoNum - tarjetaSistema;
-                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
-                const bg = diff > 0 ? "#eff6ff" : diff < 0 ? "#fef2f2" : "#eff6ff";
-                const border = diff > 0 ? "#93c5fd" : diff < 0 ? "#fca5a5" : "#93c5fd";
+                const diffColor =
+                  diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg =
+                  diff > 0 ? "#eff6ff" : diff < 0 ? "#fef2f2" : "#eff6ff";
+                const border =
+                  diff > 0 ? "#93c5fd" : diff < 0 ? "#fca5a5" : "#93c5fd";
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#1d4ed8" }}>Tarjeta</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#1d4ed8", fontVariantNumeric: "tabular-nums" }}>L {tarjetaSistema.toFixed(2)}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: tarjetaFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{tarjetaFilled ? `L ${tarjetaConteoNum.toFixed(2)}` : "—"}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{tarjetaFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                      gap: 4,
+                      background: bg,
+                      border: `1.5px solid ${border}`,
+                      borderRadius: 9,
+                      padding: "9px 10px",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        color: "#1d4ed8",
+                      }}
+                    >
+                      Tarjeta
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#1d4ed8",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      L {tarjetaSistema.toFixed(2)}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: tarjetaFilled ? "#0f172a" : "#94a3b8",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {tarjetaFilled ? `L ${tarjetaConteoNum.toFixed(2)}` : "—"}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: diffColor,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {tarjetaFilled ? `L ${diff.toFixed(2)}` : "—"}
+                    </div>
                   </div>
                 );
               })()}
@@ -1619,15 +1782,69 @@ export default function RegistroCierreView({
               {/* Fila Transferencias */}
               {(() => {
                 const diff = transferenciasConteoNum - transferenciasSistema;
-                const diffColor = diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
-                const bg = diff > 0 ? "#f5f3ff" : diff < 0 ? "#fef2f2" : "#f5f3ff";
-                const border = diff > 0 ? "#c4b5fd" : diff < 0 ? "#fca5a5" : "#c4b5fd";
+                const diffColor =
+                  diff > 0 ? "#166534" : diff < 0 ? "#b91c1c" : "#0f172a";
+                const bg =
+                  diff > 0 ? "#f5f3ff" : diff < 0 ? "#fef2f2" : "#f5f3ff";
+                const border =
+                  diff > 0 ? "#c4b5fd" : diff < 0 ? "#fca5a5" : "#c4b5fd";
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#6d28d9" }}>Transfer.</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#6d28d9", fontVariantNumeric: "tabular-nums" }}>L {transferenciasSistema.toFixed(2)}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: transferenciasFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{transferenciasFilled ? `L ${transferenciasConteoNum.toFixed(2)}` : "—"}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{transferenciasFilled ? `L ${diff.toFixed(2)}` : "—"}</div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                      gap: 4,
+                      background: bg,
+                      border: `1.5px solid ${border}`,
+                      borderRadius: 9,
+                      padding: "9px 10px",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        color: "#6d28d9",
+                      }}
+                    >
+                      Transfer.
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#6d28d9",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      L {transferenciasSistema.toFixed(2)}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: transferenciasFilled ? "#0f172a" : "#94a3b8",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {transferenciasFilled
+                        ? `L ${transferenciasConteoNum.toFixed(2)}`
+                        : "—"}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: diffColor,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {transferenciasFilled ? `L ${diff.toFixed(2)}` : "—"}
+                    </div>
                   </div>
                 );
               })()}
@@ -1636,38 +1853,168 @@ export default function RegistroCierreView({
               {(() => {
                 const diffUSD = dolaresConteoNum - dolaresSistema;
                 const diffLps = diffUSD * precioDolarActual;
-                const diffColor = diffUSD > 0 ? "#166534" : diffUSD < 0 ? "#b91c1c" : "#0f172a";
-                const bg = diffUSD > 0 ? "#fefce8" : diffUSD < 0 ? "#fef2f2" : "#fefce8";
-                const border = diffUSD > 0 ? "#fde047" : diffUSD < 0 ? "#fca5a5" : "#fde047";
+                const diffColor =
+                  diffUSD > 0 ? "#166534" : diffUSD < 0 ? "#b91c1c" : "#0f172a";
+                const bg =
+                  diffUSD > 0 ? "#fefce8" : diffUSD < 0 ? "#fef2f2" : "#fefce8";
+                const border =
+                  diffUSD > 0 ? "#fde047" : diffUSD < 0 ? "#fca5a5" : "#fde047";
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: bg, border: `1.5px solid ${border}`, borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                      gap: 4,
+                      background: bg,
+                      border: `1.5px solid ${border}`,
+                      borderRadius: 9,
+                      padding: "9px 10px",
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#a16207" }}>Dólares</div>
-                      <div style={{ fontSize: 9, color: "#6b7280" }}>USD · tasa L {precioDolarActual.toFixed(2)}</div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color: "#a16207",
+                        }}
+                      >
+                        Dólares
+                      </div>
+                      <div style={{ fontSize: 9, color: "#6b7280" }}>
+                        USD · tasa L {precioDolarActual.toFixed(2)}
+                      </div>
                     </div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#a16207", fontVariantNumeric: "tabular-nums" }}>$ {dolaresSistema.toFixed(2)}</div>
-                    <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: dolaresFilled ? "#0f172a" : "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{dolaresFilled ? `$ ${dolaresConteoNum.toFixed(2)}` : "—"}</div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: "#a16207",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      $ {dolaresSistema.toFixed(2)}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: "right",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: dolaresFilled ? "#0f172a" : "#94a3b8",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {dolaresFilled ? `$ ${dolaresConteoNum.toFixed(2)}` : "—"}
+                    </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: diffColor, fontVariantNumeric: "tabular-nums" }}>{dolaresFilled ? `$ ${diffUSD.toFixed(2)}` : "—"}</div>
-                      {dolaresFilled && precioDolarActual > 0 && <div style={{ fontSize: 10, color: diffColor, fontVariantNumeric: "tabular-nums" }}>L {diffLps.toFixed(2)}</div>}
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 800,
+                          color: diffColor,
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {dolaresFilled ? `$ ${diffUSD.toFixed(2)}` : "—"}
+                      </div>
+                      {dolaresFilled && precioDolarActual > 0 && (
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: diffColor,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          L {diffLps.toFixed(2)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })()}
 
               {/* Fila Gastos */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, background: "#fff1f2", border: "1.5px solid #fda4af", borderRadius: 9, padding: "9px 10px", alignItems: "center" }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: "#be123c" }}>Gastos</div>
-                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: "#be123c", fontVariantNumeric: "tabular-nums" }}>L {gastosSistema.toFixed(2)}</div>
-                <div style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}>—</div>
-                <div style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}>—</div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                  gap: 4,
+                  background: "#fff1f2",
+                  border: "1.5px solid #fda4af",
+                  borderRadius: 9,
+                  padding: "9px 10px",
+                  alignItems: "center",
+                }}
+              >
+                <div
+                  style={{ fontSize: 10, fontWeight: 800, color: "#be123c" }}
+                >
+                  Gastos
+                </div>
+                <div
+                  style={{
+                    textAlign: "right",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#be123c",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  L {gastosSistema.toFixed(2)}
+                </div>
+                <div
+                  style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}
+                >
+                  —
+                </div>
+                <div
+                  style={{ textAlign: "right", fontSize: 11, color: "#94a3b8" }}
+                >
+                  —
+                </div>
               </div>
 
               {/* Total ventas y diferencia total */}
-              <div style={{ marginTop: 4, borderTop: "2px solid #e2e8f0", paddingTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1 }}>Total Ventas Brutas</span>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>L {totalVentasSistema.toFixed(2)}</span>
+              <div
+                style={{
+                  marginTop: 4,
+                  borderTop: "2px solid #e2e8f0",
+                  paddingTop: 10,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "#64748b",
+                      textTransform: "uppercase",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    Total Ventas Brutas
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 900,
+                      color: "#0f172a",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    L {totalVentasSistema.toFixed(2)}
+                  </span>
                 </div>
               </div>
             </div>

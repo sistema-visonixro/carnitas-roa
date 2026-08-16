@@ -37,16 +37,31 @@ export async function obtenerClientesCredito(): Promise<ClienteCredito[]> {
 
 /**
  * Busca clientes por DNI o nombre (búsqueda parcial).
+ * Acepta DNI con guiones (1807-1997-00239) o sin guiones (1807199700239).
  */
 export async function buscarClientesCredito(
   termino: string,
 ): Promise<ClienteCredito[]> {
   const t = termino.trim();
+  // Versión sin guiones para buscar ambos formatos
+  const tSinGuiones = t.replace(/-/g, "");
+  // Versión con guiones formateada (si viene sin guiones de 13 dígitos)
+  const tConGuiones = tSinGuiones.replace(
+    /^(\d{4})(\d{4})(\d{5})$/,
+    "$1-$2-$3",
+  );
+
+  // Construir filtro OR cubriendo todas las variantes
+  const filtros = [`nombre.ilike.%${t}%`, `dni.ilike.%${t}%`];
+  if (tSinGuiones !== t) filtros.push(`dni.ilike.%${tSinGuiones}%`);
+  if (tConGuiones !== tSinGuiones && tConGuiones !== t)
+    filtros.push(`dni.ilike.%${tConGuiones}%`);
+
   const { data, error } = await supabase
     .from("clientes_credito")
     .select("*")
     .eq("activo", true)
-    .or(`nombre.ilike.%${t}%,dni.ilike.%${t}%`)
+    .or(filtros.join(","))
     .order("nombre")
     .limit(20);
 

@@ -2401,6 +2401,30 @@ export async function guardarVentaLocal(
     console.error("[offlineSync] No se pudo guardar venta en STORE.VENTAS:", e);
   }
 
+  // Registrar en ventasindex y platillos_index del turno activo
+  try {
+    const {
+      registrarVentaIndex,
+      registrarPlatillosIndex,
+      eliminarPlatillosIndexPorFactura,
+    } = await import("./localDB");
+    await registrarVentaIndex(venta);
+    if (String(venta.tipo ?? "") === "DEVOLUCION") {
+      const factOrig = String((venta as any).factura ?? "").replace(
+        /^DEV-/,
+        "",
+      );
+      if (factOrig) await eliminarPlatillosIndexPorFactura(factOrig);
+    } else {
+      await registrarPlatillosIndex(
+        String((venta as any).factura ?? ""),
+        (venta as any).productos,
+      );
+    }
+  } catch (_) {
+    /* no crítico */
+  }
+
   return localId;
 }
 

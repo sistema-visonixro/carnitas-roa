@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { upsertOne, STORE, guardarGastoLocal } from "./utils/localDB";
 
 interface GastosViewProps {
   onBack?: () => void;
@@ -126,6 +127,7 @@ export default function GastosView({ onBack }: GastosViewProps) {
         fecha: nuevoGasto.fecha,
         monto: nuevoGasto.monto,
         motivo: nuevoGasto.motivo,
+        fecha_hora: new Date().toISOString(),
       };
 
       // Si el usuario es cajero, añadir cajero_id y caja
@@ -146,7 +148,34 @@ export default function GastosView({ onBack }: GastosViewProps) {
         }
       }
 
-      await supabase.from("gastos").insert([insertObj]);
+      // 1. Guardar en IndexedDB siempre (con cola de reintento a Supabase)
+      await guardarGastoLocal(insertObj);
+
+      // 2. Intentar insertar en Supabase directamente si hay conexión
+      if (navigator.onLine) {
+        try {
+          const { data: inserted, error } = await supabase
+            .from("gastos")
+            .insert([insertObj])
+            .select("id")
+            .single();
+          if (!error && inserted?.id) {
+            // Actualizar el registro en IDB con el id real
+            await upsertOne(STORE.GASTOS, { ...insertObj, id: inserted.id });
+          } else if (error) {
+            console.warn(
+              "[GastosView] Error Supabase (queda en cola IDB):",
+              error,
+            );
+          }
+        } catch (e) {
+          console.warn(
+            "[GastosView] Sin conexión con Supabase, queda en IDB:",
+            e,
+          );
+        }
+      }
+
       setNuevoGasto({
         fecha: "",
         monto: "",
@@ -715,7 +744,14 @@ export default function GastosView({ onBack }: GastosViewProps) {
                   ))}
                   {gastos.length === 0 && (
                     <tr>
-                      <td colSpan={4} style={{ textAlign: "center", padding: "2rem", color: "#64748b" }}>
+                      <td
+                        colSpan={4}
+                        style={{
+                          textAlign: "center",
+                          padding: "2rem",
+                          color: "#64748b",
+                        }}
+                      >
                         No hay gastos registrados en este periodo.
                       </td>
                     </tr>
@@ -729,22 +765,44 @@ export default function GastosView({ onBack }: GastosViewProps) {
                   <div key={g.id} className="gasto-card">
                     <div className="gasto-card-header">
                       <div className="gasto-card-fecha">📅 {g.fecha}</div>
-                      <div className="gasto-card-monto">L {parseFloat(g.monto).toFixed(2)}</div>
+                      <div className="gasto-card-monto">
+                        L {parseFloat(g.monto).toFixed(2)}
+                      </div>
                     </div>
                     <div className="gasto-card-motivo">{g.motivo}</div>
                     <div className="gasto-card-actions">
                       <button
                         onClick={() => {
                           setEditId(g.id);
-                          setEditGasto({ fecha: g.fecha, monto: g.monto, motivo: g.motivo });
+                          setEditGasto({
+                            fecha: g.fecha,
+                            monto: g.monto,
+                            motivo: g.motivo,
+                          });
                         }}
-                        className="btn-back" style={{ flex: 1, justifyContent: "center", padding: "10px", color: "#f59e0b", borderColor: "rgba(245,158,11,0.2)", background: "rgba(245,158,11,0.05)" }}
+                        className="btn-back"
+                        style={{
+                          flex: 1,
+                          justifyContent: "center",
+                          padding: "10px",
+                          color: "#f59e0b",
+                          borderColor: "rgba(245,158,11,0.2)",
+                          background: "rgba(245,158,11,0.05)",
+                        }}
                       >
                         ✏️ Editar
                       </button>
                       <button
                         onClick={() => eliminarGasto(g.id)}
-                        className="btn-back" style={{ flex: 1, justifyContent: "center", padding: "10px", color: "#ef4444", borderColor: "rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.05)" }}
+                        className="btn-back"
+                        style={{
+                          flex: 1,
+                          justifyContent: "center",
+                          padding: "10px",
+                          color: "#ef4444",
+                          borderColor: "rgba(239,68,68,0.2)",
+                          background: "rgba(239,68,68,0.05)",
+                        }}
                       >
                         🗑️ Eliminar
                       </button>
@@ -820,7 +878,9 @@ export default function GastosView({ onBack }: GastosViewProps) {
                   !editGasto.monto ||
                   !editGasto.motivo
                 }
-                style={{ background: "linear-gradient(135deg, #3b82f6, #2563eb)" }}
+                style={{
+                  background: "linear-gradient(135deg, #3b82f6, #2563eb)",
+                }}
               >
                 {loading ? "⏳ Guardando..." : "💾 Guardar Cambios"}
               </button>

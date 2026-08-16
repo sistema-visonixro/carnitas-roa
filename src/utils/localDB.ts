@@ -8,7 +8,7 @@ import { compareTurnoRecordsByRecency } from "./fechas";
 
 // ─────────────────────────── Configuración DB ──────────────────────────────
 const DB_NAME = "CarnitasRoaLocalDB";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 export const STORE = {
   VENTAS: "ventas",
@@ -58,6 +58,9 @@ export const STORE = {
   COMPRAS: "compras",
   PLANILLA: "planilla",
   COSTOS_OPERATIVOS: "costos_operativos",
+  // Turno en curso (se limpian al cierre)
+  VENTAS_INDEX: "ventasindex",
+  PLATILLOS_INDEX: "platillos_index",
 } as const;
 
 export interface ResumenTurno {
@@ -347,6 +350,21 @@ export function openLocalDB(): Promise<IDBDatabase> {
           { name: "fecha", keyPath: "fecha" },
           { name: "categoria", keyPath: "categoria" },
         ]);
+      }
+
+      if (oldVersion < 7) {
+        // ventasindex: registro de cada venta del turno activo
+        ensureStore(
+          STORE.VENTAS_INDEX,
+          { keyPath: "id", autoIncrement: true },
+          [{ name: "factura", keyPath: "factura" }],
+        );
+        // platillos_index: platillos (tipo comida) facturados en el turno activo
+        ensureStore(
+          STORE.PLATILLOS_INDEX,
+          { keyPath: "id", autoIncrement: true },
+          [{ name: "factura", keyPath: "factura" }],
+        );
       }
     };
 
@@ -1163,6 +1181,168 @@ export async function guardarVentaLocal(
   if (aperturaId && ventaConId.cajero_id) {
     calcularResumenTurno(aperturaId, ventaConId.cajero_id).catch(() => {});
   }
+  // Registrar en ventasindex y platillos_index del turno activo
+  try {
+    await registrarVentaIndex(ventaConId);
+    if (ventaConId.tipo !== "DEVOLUCION") {
+      await registrarPlatillosIndex(ventaConId.factura, ventaConId.productos);
+    } else {
+      // Devolucion: eliminar los platillos de la factura original de platillos_index
+      const facturaOriginal = String(ventaConId.factura || "").replace(
+        /^DEV-/,
+        "",
+      );
+      if (facturaOriginal) {
+        await eliminarPlatillosIndexPorFactura(facturaOriginal);
+      }
+    }
+  } catch (_) {
+    // No crítico: ventasindex es auxiliar
+  }
+}
+
+// ──────────────────── ventasindex: turno activo ────────────────────────────
+
+/** Registra una venta (o devolución) en la tabla auxiliar ventasindex.
+ *  Las devoluciones tienen valores negativos, así que la suma queda correcta. */
+export async function registrarVentaIndex(venta: any): Promise<void> {
+  try {
+    const db = await openLocalDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE.VENTAS_INDEX, "readwrite");
+      tx.objectStore(STORE.VENTAS_INDEX).add({
+        factura: String(venta.factura ?? ""),
+        efectivo: parseFloat(venta.efectivo ?? 0),
+        tarjeta: parseFloat(venta.tarjeta ?? 0),
+        transferencia: parseFloat(venta.transferencia ?? 0),
+        dolares_lps: parseFloat(venta.dolares ?? 0),
+        dolares_usd: parseFloat(venta.dolares_usd ?? 0),
+        cambio: parseFloat(venta.cambio ?? 0),
+        total: parseFloat(venta.total ?? 0),
+        tipo: venta.tipo ?? "CONTADO",
+        tipo_orden: venta.tipo_orden ?? "",
+        fecha_hora: venta.fecha_hora ?? new Date().toISOString(),
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (_) {
+    // silencioso - no es crítico
+  }
+}
+
+/** Registra los platillos (tipo comida) de una venta en platillos_index. */
+export async function registrarPlatillosIndex(
+  factura: string,
+  productosRaw: any,
+): Promise<void> {
+  try {
+    let productos: any[] = [];
+    if (typeof productosRaw === "string") {
+      try {
+        productos = JSON.parse(productosRaw);
+      } catch {
+        return;
+      }
+    } else if (Array.isArray(productosRaw)) {
+      productos = productosRaw;
+    }
+
+    const platillos = productos.filter(
+      (p) => (p.tipo ?? "").toLowerCase() === "comida",
+    );
+    if (platillos.length === 0) return;
+
+    const db = await openLocalDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE.PLATILLOS_INDEX, "readwrite");
+      const store = tx.objectStore(STORE.PLATILLOS_INDEX);
+      for (const p of platillos) {
+        store.add({
+          factura: String(factura ?? ""),
+          nombre: String(p.nombre ?? p.name ?? ""),
+          cantidad: parseInt(p.cantidad ?? p.qty ?? 1),
+        });
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (_) {
+    // silencioso
+  }
+}
+
+/** Elimina del platillos_index todos los registros de una factura original (para devoluciones). */
+export async function eliminarPlatillosIndexPorFactura(
+  factura: string,
+): Promise<void> {
+  try {
+    const db = await openLocalDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE.PLATILLOS_INDEX, "readwrite");
+      const store = tx.objectStore(STORE.PLATILLOS_INDEX);
+      const idx = store.index("factura");
+      const req = idx.openCursor(IDBKeyRange.only(factura));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (_) {
+    // silencioso
+  }
+}
+
+/** Obtiene todos los registros de ventasindex. */
+export async function getVentasIndex(): Promise<any[]> {
+  return getAll(STORE.VENTAS_INDEX);
+}
+
+/** Obtiene todos los registros de platillos_index. */
+export async function getPlatillosIndex(): Promise<any[]> {
+  return getAll(STORE.PLATILLOS_INDEX);
+}
+
+/** Calcula el resumen totales desde ventasindex (para resumen de caja y cierre). */
+export async function getResumenVentasIndex(): Promise<{
+  efectivo: number;
+  tarjeta: number;
+  transferencia: number;
+  dolares_lps: number;
+  dolares_usd: number;
+  cambio: number;
+  total: number;
+  count: number;
+}> {
+  const registros = await getAll<any>(STORE.VENTAS_INDEX);
+  const sum = (campo: string) =>
+    registros.reduce((acc, r) => acc + (parseFloat(r[campo] ?? 0) || 0), 0);
+  return {
+    efectivo: sum("efectivo"),
+    tarjeta: sum("tarjeta"),
+    transferencia: sum("transferencia"),
+    dolares_lps: sum("dolares_lps"),
+    dolares_usd: sum("dolares_usd"),
+    cambio: sum("cambio"),
+    total: sum("total"),
+    count: registros.length,
+  };
+}
+
+/** Limpia ventasindex (al hacer cierre de caja). */
+export async function limpiarVentasIndex(): Promise<void> {
+  return clearStore(STORE.VENTAS_INDEX);
+}
+
+/** Limpia platillos_index (al hacer cierre de caja). */
+export async function limpiarPlatillosIndex(): Promise<void> {
+  return clearStore(STORE.PLATILLOS_INDEX);
 }
 
 export async function guardarGastoLocal(

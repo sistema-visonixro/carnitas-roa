@@ -13,7 +13,6 @@ import {
   inicializarSistemaOffline,
   guardarGastoLocal,
   guardarEnvioLocal,
-  obtenerContadorPendientes,
   sincronizarTodo,
   eliminarEnvioLocal,
   obtenerEnviosPendientes,
@@ -45,6 +44,11 @@ import {
   calcularResumenTurno,
   getPrecioDolarLocal,
   getUsuariosLocal,
+  getAperturaActiva,
+  registrarVentaIndex,
+  eliminarPlatillosIndexPorFactura,
+  getPlatillosIndex,
+  getResumenVentasIndex,
 } from "./utils/localDB";
 import { useConexion } from "./utils/useConexion";
 import CreditoClienteModal from "./CreditoClienteModal";
@@ -174,6 +178,11 @@ export default function PuntoDeVentaView({
   ) => void;
 }) {
   const [showCierre, setShowCierre] = useState(false);
+  const [showAperturaPlatillos, setShowAperturaPlatillos] = useState(false);
+  const [platillosIndexData, setPlatillosIndexData] = useState<any[]>([]);
+  const [platillosIndexLoading, setPlatillosIndexLoading] = useState(false);
+  const [platosInicialesInput, setPlatosInicialesInput] = useState<string>("");
+  const [platosIniciales, setPlatosIniciales] = useState<number>(0);
   const [showResumen, setShowResumen] = useState(false);
   const [resumenLoading, setResumenLoading] = useState(false);
   const [resumenData, setResumenData] = useState<{
@@ -795,49 +804,6 @@ export default function PuntoDeVentaView({
     };
   }, [usuarioActual]);
 
-  async function obtenerPrecioDolarSupabase() {
-    const { data, error } = await supabase
-      .from("precio_dolar")
-      .select("valor")
-      .eq("id", "singleton")
-      .maybeSingle();
-
-    if (error) {
-      console.warn("No se pudo leer precio_dolar desde Supabase:", error);
-      return 0;
-    }
-
-    return Number(data?.valor) || 0;
-  }
-
-  async function sincronizarAntesDeResumen() {
-    if (!navigator.onLine || !estaConectado()) {
-      throw new Error(
-        "Se requiere conexión a internet para sincronizar y calcular el resumen exacto.",
-      );
-    }
-
-    await Promise.all([
-      sincronizarTodo(),
-      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-    ]);
-
-    const pendientes = await obtenerContadorPendientes();
-    const totalPendientes =
-      pendientes.facturas +
-      pendientes.pagos +
-      pendientes.gastos +
-      pendientes.envios +
-      pendientes.ventas +
-      pendientes.cierres;
-
-    if (totalPendientes > 0) {
-      throw new Error(
-        `Hay ${totalPendientes} registros pendientes de sincronizar. Intente de nuevo en unos segundos.`,
-      );
-    }
-  }
-
   async function fetchResumenCaja() {
     setShowResumen(true);
     setResumenLoading(true);
@@ -848,94 +814,57 @@ export default function PuntoDeVentaView({
         return;
       }
 
-      await sincronizarAntesDeResumen();
-
-      const aperturaSupabase = await obtenerAperturaActivaSupabase(
-        usuarioActual.id,
-        caiInfo?.caja_asignada || undefined,
-      );
-      if (!aperturaSupabase) {
-        alert(
-          "No hay apertura activa en Supabase para este cajero. No se puede mostrar un resumen exacto.",
-        );
-        setShowResumen(false);
-        return;
-      }
-
-      const { data: resumenRemotoRows, error: resumenRemotoError } =
-        await supabase
-          .from("v_resumen_turnos3")
-          .select(
-            "apertura_id, efectivo_bruto, cambio_devuelto, tarjeta, transferencia, dolares_lps, dolares_usd, gastos, platillos_vendidos, bebidas_vendidas, platillos_donados, bebidas_donadas, total_platillos, total_bebidas",
-          )
-          .eq("apertura_id", aperturaSupabase.id)
-          .limit(1);
-
-      if (resumenRemotoError || !resumenRemotoRows?.[0]) {
-        throw (
-          resumenRemotoError ?? new Error("Sin datos de resumen en Supabase")
-        );
-      }
-
-      const resumenRemoto = resumenRemotoRows[0] as any;
-      const conteoTurno = await obtenerConteoTurnoSupabase(
-        Number(aperturaSupabase.id),
-      );
-
-      const fechaInicio =
-        aperturaSupabase.fecha_apertura ?? aperturaSupabase.fecha;
-      let deliverySum = 0;
-      if (fechaInicio) {
-        const { data: ventasDelivery } = await supabase
-          .from("ventas")
-          .select("delivery")
-          .eq("cajero_id", usuarioActual.id)
-          .neq("tipo", "CREDITO")
-          .gte("fecha_hora", fechaInicio);
-
-        deliverySum = (ventasDelivery || []).reduce(
-          (acc: number, row: any) => acc + parseFloat(row?.delivery || 0),
-          0,
-        );
-      }
-
-      const tasa = await obtenerPrecioDolarSupabase();
+      // ── Datos desde ventasindex (IndexedDB turno activo) ──────────────────
+      const resumenIdx = await getResumenVentasIndex();
+      const tasa = await getPrecioDolarLocal();
       const dolaresConvertidos = Number(
-        ((Number(resumenRemoto.dolares_usd) || 0) * tasa).toFixed(2),
+        (resumenIdx.dolares_usd * tasa).toFixed(2),
       );
+
+      // Contar platillos desde platillos_index
+      const platillosRows = await getPlatillosIndex();
+      const totalPlatillos = platillosRows.reduce(
+        (acc, r) => acc + (parseInt(r.cantidad ?? 1) || 0),
+        0,
+      );
+
+      // Gastos del turno desde IDB
+      let gastosSum = 0;
+      try {
+        const aperturaIdb = await getAperturaActiva(usuarioActual.id);
+        if (aperturaIdb) {
+          const gastosList = await getByIndex<any>(
+            STORE.GASTOS,
+            "cajero_id",
+            usuarioActual.id,
+          );
+          const tsAp = new Date(
+            aperturaIdb.fecha_apertura ?? aperturaIdb.fecha ?? 0,
+          ).getTime();
+          gastosSum = gastosList
+            .filter((g) => {
+              const ts = new Date(g.fecha_hora ?? g.fecha ?? 0).getTime();
+              return ts >= tsAp;
+            })
+            .reduce((acc, g) => acc + parseFloat(g.monto ?? 0), 0);
+        }
+      } catch (_) {}
 
       setResumenData({
-        efectivo: Number(
-          (
-            (Number(resumenRemoto.efectivo_bruto) || 0) -
-            (Number(resumenRemoto.cambio_devuelto) || 0)
-          ).toFixed(2),
-        ),
-        tarjeta: Number(resumenRemoto.tarjeta) || 0,
-        transferencia: Number(resumenRemoto.transferencia) || 0,
-        dolares: Number(resumenRemoto.dolares_lps) || 0,
-        dolares_usd: Number(resumenRemoto.dolares_usd) || 0,
+        efectivo: Number((resumenIdx.efectivo - resumenIdx.cambio).toFixed(2)),
+        tarjeta: Number(resumenIdx.tarjeta.toFixed(2)),
+        transferencia: Number(resumenIdx.transferencia.toFixed(2)),
+        dolares: Number(resumenIdx.dolares_lps.toFixed(2)),
+        dolares_usd: Number(resumenIdx.dolares_usd.toFixed(2)),
         dolares_convertidos: dolaresConvertidos,
         tasa_dolar: tasa,
-        gastos: Number(resumenRemoto.gastos) || 0,
-        cambio: Number(resumenRemoto.cambio_devuelto) || 0,
-        delivery: Number(deliverySum.toFixed(2)),
-        platillos:
-          Number(resumenRemoto.total_platillos) ||
-          Number(conteoTurno?.total_platillos) ||
-          0,
-        bebidas:
-          Number(resumenRemoto.total_bebidas) ||
-          Number(conteoTurno?.total_bebidas) ||
-          0,
-        platillos_donados:
-          Number(conteoTurno?.platillos_donados) ||
-          Number(resumenRemoto.platillos_donados) ||
-          0,
-        bebidas_donadas:
-          Number(conteoTurno?.bebidas_donadas) ||
-          Number(resumenRemoto.bebidas_donadas) ||
-          0,
+        gastos: Number(gastosSum.toFixed(2)),
+        cambio: Number(resumenIdx.cambio.toFixed(2)),
+        delivery: 0,
+        platillos: totalPlatillos,
+        bebidas: 0,
+        platillos_donados: 0,
+        bebidas_donadas: 0,
       });
     } catch (err) {
       console.error("Error al obtener resumen de caja:", err);
@@ -946,11 +875,6 @@ export default function PuntoDeVentaView({
         dolares: 0,
         gastos: 0,
       });
-      alert(
-        err instanceof Error
-          ? err.message
-          : "No se pudo obtener el resumen exacto desde Supabase.",
-      );
     } finally {
       setResumenLoading(false);
     }
@@ -3308,6 +3232,12 @@ export default function PuntoDeVentaView({
   const [subcategoriaFiltro, setSubcategoriaFiltro] = useState<string | null>(
     null,
   );
+  const [viewMode, setViewMode] = useState<"tarjetas" | "lista">(
+    () =>
+      (localStorage.getItem("pos_view_mode") as "tarjetas" | "lista") ||
+      "tarjetas",
+  );
+  const [busquedaProducto, setBusquedaProducto] = useState("");
 
   // Estados conteo del turno (chips del header)
   // Solo usamos los setters en este componente; evitar TS6133 por variables no leídas.
@@ -4483,6 +4413,17 @@ export default function PuntoDeVentaView({
       const tempId = -Date.now();
       await upsertOne(STORE.VENTAS, { ...ventaDevolucion, id: tempId });
       console.log("✓ Devolución guardada en IDB (id temporal:", tempId, ")");
+      // Registrar en ventasindex y eliminar platillos de platillos_index
+      try {
+        await registrarVentaIndex(ventaDevolucion);
+        const factOrig = String(ventaDevolucion.factura ?? "").replace(
+          /^DEV-/,
+          "",
+        );
+        if (factOrig) await eliminarPlatillosIndexPorFactura(factOrig);
+      } catch (_) {
+        /* no crítico */
+      }
 
       // ── Intentar Supabase si hay conexión ─────────────────────────────────
       if (navigator.onLine) {
@@ -4773,14 +4714,21 @@ export default function PuntoDeVentaView({
     ? `${textoCajeroHeader}${textoReciboHeader ? ` | ${textoReciboHeader}` : ""}`
     : textoReciboHeader;
 
-  // Filter products by type and subcategory
-  const productosFiltrados = productos.filter((p) => {
-    if (p.tipo !== activeTab) return false;
-    if (activeTab === "comida" && subcategoriaFiltro) {
-      return p.subcategoria === subcategoriaFiltro;
-    }
-    return true;
-  });
+  // Filter products by type and subcategory (or global search)
+  const busquedaTrimmed = busquedaProducto.trim().toLowerCase();
+  const productosFiltrados = busquedaTrimmed
+    ? productos.filter((p) => {
+        const nombreMatch = p.nombre.toLowerCase().includes(busquedaTrimmed);
+        const precioMatch = p.precio.toFixed(2).includes(busquedaTrimmed);
+        return nombreMatch || precioMatch;
+      })
+    : productos.filter((p) => {
+        if (p.tipo !== activeTab) return false;
+        if (activeTab === "comida" && subcategoriaFiltro) {
+          return p.subcategoria === subcategoriaFiltro;
+        }
+        return true;
+      });
 
   return (
     <div
@@ -5502,6 +5450,486 @@ export default function PuntoDeVentaView({
         {/* Botón de cerrar sesión oculto */}
         <button style={{ display: "none" }}>Cerrar sesión</button>
 
+        {/* ── Modal: Conteo de Platillos ─────────────────────────────── */}
+        {showAperturaPlatillos && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              zIndex: 99998,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "16px",
+            }}
+            onClick={() => setShowAperturaPlatillos(false)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "#fff",
+                borderRadius: 16,
+                width: "100%",
+                maxWidth: 540,
+                maxHeight: "90vh",
+                display: "flex",
+                flexDirection: "column",
+                boxShadow: "0 8px 40px rgba(0,0,0,0.3)",
+                overflow: "hidden",
+              }}
+            >
+              {/* Header */}
+              <div
+                style={{
+                  background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+                  color: "#fff",
+                  padding: "18px 20px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexShrink: 0,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>
+                    🍽️ Conteo de Platillos
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+                    Inventario de platos del turno activo
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAperturaPlatillos(false)}
+                  style={{
+                    background: "rgba(255,255,255,0.2)",
+                    border: "none",
+                    borderRadius: 8,
+                    color: "#fff",
+                    fontSize: 20,
+                    cursor: "pointer",
+                    width: 36,
+                    height: 36,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Contenido */}
+              <div style={{ overflowY: "auto", flex: 1, padding: "16px" }}>
+                {platillosIndexLoading ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: 40,
+                      color: "#7c3aed",
+                    }}
+                  >
+                    Cargando...
+                  </div>
+                ) : (
+                  (() => {
+                    // Calcular total vendidos desde platillos_index
+                    const totalVendidos = platillosIndexData.reduce(
+                      (acc, r) => acc + (parseInt(r.cantidad ?? 1) || 0),
+                      0,
+                    );
+                    const diferencia = platosIniciales - totalVendidos;
+
+                    // Agrupar por nombre para la lista
+                    const agrupado: Record<
+                      string,
+                      { cantidad: number; facturas: string[] }
+                    > = {};
+                    platillosIndexData.forEach((r) => {
+                      const nombre = r.nombre || "Sin nombre";
+                      if (!agrupado[nombre]) {
+                        agrupado[nombre] = { cantidad: 0, facturas: [] };
+                      }
+                      agrupado[nombre].cantidad += parseInt(r.cantidad ?? 1);
+                      if (
+                        r.factura &&
+                        !agrupado[nombre].facturas.includes(r.factura)
+                      ) {
+                        agrupado[nombre].facturas.push(r.factura);
+                      }
+                    });
+
+                    return (
+                      <>
+                        {/* Input platos iniciales */}
+                        <div
+                          style={{
+                            background: "#f5f3ff",
+                            border: "1px solid #ddd6fe",
+                            borderRadius: 12,
+                            padding: "14px 16px",
+                            marginBottom: 14,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: "#6d28d9",
+                              marginBottom: 8,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                            }}
+                          >
+                            📋 Platos físicos al inicio del turno
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "center",
+                            }}
+                          >
+                            <input
+                              type="number"
+                              min={0}
+                              value={platosInicialesInput}
+                              placeholder="Ej: 100"
+                              onChange={(e) =>
+                                setPlatosInicialesInput(e.target.value)
+                              }
+                              style={{
+                                flex: 1,
+                                padding: "10px 14px",
+                                border: "2px solid #c4b5fd",
+                                borderRadius: 8,
+                                fontSize: 18,
+                                fontWeight: 700,
+                                color: "#4c1d95",
+                                outline: "none",
+                                background: "#fff",
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const val = parseInt(platosInicialesInput);
+                                const n =
+                                  Number.isFinite(val) && val >= 0 ? val : 0;
+                                setPlatosIniciales(n);
+                                try {
+                                  const key = `apertura_platos_${usuarioActual?.id ?? ""}`;
+                                  localStorage.setItem(key, String(n));
+                                } catch (_) {}
+                              }}
+                              style={{
+                                background: "#7c3aed",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 8,
+                                padding: "10px 18px",
+                                fontWeight: 700,
+                                fontSize: 14,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              Guardar
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Tarjetas de resumen */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gap: 10,
+                            marginBottom: 16,
+                          }}
+                        >
+                          {/* Iniciales */}
+                          <div
+                            style={{
+                              background: "#eff6ff",
+                              border: "1px solid #bfdbfe",
+                              borderRadius: 10,
+                              padding: "12px 10px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: "#1d4ed8",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.5px",
+                                marginBottom: 4,
+                              }}
+                            >
+                              Iniciales
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 28,
+                                fontWeight: 900,
+                                color: "#1e40af",
+                              }}
+                            >
+                              {platosIniciales}
+                            </div>
+                            <div style={{ fontSize: 10, color: "#60a5fa" }}>
+                              platos físicos
+                            </div>
+                          </div>
+
+                          {/* Vendidos */}
+                          <div
+                            style={{
+                              background: "#fef3c7",
+                              border: "1px solid #fde68a",
+                              borderRadius: 10,
+                              padding: "12px 10px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: "#92400e",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.5px",
+                                marginBottom: 4,
+                              }}
+                            >
+                              Vendidos
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 28,
+                                fontWeight: 900,
+                                color: "#b45309",
+                              }}
+                            >
+                              {totalVendidos}
+                            </div>
+                            <div style={{ fontSize: 10, color: "#f59e0b" }}>
+                              platillos facturados
+                            </div>
+                          </div>
+
+                          {/* Diferencia */}
+                          <div
+                            style={{
+                              background:
+                                diferencia >= 0 ? "#f0fdf4" : "#fef2f2",
+                              border: `1px solid ${diferencia >= 0 ? "#bbf7d0" : "#fecaca"}`,
+                              borderRadius: 10,
+                              padding: "12px 10px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: diferencia >= 0 ? "#166534" : "#991b1b",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.5px",
+                                marginBottom: 4,
+                              }}
+                            >
+                              Disponibles
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 28,
+                                fontWeight: 900,
+                                color: diferencia >= 0 ? "#15803d" : "#dc2626",
+                              }}
+                            >
+                              {diferencia}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 10,
+                                color: diferencia >= 0 ? "#4ade80" : "#f87171",
+                              }}
+                            >
+                              {platosIniciales} − {totalVendidos}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Lista de platillos */}
+                        {Object.keys(agrupado).length === 0 ? (
+                          <div
+                            style={{
+                              textAlign: "center",
+                              padding: "24px 0",
+                              color: "#64748b",
+                            }}
+                          >
+                            <div style={{ fontSize: 36 }}>🍽️</div>
+                            <div style={{ marginTop: 10, fontWeight: 600 }}>
+                              Sin platillos registrados en este turno
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                marginTop: 4,
+                                opacity: 0.7,
+                              }}
+                            >
+                              Los platillos aparecerán al facturar
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: "#64748b",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.5px",
+                                marginBottom: 8,
+                              }}
+                            >
+                              Detalle de platillos facturados
+                            </div>
+                            <table
+                              style={{
+                                width: "100%",
+                                borderCollapse: "collapse",
+                              }}
+                            >
+                              <thead>
+                                <tr style={{ background: "#f8fafc" }}>
+                                  <th
+                                    style={{
+                                      textAlign: "left",
+                                      padding: "8px 12px",
+                                      fontSize: 11,
+                                      color: "#64748b",
+                                      fontWeight: 700,
+                                      borderBottom: "1px solid #e2e8f0",
+                                    }}
+                                  >
+                                    PLATILLO
+                                  </th>
+                                  <th
+                                    style={{
+                                      textAlign: "center",
+                                      padding: "8px 12px",
+                                      fontSize: 11,
+                                      color: "#64748b",
+                                      fontWeight: 700,
+                                      borderBottom: "1px solid #e2e8f0",
+                                      width: 60,
+                                    }}
+                                  >
+                                    CANT.
+                                  </th>
+                                  <th
+                                    style={{
+                                      textAlign: "left",
+                                      padding: "8px 12px",
+                                      fontSize: 11,
+                                      color: "#64748b",
+                                      fontWeight: 700,
+                                      borderBottom: "1px solid #e2e8f0",
+                                    }}
+                                  >
+                                    FACTURAS
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Object.entries(agrupado)
+                                  .sort((a, b) => b[1].cantidad - a[1].cantidad)
+                                  .map(([nombre, data]) => (
+                                    <tr
+                                      key={nombre}
+                                      style={{
+                                        borderBottom: "1px solid #f1f5f9",
+                                      }}
+                                    >
+                                      <td
+                                        style={{
+                                          padding: "10px 12px",
+                                          fontWeight: 600,
+                                          color: "#0f172a",
+                                        }}
+                                      >
+                                        {nombre}
+                                      </td>
+                                      <td
+                                        style={{
+                                          padding: "10px 12px",
+                                          textAlign: "center",
+                                          fontWeight: 800,
+                                          color: "#7c3aed",
+                                          fontSize: 18,
+                                        }}
+                                      >
+                                        {data.cantidad}
+                                      </td>
+                                      <td
+                                        style={{
+                                          padding: "10px 12px",
+                                          fontSize: 11,
+                                          color: "#64748b",
+                                        }}
+                                      >
+                                        {data.facturas.slice(0, 6).join(", ")}
+                                        {data.facturas.length > 6
+                                          ? ` +${data.facturas.length - 6} más`
+                                          : ""}
+                                      </td>
+                                    </tr>
+                                  ))}
+                              </tbody>
+                            </table>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()
+                )}
+              </div>
+
+              {/* Footer */}
+              <div
+                style={{
+                  padding: "14px 20px",
+                  borderTop: "1px solid #e2e8f0",
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  flexShrink: 0,
+                }}
+              >
+                <button
+                  onClick={() => setShowAperturaPlatillos(false)}
+                  style={{
+                    background: "#7c3aed",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "10px 24px",
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showCierre && (
           <div
             style={{
@@ -5578,6 +6006,24 @@ export default function PuntoDeVentaView({
         >
           Domicilio
           {pedidosPendientesCount > 0 ? ` (${pedidosPendientesCount})` : ""}
+        </button>
+        <button
+          onClick={() => setShowPagoCreditoModal(true)}
+          title="Cobrar crédito a cliente"
+          style={{
+            background: "#7c3aed",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 14px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px #0004",
+            marginRight: 10,
+          }}
+        >
+          💳 Cobrar Crédito
         </button>
         <button
           onClick={() => openMenu()}
@@ -7541,7 +7987,108 @@ export default function PuntoDeVentaView({
             >
               Bebidas
             </button>
+
+            {/* Barra de búsqueda - alineada a la derecha de las tabs */}
+            <div
+              style={{
+                marginLeft: "auto",
+                alignSelf: "center",
+                position: "relative",
+                width: busquedaProducto ? 240 : 180,
+                transition: "width 0.3s ease",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  left: 11,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 14,
+                  color: theme === "lite" ? "#94a3b8" : "#64748b",
+                  pointerEvents: "none",
+                }}
+              >
+                🔍
+              </span>
+              <input
+                type="text"
+                placeholder="Buscar producto…"
+                value={busquedaProducto}
+                onChange={(e) => setBusquedaProducto(e.target.value)}
+                style={{
+                  width: "100%",
+                  paddingLeft: 32,
+                  paddingRight: busquedaProducto ? 28 : 10,
+                  paddingTop: 7,
+                  paddingBottom: 7,
+                  fontSize: 13,
+                  fontWeight: 500,
+                  borderRadius: 24,
+                  border:
+                    theme === "lite"
+                      ? "1.5px solid #cbd5e1"
+                      : "1.5px solid #334155",
+                  background: theme === "lite" ? "#f8fafc" : "#1f2937",
+                  color: theme === "lite" ? "#0f172a" : "#f1f5f9",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color 0.2s, box-shadow 0.2s",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor =
+                    theme === "lite" ? "#3b82f6" : "#60a5fa";
+                  e.currentTarget.style.boxShadow =
+                    theme === "lite"
+                      ? "0 0 0 3px rgba(59,130,246,0.15)"
+                      : "0 0 0 3px rgba(96,165,250,0.15)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor =
+                    theme === "lite" ? "#cbd5e1" : "#334155";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+              {busquedaProducto && (
+                <button
+                  onClick={() => setBusquedaProducto("")}
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: theme === "lite" ? "#94a3b8" : "#64748b",
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Indicador modo búsqueda activa */}
+          {busquedaTrimmed && (
+            <div
+              style={{
+                marginBottom: 8,
+                marginTop: -16,
+                fontSize: 12,
+                color: theme === "lite" ? "#64748b" : "#94a3b8",
+                fontStyle: "italic",
+                textAlign: "right",
+              }}
+            >
+              {productosFiltrados.length} resultado
+              {productosFiltrados.length !== 1 ? "s" : ""} · todas las categorías
+            </div>
+          )}
 
           {/* Botones de filtro por subcategor\u00eda (solo para comida) */}
           {activeTab === "comida" &&
@@ -7747,7 +8294,7 @@ export default function PuntoDeVentaView({
             <p style={{ textAlign: "center", color: "#999" }}>
               Registra la apertura para ver los productos
             </p>
-          ) : (
+          ) : viewMode === "tarjetas" ? (
             <div
               style={{
                 display: "grid",
@@ -7888,6 +8435,136 @@ export default function PuntoDeVentaView({
                     >
                       {p.nombre}
                     </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* Modo Lista */
+            <div
+              style={{
+                maxHeight: "60vh",
+                overflowY: "auto",
+                paddingRight: 4,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              {productosFiltrados.map((p) => (
+                <div
+                  key={p.id}
+                  onClick={() => agregarProducto(p)}
+                  style={{
+                    background: theme === "lite" ? "#fff" : "#1f2937",
+                    border:
+                      theme === "lite"
+                        ? "1px solid #e2e8f0"
+                        : "1px solid #334155",
+                    borderRadius: 12,
+                    padding: "10px 16px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    transition:
+                      "background 0.15s ease, border-color 0.15s ease",
+                    color: theme === "lite" ? "#111827" : "#f5f5f5",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background =
+                      theme === "lite" ? "#f1f5f9" : "#263244";
+                    e.currentTarget.style.borderColor =
+                      theme === "lite" ? "#94a3b8" : "#475569";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background =
+                      theme === "lite" ? "#fff" : "#1f2937";
+                    e.currentTarget.style.borderColor =
+                      theme === "lite" ? "#e2e8f0" : "#334155";
+                  }}
+                >
+                  {/* Miniatura */}
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 10,
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      background: theme === "lite" ? "#f8fafc" : "#1b2632",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {p.imagen ? (
+                      <img
+                        src={p.imagen}
+                        alt={p.nombre}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: 20,
+                          color: theme === "lite" ? "#94a3b8" : "#64748b",
+                        }}
+                      >
+                        📦
+                      </span>
+                    )}
+                  </div>
+                  {/* Nombre + tipo */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 15,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {p.nombre}
+                    </div>
+                    {busquedaTrimmed && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color:
+                            p.tipo === "comida"
+                              ? "#388e3c"
+                              : p.tipo === "bebida"
+                                ? "#1976d2"
+                                : "#9c27b0",
+                          marginTop: 2,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        {p.tipo}
+                      </div>
+                    )}
+                  </div>
+                  {/* Precio */}
+                  <div
+                    style={{
+                      fontWeight: 800,
+                      fontSize: 15,
+                      color: theme === "lite" ? "#1b2853" : "#f7b80b",
+                      flexShrink: 0,
+                      background: theme === "lite" ? "#feffee" : "#111827",
+                      borderRadius: 20,
+                      padding: "4px 12px",
+                    }}
+                  >
+                    L {p.precio.toFixed(2)}
                   </div>
                 </div>
               ))}
@@ -12589,6 +13266,75 @@ export default function PuntoDeVentaView({
                     <span>
                       <div className="btn-label">Resumen</div>
                       <div className="btn-desc">Ventas del día</div>
+                    </span>
+                  </button>
+                  <button
+                    className="menu-btn"
+                    onClick={async () => {
+                      closeMenuAnimated();
+                      setPlatillosIndexLoading(true);
+                      setShowAperturaPlatillos(true);
+                      // Cargar conteo inicial guardado en localStorage
+                      try {
+                        const key = `apertura_platos_${usuarioActual?.id ?? ""}`;
+                        const saved = localStorage.getItem(key);
+                        const val = saved ? parseInt(saved) : 0;
+                        setPlatosIniciales(Number.isFinite(val) ? val : 0);
+                        setPlatosInicialesInput(
+                          Number.isFinite(val) && val > 0 ? String(val) : "",
+                        );
+                      } catch (_) {}
+                      try {
+                        const rows = await getPlatillosIndex();
+                        setPlatillosIndexData(rows);
+                      } catch (_) {
+                        setPlatillosIndexData([]);
+                      } finally {
+                        setPlatillosIndexLoading(false);
+                      }
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #fdf4ff, #fae8ff)",
+                      color: "#6b21a8",
+                      border: "1px solid #d8b4fe",
+                      animationDelay: "100ms",
+                    }}
+                  >
+                    <span className="btn-icon">🍽️</span>
+                    <span>
+                      <div className="btn-label">Conteo de Platillos</div>
+                      <div className="btn-desc">
+                        Inventario del turno activo
+                      </div>
+                    </span>
+                  </button>
+                  {/* Modo de Vista */}
+                  <button
+                    className="menu-btn"
+                    onClick={() => {
+                      const next =
+                        viewMode === "tarjetas" ? "lista" : "tarjetas";
+                      setViewMode(next);
+                      localStorage.setItem("pos_view_mode", next);
+                      closeMenuAnimated();
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #f0fdf4, #dcfce7)",
+                      color: "#15803d",
+                      border: "1px solid #86efac",
+                      animationDelay: "110ms",
+                    }}
+                  >
+                    <span className="btn-icon">
+                      {viewMode === "tarjetas" ? "☰" : "⊞"}
+                    </span>
+                    <span>
+                      <div className="btn-label">Modo de Vista</div>
+                      <div className="btn-desc">
+                        Activo:{" "}
+                        {viewMode === "tarjetas" ? "Tarjetas" : "Lista"} → cambiar
+                        a {viewMode === "tarjetas" ? "Lista" : "Tarjetas"}
+                      </div>
                     </span>
                   </button>
                   <button
