@@ -103,6 +103,7 @@ export interface DatosComanda {
   fecha: string;
   esCredito?: boolean;
   esTelefono?: boolean;
+  nota?: string;
 }
 
 // ── Comprobacion de soporte ───────────────────────────────────────────────────
@@ -349,6 +350,12 @@ export function buildComanda(datos: DatosComanda): Uint8Array {
   if (datos.cliente) push(texto("Cliente: " + datos.cliente));
   push(texto("Hora:    " + datos.fecha));
   push(linea());
+  if (datos.nota) {
+    push(alinearCentro(), negrita(true), tamanoDoble(true));
+    push(texto("NOTA:"));
+    push(texto(datos.nota));
+    push(tamanoDoble(false), negrita(false), alinearIzquierda(), linea());
+  }
 
   // Comidas
   const comidas = datos.items.filter((i) => i.tipo === "comida");

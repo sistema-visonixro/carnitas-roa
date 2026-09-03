@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
-import { upsertOne, STORE, guardarGastoLocal } from "./utils/localDB";
 
 interface GastosViewProps {
   onBack?: () => void;
@@ -130,7 +129,7 @@ export default function GastosView({ onBack }: GastosViewProps) {
         fecha_hora: new Date().toISOString(),
       };
 
-      // Si el usuario es cajero, añadir cajero_id y caja
+      // Asociar el gasto al usuario o al cajero seleccionado por el admin.
       const stored = localStorage.getItem("usuario");
       const usuario = stored ? JSON.parse(stored) : null;
       if (usuario && usuario.rol === "cajero") {
@@ -146,35 +145,13 @@ export default function GastosView({ onBack }: GastosViewProps) {
         } catch (e) {
           insertObj.caja = null;
         }
+      } else {
+        insertObj.cajero_id = nuevoGasto.cajero_id || null;
+        insertObj.caja = nuevoGasto.caja || null;
       }
 
-      // 1. Guardar en IndexedDB siempre (con cola de reintento a Supabase)
-      await guardarGastoLocal(insertObj);
-
-      // 2. Intentar insertar en Supabase directamente si hay conexión
-      if (navigator.onLine) {
-        try {
-          const { data: inserted, error } = await supabase
-            .from("gastos")
-            .insert([insertObj])
-            .select("id")
-            .single();
-          if (!error && inserted?.id) {
-            // Actualizar el registro en IDB con el id real
-            await upsertOne(STORE.GASTOS, { ...insertObj, id: inserted.id });
-          } else if (error) {
-            console.warn(
-              "[GastosView] Error Supabase (queda en cola IDB):",
-              error,
-            );
-          }
-        } catch (e) {
-          console.warn(
-            "[GastosView] Sin conexión con Supabase, queda en IDB:",
-            e,
-          );
-        }
-      }
+      const { error } = await supabase.from("gastos").insert([insertObj]);
+      if (error) throw error;
 
       setNuevoGasto({
         fecha: "",

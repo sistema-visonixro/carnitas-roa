@@ -24,6 +24,7 @@ type PaymentPayload = {
   pagos?: PagoItem[];
   esDonacion?: boolean;
   canjearPuntos?: boolean;
+  nota?: string;
 };
 
 export default function PaymentModal({
@@ -66,6 +67,8 @@ export default function PaymentModal({
   const [factura, setFactura] = useState<string>("");
   const [autorizador, setAutorizador] = useState<string>("");
   const [referencia, setReferencia] = useState<string>("");
+  const [nota, setNota] = useState("");
+  const [showNotaModal, setShowNotaModal] = useState(false);
 
   const [usdAmount, setUsdAmount] = useState<number>(0);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -89,6 +92,8 @@ export default function PaymentModal({
       setFactura("");
       setAutorizador("");
       setReferencia("");
+      setNota("");
+      setShowNotaModal(false);
       setConfirmDeleteId(null);
       setLoadingGenerating(false);
       // Limpiar estado de donación
@@ -202,6 +207,7 @@ export default function PaymentModal({
               tipoPagoString: "donacion",
               pagos: [],
               esDonacion: true,
+              nota: nota.trim() || undefined,
             });
           }
         } catch (e) {
@@ -234,6 +240,7 @@ export default function PaymentModal({
             totalPaid,
             tipoPagoString,
             pagos,
+            nota: nota.trim() || undefined,
           });
         }
       } catch (e) {
@@ -366,6 +373,22 @@ export default function PaymentModal({
             >
               💰 Registrar Pago
             </h3>
+            <button
+              onClick={() => setShowNotaModal(true)}
+              className="btn-opaque"
+              style={{
+                border: "1px solid rgba(255,255,255,0.4)",
+                color: "#fff",
+                background: "rgba(255,255,255,0.15)",
+                borderRadius: 8,
+                padding: "6px 14px",
+                cursor: "pointer",
+                fontWeight: 600,
+                marginRight: 8,
+              }}
+            >
+              Nota
+            </button>
             <button
               onClick={onClose}
               className="btn-opaque"
@@ -1224,6 +1247,48 @@ export default function PaymentModal({
                   : "✅ Registrar y guardar venta"}
               </button>
             </div>
+            {showNotaModal && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setShowNotaModal(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 12000,
+                  padding: 16,
+                }}
+              >
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  style={{
+                    width: 460,
+                    maxWidth: "100%",
+                    background: theme === "lite" ? "#fff" : "#252535",
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
+                    borderRadius: 12,
+                    padding: 20,
+                  }}
+                >
+                  <h3 style={{ marginTop: 0 }}>Nota para la comanda</h3>
+                  <textarea
+                    autoFocus
+                    value={nota}
+                    onChange={(event) => setNota(event.target.value)}
+                    rows={5}
+                    placeholder="Escriba una nota para cocina..."
+                    style={{ ...inputStyle, resize: "vertical", fontSize: 16 }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+                    <button onClick={() => setShowNotaModal(false)} className="btn-opaque">Listo</button>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Sub-modal: verificar contrase\u00f1a Admin para donaci\u00f3n */}
             {showDonacionModal && (
               <div

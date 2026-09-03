@@ -2201,6 +2201,7 @@ export default function PuntoDeVentaView({
           <div style='font-size:28px; font-weight:900; color:#000; text-align:center; margin:16px 0;'>${tipoOrdenSel}</div>
           <div style='font-size:20px; font-weight:800; color:#000; text-align:center; margin-bottom:12px;'>Cliente: <b>${venta.cliente}</b></div>
           <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${venta.factura}</div>
+          ${venta.nota ? `<div style='font-size:26px; font-weight:900; color:#000; text-align:center; border:3px solid #000; padding:10px; margin:12px 0; white-space:pre-wrap;'>NOTA: ${venta.nota}</div>` : ""}
           ${
             prods.filter((p) => p.tipo === "comida").length > 0
               ? `
@@ -6741,6 +6742,7 @@ export default function PuntoDeVentaView({
             total: esDonacion ? 0 : total,
             totalConDescuento: esDonacion ? 0 : totalConDescuento,
             totalDescuento: totalDescuento,
+            nota: paymentData.nota?.trim() || "",
           };
 
           // ID único por operación de facturación
@@ -6832,6 +6834,7 @@ export default function PuntoDeVentaView({
                 <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${
                   snap.facturaActual || ""
                 }</div>
+                ${snap.nota ? `<div style='font-size:26px; font-weight:900; color:#000; text-align:center; border:3px solid #000; padding:10px; margin:12px 0; white-space:pre-wrap;'>NOTA: ${snap.nota}</div>` : ""}
                 
                 ${
                   snap.seleccionados.filter((p) => p.tipo === "comida").length >
@@ -7269,6 +7272,7 @@ export default function PuntoDeVentaView({
                     fecha: new Date().toLocaleString("es-HN", {
                       timeZone: "America/Tegucigalpa",
                     }),
+                    nota: snap.nota || undefined,
                   };
                   imprimirComandaUSB(
                     cfgComandaP!.vendorId,
