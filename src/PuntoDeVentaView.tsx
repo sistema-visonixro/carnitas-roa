@@ -2470,6 +2470,8 @@ export default function PuntoDeVentaView({
     "Efectivo" | "Tarjeta" | "Transferencia" | "Dolares"
   >("Efectivo");
   const [envioCosto, setEnvioCosto] = useState<string>("0");
+  const [envioNota, setEnvioNota] = useState("");
+  const [showEnvioNotaModal, setShowEnvioNotaModal] = useState(false);
   const [savingEnvio, setSavingEnvio] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [lastEnvioSaved, setLastEnvioSaved] = useState<any>(null);
@@ -2698,6 +2700,8 @@ export default function PuntoDeVentaView({
     setEnvioCelular("");
     setEnvioTipoPago("Efectivo");
     setEnvioCosto("0");
+    setEnvioNota("");
+    setShowEnvioNotaModal(false);
   };
 
   const normalizarTipoPagoPedido = (tipo: any): string => {
@@ -3241,8 +3245,7 @@ export default function PuntoDeVentaView({
   const [busquedaProducto, setBusquedaProducto] = useState("");
 
   // Estados conteo del turno (chips del header)
-  // Solo usamos los setters en este componente; evitar TS6133 por variables no leídas.
-  const [, setPlatillosTurno] = useState(0);
+  const [platillosTurno, setPlatillosTurno] = useState(0);
   const [, setBebidasTurno] = useState(0);
 
   // Estados para control de apertura
@@ -4908,6 +4911,27 @@ export default function PuntoDeVentaView({
           </div>
         </div>
         {/* fin primera fila */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 6,
+            marginLeft: 12,
+            padding: "6px 12px",
+            borderRadius: 8,
+            background: theme === "lite" ? "#fff7ed" : "rgba(251,146,60,0.18)",
+            border: theme === "lite" ? "1px solid #fdba74" : "1px solid #fb923c",
+            color: theme === "lite" ? "#9a3412" : "#fed7aa",
+            width: "fit-content",
+          }}
+          title="Cantidad de platillos vendidos en el turno"
+        >
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Platillos vendidos:</span>
+          <strong style={{ fontSize: 24, lineHeight: 1, fontWeight: 900 }}>
+            {platillosTurno}
+          </strong>
+        </div>
         {/* QZ Tray indicators removed */}
       </div>
       {/* Modal de resumen de caja (fuera del header) */}
@@ -10527,9 +10551,25 @@ export default function PuntoDeVentaView({
                   Ingresa los datos del cliente
                 </p>
               </div>
-              <button
-                onClick={() => setShowEnvioModal(false)}
-                style={{
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={() => setShowEnvioNotaModal(true)}
+                  style={{
+                    background: theme === "lite" ? "#fef3c7" : "#713f12",
+                    border: theme === "lite" ? "1px solid #f59e0b" : "1px solid #fbbf24",
+                    color: theme === "lite" ? "#92400e" : "#fef3c7",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                  }}
+                >
+                  Nota
+                </button>
+                <button
+                  onClick={() => setShowEnvioModal(false)}
+                  style={{
                   background: "transparent",
                   border: "none",
                   color: theme === "lite" ? "#64748b" : "#94a3b8",
@@ -10543,18 +10583,75 @@ export default function PuntoDeVentaView({
                   alignItems: "center",
                   justifyContent: "center",
                   transition: "all 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background =
-                    theme === "lite" ? "#f1f5f9" : "#334155";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background =
+                      theme === "lite" ? "#f1f5f9" : "#334155";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {showEnvioNotaModal && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setShowEnvioNotaModal(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 12000,
+                  padding: 16,
                 }}
               >
-                ✕
-              </button>
-            </div>
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  style={{
+                    width: 460,
+                    maxWidth: "100%",
+                    background: theme === "lite" ? "#fff" : "#252535",
+                    color: theme === "lite" ? "#111" : "#f5f5f5",
+                    borderRadius: 12,
+                    padding: 20,
+                  }}
+                >
+                  <h3 style={{ marginTop: 0 }}>Nota para la comanda</h3>
+                  <textarea
+                    autoFocus
+                    value={envioNota}
+                    onChange={(event) => setEnvioNota(event.target.value)}
+                    rows={5}
+                    placeholder="Escriba un comentario para cocina..."
+                    style={{
+                      width: "100%",
+                      boxSizing: "border-box",
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid #cbd5e1",
+                      fontSize: 16,
+                      resize: "vertical",
+                    }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+                    <button
+                      onClick={() => setShowEnvioNotaModal(false)}
+                      style={{ padding: "10px 18px", border: "none", borderRadius: 8, background: "#10b981", color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Listo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Content */}
             <div
@@ -10897,6 +10994,7 @@ export default function PuntoDeVentaView({
                           costo_envio: parseFloat(envioCosto || "0"),
                           tipo_pago: tipoPagoNormalizado,
                           factura_venta: facturaActual || null,
+                          nota: envioNota.trim(),
                         };
 
                         const registroSupabase = {
@@ -10997,6 +11095,7 @@ export default function PuntoDeVentaView({
                           <div style='font-size:14px; font-weight:600; color:#222; text-align:center; margin-bottom:6px;'>Factura: ${
                             facturaActual || ""
                           }</div>
+                          ${envioNota.trim() ? `<div style='font-size:26px; font-weight:900; color:#000; text-align:center; border:3px solid #000; padding:10px; margin:12px 0; white-space:pre-wrap;'>NOTA: ${envioNota.trim()}</div>` : ""}
                           
                           ${
                             seleccionados.filter((p) => p.tipo === "comida")
@@ -11274,6 +11373,7 @@ export default function PuntoDeVentaView({
                                     timeZone: "America/Tegucigalpa",
                                   }),
                                   esTelefono: true,
+                                  nota: envioNota.trim() || undefined,
                                 };
                                 imprimirComandaUSB(
                                   cfgComandaE!.vendorId,
