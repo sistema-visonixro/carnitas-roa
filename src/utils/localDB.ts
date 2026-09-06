@@ -1272,6 +1272,25 @@ export async function registrarPlatillosIndex(
   }
 }
 
+/** Registra manualmente una fila de platillos_index para corregir un conteo. */
+export async function registrarPlatilloIndexManual(
+  factura: string,
+  nombre: string,
+  cantidad: number,
+): Promise<void> {
+  const db = await openLocalDB();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE.PLATILLOS_INDEX, "readwrite");
+    tx.objectStore(STORE.PLATILLOS_INDEX).add({
+      factura: factura.trim(),
+      nombre: nombre.trim(),
+      cantidad: Math.max(1, Math.trunc(cantidad)),
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 /** Elimina del platillos_index todos los registros de una factura original (para devoluciones). */
 export async function eliminarPlatillosIndexPorFactura(
   factura: string,

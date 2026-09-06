@@ -48,6 +48,7 @@ import {
   registrarVentaIndex,
   eliminarPlatillosIndexPorFactura,
   getPlatillosIndex,
+  registrarPlatilloIndexManual,
   getResumenVentasIndex,
 } from "./utils/localDB";
 import { useConexion } from "./utils/useConexion";
@@ -181,6 +182,10 @@ export default function PuntoDeVentaView({
   const [showAperturaPlatillos, setShowAperturaPlatillos] = useState(false);
   const [platillosIndexData, setPlatillosIndexData] = useState<any[]>([]);
   const [platillosIndexLoading, setPlatillosIndexLoading] = useState(false);
+  const [showManualPlatilloModal, setShowManualPlatilloModal] = useState(false);
+  const [manualPlatilloFactura, setManualPlatilloFactura] = useState("");
+  const [manualPlatilloNombre, setManualPlatilloNombre] = useState("");
+  const [manualPlatilloCantidad, setManualPlatilloCantidad] = useState("1");
   const [platosInicialesInput, setPlatosInicialesInput] = useState<string>("");
   const [platosIniciales, setPlatosIniciales] = useState<number>(0);
   const [showResumen, setShowResumen] = useState(false);
@@ -2567,7 +2572,27 @@ export default function PuntoDeVentaView({
     // obtenerContadorPendientes().then(setPendientesCount);
 
     // Listener para Ctrl+0 para actualizar cache de productos y Ctrl+Shift+R para bloquear cuando offline
+    let manualShortcutPending = false;
+    let manualShortcutTimer: number | undefined;
     const handleKeyDown = async (e: KeyboardEvent) => {
+      if (e.key === "+" || (e.key === "=" && e.shiftKey)) {
+        manualShortcutPending = true;
+        window.clearTimeout(manualShortcutTimer);
+        manualShortcutTimer = window.setTimeout(() => {
+          manualShortcutPending = false;
+        }, 1500);
+        return;
+      }
+      if (manualShortcutPending && e.key === "5") {
+        e.preventDefault();
+        manualShortcutPending = false;
+        window.clearTimeout(manualShortcutTimer);
+        setManualPlatilloFactura(facturaActual || "MANUAL");
+        setManualPlatilloNombre("");
+        setManualPlatilloCantidad("1");
+        setShowManualPlatilloModal(true);
+        return;
+      }
       // Bloquear Ctrl+Shift+R cuando no hay internet (cierre de caja requiere conexión)
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
         if (!isOnline || !estaConectado()) {
@@ -5474,6 +5499,103 @@ export default function PuntoDeVentaView({
         )}
         {/* Botón de cerrar sesión oculto */}
         <button style={{ display: "none" }}>Cerrar sesión</button>
+
+        {showManualPlatilloModal && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setShowManualPlatilloModal(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.65)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 12000,
+              padding: 16,
+            }}
+          >
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: 440,
+                maxWidth: "100%",
+                background: theme === "lite" ? "#fff" : "#1e293b",
+                color: theme === "lite" ? "#111827" : "#f8fafc",
+                borderRadius: 14,
+                padding: 22,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              }}
+            >
+              <h3 style={{ margin: "0 0 8px", fontSize: 21 }}>
+                Agregar platillo al conteo
+              </h3>
+              <p style={{ margin: "0 0 18px", color: theme === "lite" ? "#64748b" : "#cbd5e1", fontSize: 13 }}>
+                Registra una fila manual en el turno actual.
+              </p>
+              <label style={{ display: "block", marginBottom: 12, fontWeight: 700 }}>
+                Factura o referencia
+                <input
+                  autoFocus
+                  value={manualPlatilloFactura}
+                  onChange={(event) => setManualPlatilloFactura(event.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1" }}
+                />
+              </label>
+              <label style={{ display: "block", marginBottom: 12, fontWeight: 700 }}>
+                Nombre del platillo
+                <input
+                  value={manualPlatilloNombre}
+                  onChange={(event) => setManualPlatilloNombre(event.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1" }}
+                />
+              </label>
+              <label style={{ display: "block", marginBottom: 18, fontWeight: 700 }}>
+                Cantidad
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={manualPlatilloCantidad}
+                  onChange={(event) => setManualPlatilloCantidad(event.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1" }}
+                />
+              </label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button
+                  onClick={() => setShowManualPlatilloModal(false)}
+                  style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #cbd5e1", background: "transparent", color: "inherit", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    const cantidad = Number(manualPlatilloCantidad);
+                    if (!manualPlatilloFactura.trim() || !manualPlatilloNombre.trim() || !Number.isInteger(cantidad) || cantidad < 1) {
+                      alert("Completa factura, nombre y una cantidad válida.");
+                      return;
+                    }
+                    try {
+                      await registrarPlatilloIndexManual(manualPlatilloFactura, manualPlatilloNombre, cantidad);
+                      setShowManualPlatilloModal(false);
+                      await fetchConteoTurno();
+                      const rows = await getPlatillosIndex();
+                      setPlatillosIndexData(rows);
+                      alert("Platillo agregado al conteo del turno.");
+                    } catch (error) {
+                      console.error("Error agregando platillo manual:", error);
+                      alert("No se pudo agregar el platillo al conteo.");
+                    }
+                  }}
+                  style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: "#7c3aed", color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Guardar fila
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Modal: Conteo de Platillos ─────────────────────────────── */}
         {showAperturaPlatillos && (
