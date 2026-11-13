@@ -119,6 +119,20 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
   const [exitoPago, setExitoPago] = useState<string | null>(null);
   const [errPago, setErrPago] = useState<string | null>(null);
 
+  const [showAbonoGeneral, setShowAbonoGeneral] = useState(false);
+  const [proveedorAbonoGeneralId, setProveedorAbonoGeneralId] = useState("");
+  const [montoAbonoGeneral, setMontoAbonoGeneral] = useState("");
+  const [tipoAbonoGeneral, setTipoAbonoGeneral] =
+    useState<TipoPagoProveedor>("efectivo");
+  const [refAbonoGeneral, setRefAbonoGeneral] = useState("");
+  const [bancoAbonoGeneral, setBancoAbonoGeneral] = useState("");
+  const [obsAbonoGeneral, setObsAbonoGeneral] = useState("");
+  const [procesandoAbonoGeneral, setProcesandoAbonoGeneral] = useState(false);
+  const [exitoAbonoGeneral, setExitoAbonoGeneral] = useState<string | null>(
+    null,
+  );
+  const [errAbonoGeneral, setErrAbonoGeneral] = useState<string | null>(null);
+
   const hoyStr = new Date().toISOString().slice(0, 10);
   const inicioMesStr = (() => {
     const d = new Date();
@@ -365,6 +379,140 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
     }
   }
 
+  const proveedoresConSaldo = proveedores
+    .map((proveedor) => ({
+      proveedor,
+      saldo: cuentasPagar
+        .filter(
+          (cuenta) =>
+            cuenta.proveedor_id === proveedor.id &&
+            cuenta.estado !== "pagado" &&
+            Number(cuenta.saldo_pendiente) > 0,
+        )
+        .reduce((total, cuenta) => total + Number(cuenta.saldo_pendiente), 0),
+    }))
+    .filter(({ saldo }) => saldo > 0);
+
+  const cuentasAbonoGeneral = cuentasPagar
+    .filter(
+      (cuenta) =>
+        cuenta.proveedor_id === proveedorAbonoGeneralId &&
+        cuenta.estado !== "pagado" &&
+        Number(cuenta.saldo_pendiente) > 0,
+    )
+    .sort((a, b) => {
+      const fechaA = a.fecha_emision ?? a.creado_en ?? "";
+      const fechaB = b.fecha_emision ?? b.creado_en ?? "";
+      return fechaA.localeCompare(fechaB);
+    });
+  const saldoAbonoGeneral = cuentasAbonoGeneral.reduce(
+    (total, cuenta) => total + Number(cuenta.saldo_pendiente),
+    0,
+  );
+
+  function abrirAbonoGeneral() {
+    setProveedorAbonoGeneralId("");
+    setMontoAbonoGeneral("");
+    setTipoAbonoGeneral("efectivo");
+    setRefAbonoGeneral("");
+    setBancoAbonoGeneral("");
+    setObsAbonoGeneral("");
+    setExitoAbonoGeneral(null);
+    setErrAbonoGeneral(null);
+    setShowAbonoGeneral(true);
+  }
+
+  async function confirmarAbonoGeneral() {
+    const proveedor = proveedores.find(
+      (p) => p.id === proveedorAbonoGeneralId,
+    );
+    const monto = Number(montoAbonoGeneral.replace(",", "."));
+    if (!proveedor) {
+      setErrAbonoGeneral("Selecciona un proveedor.");
+      return;
+    }
+    if (!Number.isFinite(monto) || monto <= 0) {
+      setErrAbonoGeneral("Ingresa un monto válido.");
+      return;
+    }
+    if (monto > saldoAbonoGeneral) {
+      setErrAbonoGeneral(
+        `El abono supera el saldo pendiente del proveedor (L ${saldoAbonoGeneral.toFixed(2)}).`,
+      );
+      return;
+    }
+
+    setProcesandoAbonoGeneral(true);
+    setErrAbonoGeneral(null);
+    let montoAplicadoCentavos = 0;
+    let restanteCentavos = Math.round(monto * 100);
+    let cuentasAplicadas = 0;
+    try {
+      for (const cuenta of cuentasAbonoGeneral) {
+        if (restanteCentavos <= 0) break;
+        const saldoCuentaCentavos = Math.round(
+          Number(cuenta.saldo_pendiente) * 100,
+        );
+        const abonoCentavos = Math.min(restanteCentavos, saldoCuentaCentavos);
+        const abono = abonoCentavos / 100;
+        const result = await registrarPagoProveedor({
+          proveedor_id: proveedor.id,
+          cuenta_pagar_id: cuenta.id,
+          monto: abono,
+          tipo_pago: tipoAbonoGeneral,
+          cajero_id: usuario.id ?? "",
+          cajero: usuario.nombre ?? "",
+          referencia: refAbonoGeneral || undefined,
+          banco: bancoAbonoGeneral || undefined,
+          observacion: obsAbonoGeneral || undefined,
+        });
+        if (!result.ok) throw new Error(result.error);
+
+        montoAplicadoCentavos += abonoCentavos;
+        restanteCentavos -= abonoCentavos;
+        cuentasAplicadas += 1;
+        setCuentasPagar((prev) =>
+          prev.map((item) => {
+            if (item.id !== cuenta.id) return item;
+            const saldoDespues = Number(result.saldo_despues);
+            const totalPagado = Number(item.total_pagado) + abono;
+            return {
+              ...item,
+              saldo_pendiente: saldoDespues,
+              total_pagado: totalPagado,
+              estado:
+                saldoDespues <= 0
+                  ? "pagado"
+                  : totalPagado > 0
+                    ? "parcial"
+                    : "pendiente",
+            };
+          }),
+        );
+      }
+
+      if (restanteCentavos > 0) {
+        throw new Error(
+          "El saldo cambió durante el proceso y no se pudo aplicar todo el abono.",
+        );
+      }
+      setExitoAbonoGeneral(
+        `Abono general de L ${(montoAplicadoCentavos / 100).toFixed(2)} aplicado en ${cuentasAplicadas === 1 ? "la cuenta pendiente más antigua" : `${cuentasAplicadas} cuentas pendientes, comenzando por las más antiguas`}.`,
+      );
+      await cargarCuentasPagar();
+      setTimeout(() => setShowAbonoGeneral(false), 2000);
+    } catch (e) {
+      const mensaje = e instanceof Error ? e.message : "Error al registrar el abono.";
+      setErrAbonoGeneral(
+        montoAplicadoCentavos > 0
+          ? `${mensaje} Se registraron L ${(montoAplicadoCentavos / 100).toFixed(2)} antes del error; revisa las cuentas y pagos antes de reintentar.`
+          : mensaje,
+      );
+    } finally {
+      setProcesandoAbonoGeneral(false);
+    }
+  }
+
   function imprimirEstadoProveedor(prov: Proveedor, cxps: CuentaPorPagar[]) {
     const totalPend = cxps.reduce((s, c) => s + Number(c.saldo_pendiente), 0);
     // ... same html printing logic mostly
@@ -548,6 +696,24 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                 }}
               >
                 + Nuevo Proveedor
+              </button>
+              <button
+                onClick={abrirAbonoGeneral}
+                disabled={proveedoresConSaldo.length === 0}
+                style={{
+                  padding: "12px 24px",
+                  background:
+                    proveedoresConSaldo.length === 0 ? "#94a3b8" : "#16a34a",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 10,
+                  fontWeight: 800,
+                  cursor:
+                    proveedoresConSaldo.length === 0 ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 12px rgba(22, 163, 74, 0.2)",
+                }}
+              >
+                💳 Abono general
               </button>
               <button
                 onClick={() => {
@@ -1816,6 +1982,315 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
           </div>
         )}
       </div>
+
+      {showAbonoGeneral && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 99999,
+            background: "rgba(15,23,42,0.65)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 20,
+              width: "100%",
+              maxWidth: 500,
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+              overflow: "hidden",
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                padding: "20px 24px",
+                borderBottom: "1px solid #e2e8f0",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                background: "#f8fafc",
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 800 }}>
+                💳 Abono general a proveedor
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAbonoGeneral(false)}
+                disabled={procesandoAbonoGeneral}
+                aria-label="Cerrar abono general"
+                style={{
+                  background: "#e2e8f0",
+                  border: "none",
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                padding: 24,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+              }}
+            >
+              <div>
+                <label
+                  htmlFor="proveedor-abono-general"
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#475569",
+                    display: "block",
+                    marginBottom: 8,
+                  }}
+                >
+                  Proveedor *
+                </label>
+                <select
+                  id="proveedor-abono-general"
+                  value={proveedorAbonoGeneralId}
+                  onChange={(e) => {
+                    setProveedorAbonoGeneralId(e.target.value);
+                    setMontoAbonoGeneral("");
+                    setErrAbonoGeneral(null);
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: 12,
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 8,
+                    fontSize: 14,
+                  }}
+                >
+                  <option value="">Seleccionar proveedor...</option>
+                  {proveedoresConSaldo.map(({ proveedor, saldo }) => (
+                    <option key={proveedor.id} value={proveedor.id}>
+                      {proveedor.nombre_comercial} — L {saldo.toFixed(2)} pendiente
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {proveedorAbonoGeneralId && (
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 10,
+                    padding: 12,
+                    color: "#166534",
+                    fontSize: 13,
+                  }}
+                >
+                  El abono se aplicará primero a las cuentas más antiguas.
+                  Saldo pendiente:{" "}
+                  <strong>L {saldoAbonoGeneral.toFixed(2)}</strong>
+                </div>
+              )}
+
+              {exitoAbonoGeneral && (
+                <div
+                  role="status"
+                  style={{
+                    background: "#dcfce7",
+                    border: "1px solid #86efac",
+                    borderRadius: 10,
+                    padding: 14,
+                    color: "#14532d",
+                    fontWeight: 600,
+                  }}
+                >
+                  ✅ {exitoAbonoGeneral}
+                </div>
+              )}
+              {errAbonoGeneral && (
+                <div
+                  role="alert"
+                  style={{
+                    background: "#fef2f2",
+                    border: "1px solid #fca5a5",
+                    borderRadius: 10,
+                    padding: 14,
+                    color: "#dc2626",
+                  }}
+                >
+                  ⚠ {errAbonoGeneral}
+                </div>
+              )}
+
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#475569",
+                    marginBottom: 8,
+                  }}
+                >
+                  Método de pago
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {TIPO_PAGO_PROV.map((tipo) => (
+                    <button
+                      type="button"
+                      key={tipo.value}
+                      onClick={() => setTipoAbonoGeneral(tipo.value)}
+                      style={{
+                        flex: "1 1 auto",
+                        padding: 10,
+                        border: `2px solid ${tipoAbonoGeneral === tipo.value ? "#16a34a" : "#e2e8f0"}`,
+                        borderRadius: 8,
+                        background:
+                          tipoAbonoGeneral === tipo.value ? "#16a34a15" : "#fff",
+                        color:
+                          tipoAbonoGeneral === tipo.value ? "#15803d" : "#475569",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {tipo.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="monto-abono-general"
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#475569",
+                    display: "block",
+                    marginBottom: 8,
+                  }}
+                >
+                  Monto del abono (L) *
+                </label>
+                <input
+                  id="monto-abono-general"
+                  type="number"
+                  min="0.01"
+                  max={saldoAbonoGeneral}
+                  step="0.01"
+                  value={montoAbonoGeneral}
+                  onChange={(e) => setMontoAbonoGeneral(e.target.value)}
+                  placeholder="0.00"
+                  disabled={!proveedorAbonoGeneralId}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: 12,
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 8,
+                    fontSize: 16,
+                  }}
+                />
+              </div>
+
+              {(tipoAbonoGeneral === "tarjeta" ||
+                tipoAbonoGeneral === "transferencia" ||
+                tipoAbonoGeneral === "cheque") && (
+                <div style={{ display: "flex", gap: 12 }}>
+                  <input
+                    type="text"
+                    value={bancoAbonoGeneral}
+                    onChange={(e) => setBancoAbonoGeneral(e.target.value)}
+                    placeholder="Banco (opcional)"
+                    aria-label="Banco del abono"
+                    style={{
+                      minWidth: 0,
+                      flex: 1,
+                      padding: 12,
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 8,
+                    }}
+                  />
+                  <input
+                    type="text"
+                    value={refAbonoGeneral}
+                    onChange={(e) => setRefAbonoGeneral(e.target.value)}
+                    placeholder="Referencia / Nº"
+                    aria-label="Referencia del abono"
+                    style={{
+                      minWidth: 0,
+                      flex: 1,
+                      padding: 12,
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 8,
+                    }}
+                  />
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={obsAbonoGeneral}
+                onChange={(e) => setObsAbonoGeneral(e.target.value)}
+                placeholder="Observaciones del abono..."
+                aria-label="Observaciones del abono"
+                style={{
+                  padding: 12,
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                padding: "16px 24px",
+                borderTop: "1px solid #e2e8f0",
+                background: "#f8fafc",
+              }}
+            >
+              <button
+                type="button"
+                onClick={confirmarAbonoGeneral}
+                disabled={
+                  procesandoAbonoGeneral ||
+                  Boolean(exitoAbonoGeneral) ||
+                  !proveedorAbonoGeneralId ||
+                  !montoAbonoGeneral
+                }
+                style={{
+                  width: "100%",
+                  padding: 16,
+                  background: procesandoAbonoGeneral ? "#9ca3af" : "#16a34a",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 12,
+                  fontWeight: 800,
+                  fontSize: 16,
+                  cursor: procesandoAbonoGeneral ? "not-allowed" : "pointer",
+                }}
+              >
+                {procesandoAbonoGeneral
+                  ? "Procesando abono..."
+                  : `Confirmar abono general L ${Number(montoAbonoGeneral || 0).toFixed(2)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPagoModal && cxpSlc && provSlc && (
         <div
