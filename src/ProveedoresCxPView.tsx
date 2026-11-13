@@ -28,6 +28,8 @@ type SubVista =
   | "formCxP"
   | "listaPagosProv";
 
+type FiltroEstadoCxP = "activas" | "canceladas";
+
 const TIPO_PAGO_PROV: { value: TipoPagoProveedor; label: string }[] = [
   { value: "efectivo", label: "Efectivo" },
   { value: "tarjeta", label: "Tarjeta" },
@@ -76,6 +78,8 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
   const [subVista, setSubVista] = useState<SubVista>("listaProveedores");
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [cuentasPagar, setCuentasPagar] = useState<CuentaPorPagar[]>([]);
+  const [filtroEstadoCxP, setFiltroEstadoCxP] =
+    useState<FiltroEstadoCxP>("activas");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -309,6 +313,10 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
       setErrPago("Monto inválido.");
       return;
     }
+    if (montoN > Number(cxpSlc.saldo_pendiente)) {
+      setErrPago("El abono no puede superar el saldo pendiente.");
+      return;
+    }
     setProcesandoPago(true);
     setErrPago(null);
     try {
@@ -325,22 +333,27 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
       });
       if (!result.ok) throw new Error(result.error);
 
-      setExitoPago(`Pago de L ${montoN.toFixed(2)} procesado exitosamente.`);
+      setExitoPago(`Abono de L ${montoN.toFixed(2)} procesado exitosamente.`);
 
       // Update local state smoothly
       if (cxpSlc && result.saldo_despues !== undefined) {
         setCuentasPagar((prev) =>
-          prev.map((c) =>
-            c.id === cxpSlc.id
-              ? {
-                  ...c,
-                  saldo_pendiente: result.saldo_despues as number,
-                  total_pagado: Number(c.total_pagado) + montoN,
-                  estado:
-                    (result.saldo_despues ?? 0) <= 0 ? "pagado" : c.estado,
-                }
-              : c,
-          ),
+          prev.map((c) => {
+            if (c.id !== cxpSlc.id) return c;
+            const saldoDespues = Number(result.saldo_despues);
+            const totalPagado = Number(c.total_pagado) + montoN;
+            return {
+              ...c,
+              saldo_pendiente: saldoDespues,
+              total_pagado: totalPagado,
+              estado:
+                saldoDespues <= 0
+                  ? "pagado"
+                  : totalPagado > 0
+                    ? "parcial"
+                    : "pendiente",
+            };
+          }),
         );
       }
 
@@ -382,6 +395,12 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
   const cuentasPendientesGlobal = cuentasPagar.filter(
     (c) => c.estado !== "pagado" && Number(c.saldo_pendiente) > 0,
   );
+  const cuentasCxPActivas = cuentasPendientesGlobal;
+  const cuentasCxPCanceladas = cuentasPagar.filter(
+    (c) => c.estado === "pagado" || Number(c.saldo_pendiente) <= 0,
+  );
+  const cuentasCxPFiltradas =
+    filtroEstadoCxP === "activas" ? cuentasCxPActivas : cuentasCxPCanceladas;
   const totalDeudaGeneral = cuentasPendientesGlobal.reduce(
     (s, c) => s + Number(c.saldo_pendiente),
     0,
@@ -898,6 +917,79 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
             ) : (
               <>
                 <div
+                  role="group"
+                  aria-label="Filtrar cuentas por estado"
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginBottom: 16,
+                  }}
+                >
+                  {(
+                    [
+                      {
+                        value: "activas",
+                        label: "Cuentas activas",
+                        count: cuentasCxPActivas.length,
+                      },
+                      {
+                        value: "canceladas",
+                        label: "Cuentas canceladas / pagadas",
+                        count: cuentasCxPCanceladas.length,
+                      },
+                    ] as const
+                  ).map((filtro) => (
+                    <button
+                      key={filtro.value}
+                      type="button"
+                      aria-pressed={filtroEstadoCxP === filtro.value}
+                      onClick={() => setFiltroEstadoCxP(filtro.value)}
+                      className="btn-action"
+                      style={{
+                        padding: "10px 14px",
+                        background:
+                          filtroEstadoCxP === filtro.value ? "#0f766e" : "#f1f5f9",
+                        color:
+                          filtroEstadoCxP === filtro.value ? "#fff" : "#475569",
+                        border: "1px solid",
+                        borderColor:
+                          filtroEstadoCxP === filtro.value ? "#0f766e" : "#cbd5e1",
+                      }}
+                    >
+                      {filtro.label} ({filtro.count})
+                    </button>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#64748b",
+                    marginTop: -8,
+                    marginBottom: 12,
+                  }}
+                >
+                  Las cuentas canceladas son las que ya están pagadas.
+                </div>
+
+                {cuentasCxPFiltradas.length === 0 ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: 40,
+                      color: "#94a3b8",
+                      background: "#fff",
+                      borderRadius: 12,
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    {filtroEstadoCxP === "activas"
+                      ? "No hay cuentas activas pendientes."
+                      : "No hay cuentas canceladas."}
+                  </div>
+                ) : (
+                  <>
+                <div
                   className="desktop-only"
                   style={{
                     overflowX: "auto",
@@ -932,7 +1024,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {cuentasPagar.map((c, i) => {
+                      {cuentasCxPFiltradas.map((c, i) => {
                         const prov = proveedores.find(
                           (p) => p.id === c.proveedor_id,
                         );
@@ -1009,7 +1101,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                                     color: "white",
                                   }}
                                 >
-                                  Pagar
+                                  Abonar
                                 </button>
                               )}
                             </td>
@@ -1022,7 +1114,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
 
                 {/* Mobile Cards for CxP */}
                 <div className="card-grid">
-                  {cuentasPagar.map((c) => {
+                  {cuentasCxPFiltradas.map((c) => {
                     const prov = proveedores.find(
                       (p) => p.id === c.proveedor_id,
                     );
@@ -1134,13 +1226,15 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                               fontSize: 15,
                             }}
                           >
-                            💳 Registrar Pago
+                            💳 Registrar abono
                           </button>
                         )}
                       </div>
                     );
                   })}
                 </div>
+                  </>
+                )}
               </>
             )}
           </>
@@ -1761,7 +1855,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
               }}
             >
               <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
-                💳 Registrar Pago a Proveedor
+                💳 Registrar abono a proveedor
               </div>
               <button
                 onClick={() => setShowPagoModal(false)}
@@ -1915,7 +2009,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                       marginBottom: 8,
                     }}
                   >
-                    Monto a Pagar (L) *
+                    Monto del abono (L) *
                   </label>
                   <div
                     style={{ display: "flex", gap: 8, alignItems: "center" }}
@@ -1968,7 +2062,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      Pagar Total
+                      Abonar total
                     </button>
                   </div>
                 </div>
@@ -2048,7 +2142,7 @@ export default function ProveedoresCxPView({ onBack: _onBack }: Props) {
               >
                 {procesandoPago
                   ? "Procesando el pago..."
-                  : `Confirmar Pago L ${parseFloat(montoPago || "0").toFixed(2)}`}
+                  : `Confirmar abono L ${parseFloat(montoPago || "0").toFixed(2)}`}
               </button>
             </div>
           </div>
